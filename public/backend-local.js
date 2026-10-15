@@ -79,15 +79,208 @@
       iniciando = (async () => {
         let e = await leerEstado();
         if (!e) {
-          e = estadoConEjemplos();
+          e = configNube() ? estadoVacio() : estadoConEjemplos();
           await guardarEstado(e);
         }
         estado = e;
         try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch { /* opcional */ }
+        sincronizarAlAbrir(); // en segundo plano: la app abre aunque GitHub tarde
       })().finally(() => { iniciando = null; });
     }
     await iniciando;
   }
+
+  // ── Guardado en GitHub (repositorio privado) ──
+  // Cada cambio se guarda primero en el navegador y enseguida se sube como un
+  // archivo JSON a un repositorio privado. Cada subida queda como un "commit",
+  // así que el repositorio guarda también el historial de versiones.
+
+  const CLAVE_NUBE = 'ret.nube';
+  const ARCHIVO_NUBE = 'datos/retenciones.json';
+  let shaNube = null;
+  let estadoNube = { estado: 'apagado', mensaje: '' };
+  let subiendo = null;
+  let temporizadorSubida = null;
+
+  function configNube() {
+    try { const c = JSON.parse(localStorage.getItem(CLAVE_NUBE) || 'null'); return c && c.token && c.repo ? c : null; } catch { return null; }
+  }
+  function guardarConfigNube(c) {
+    try { if (c) localStorage.setItem(CLAVE_NUBE, JSON.stringify(c)); else localStorage.removeItem(CLAVE_NUBE); } catch { /* sin almacenamiento */ }
+  }
+  function avisarNube(nuevo) {
+    estadoNube = { ...nuevo, repo: (configNube() || {}).repo || '', pendiente: Boolean(estado && estado.pendienteNube) };
+    try { window.dispatchEvent(new CustomEvent('nube-estado', { detail: estadoNube })); } catch { /* sin eventos */ }
+  }
+
+  function aBase64(texto) {
+    const bytes = new TextEncoder().encode(texto);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function deBase64(b64) {
+    const bin = atob(String(b64).replace(/\s/g, ''));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  }
+
+  class ErrorNube extends Error {
+    constructor(mensaje, status = 0) { super(mensaje); this.status = status; }
+  }
+
+  async function github(config, metodo, ruta, cuerpo, accept = 'application/vnd.github+json') {
+    let res;
+    try {
+      res = await fetch(`https://api.github.com${ruta}`, {
+        method: metodo,
+        headers: { Authorization: `Bearer ${config.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(cuerpo ? { 'Content-Type': 'application/json' } : {}) },
+        body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+        cache: 'no-store',
+      });
+    } catch {
+      throw new ErrorNube('No hay conexión con GitHub.');
+    }
+    if (res.status === 401) throw new ErrorNube('La clave de GitHub no es válida o venció.', 401);
+    if (res.status === 403) throw new ErrorNube('La clave no tiene permiso sobre ese repositorio (revisá que tenga "Contents: Read and write").', 403);
+    return res;
+  }
+
+  const rutaArchivo = (c) => `/repos/${c.repo}/contents/${ARCHIVO_NUBE}`;
+
+  // Devuelve { datos, sha } del archivo en GitHub, o null si todavía no existe.
+  async function leerNube(c) {
+    const res = await github(c, 'GET', `${rutaArchivo(c)}?t=${Date.now()}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new ErrorNube(`GitHub respondió ${res.status}.`, res.status);
+    const info = await res.json();
+    let texto = info.content ? deBase64(info.content) : '';
+    if (!texto && info.size > 0) {
+      const raw = await github(c, 'GET', `${rutaArchivo(c)}?t=${Date.now()}`, null, 'application/vnd.github.raw+json');
+      texto = await raw.text();
+    }
+    return { datos: JSON.parse(texto), sha: info.sha };
+  }
+
+  function paraNube(e) {
+    const { ultimoRespaldo, pendienteNube, ...resto } = e;
+    return JSON.stringify({ sistema: 'Sistema de Retenciones', ...resto }, null, 1);
+  }
+
+  async function subirAhora() {
+    const c = configNube();
+    if (!c || !estado || !estado.pendienteNube) return;
+    const enviado = estado;
+    avisarNube({ estado: 'subiendo', mensaje: 'Guardando en GitHub…' });
+    try {
+      const cuerpo = (sha) => ({ message: `Datos actualizados ${enviado.modificado || ahora()}`, content: aBase64(paraNube(enviado)), ...(sha ? { sha } : {}) });
+      let res = await github(c, 'PUT', rutaArchivo(c), cuerpo(shaNube));
+      if (res.status === 409 || res.status === 422) {
+        // Otra computadora guardó antes: tomamos su versión del archivo y subimos encima (gana el último cambio).
+        const actual = await leerNube(c);
+        shaNube = actual ? actual.sha : null;
+        res = await github(c, 'PUT', rutaArchivo(c), cuerpo(shaNube));
+      }
+      if (!res.ok) throw new ErrorNube(`GitHub respondió ${res.status}.`, res.status);
+      shaNube = (await res.json()).content.sha;
+      if (estado === enviado || (estado && estado.modificado === enviado.modificado)) {
+        await modificarSinMarca((e) => { e.pendienteNube = false; });
+      }
+      avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+    } catch (err) {
+      avisarNube({ estado: 'error', mensaje: err instanceof ErrorNube ? err.message : 'No se pudo guardar en GitHub.' });
+    }
+  }
+
+  // Sube los cambios pendientes (agrupa cambios seguidos en una sola subida).
+  function programarSubida(espera = 800) {
+    if (!configNube()) return;
+    clearTimeout(temporizadorSubida);
+    temporizadorSubida = setTimeout(async () => {
+      if (subiendo) await subiendo;
+      subiendo = subirAhora().finally(() => { subiendo = null; });
+    }, espera);
+  }
+
+  // Al abrir: si GitHub tiene una versión más nueva, se usa esa; si la de este navegador es más nueva, se sube.
+  async function sincronizarAlAbrir() {
+    const c = configNube();
+    if (!c) { avisarNube({ estado: 'apagado', mensaje: '' }); return; }
+    avisarNube({ estado: 'subiendo', mensaje: 'Revisando GitHub…' });
+    try {
+      const remoto = await leerNube(c);
+      shaNube = remoto ? remoto.sha : null;
+      const remotoMasNuevo = remoto && (!estado.modificado || (remoto.datos.modificado || '') > estado.modificado);
+      if (remotoMasNuevo && !estado.pendienteNube) {
+        const nuevo = validarEstado(remoto.datos);
+        delete nuevo.sistema;
+        nuevo.ultimoRespaldo = estado.ultimoRespaldo;
+        nuevo.pendienteNube = false;
+        await guardarEstado(nuevo);
+        estado = nuevo;
+        avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+        try { window.dispatchEvent(new CustomEvent('datos-actualizados')); } catch { /* sin eventos */ }
+      } else if (!remoto || estado.pendienteNube || (estado.modificado || '') > (remoto.datos.modificado || '')) {
+        estado = { ...estado, pendienteNube: true };
+        await guardarEstado(estado);
+        programarSubida(0);
+      } else {
+        avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+      }
+    } catch (err) {
+      avisarNube({ estado: 'error', mensaje: err instanceof ErrorNube ? err.message : 'No se pudo leer GitHub.' });
+    }
+  }
+
+  // Conecta un repositorio. modo: 'traer' usa los datos de GitHub; 'subir' sube los de este navegador.
+  async function conectarNube(repo, token, modo) {
+    repo = String(repo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+    token = String(token || '').trim();
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new ErrorValidacion('Escribí el repositorio como usuario/nombre, por ejemplo brunoperez1988/sistema-retenciones-datos.');
+    if (!token) throw new ErrorValidacion('Pegá la clave (token) de GitHub.');
+    const c = { repo, token };
+    const res = await github(c, 'GET', `/repos/${repo}`).catch((e) => { throw new ErrorValidacion(e.message); });
+    if (res.status === 404) throw new ErrorValidacion('No encontré ese repositorio, o la clave no tiene acceso a él.');
+    if (!res.ok) throw new ErrorValidacion(`GitHub respondió ${res.status}.`);
+    const info = await res.json();
+    if (!info.private) throw new ErrorValidacion('Ese repositorio es PÚBLICO: cualquiera vería las cédulas y los juicios. Usá un repositorio privado.');
+    if (info.permissions && info.permissions.push === false) throw new ErrorValidacion('La clave no tiene permiso para escribir en ese repositorio.');
+    const remoto = await leerNube(c).catch((e) => { throw new ErrorValidacion(e.message); });
+    if (remoto && modo === undefined) return { pregunta: true, retenciones: (remoto.datos.retenciones || []).length, descuentos: (remoto.datos.descuentos || []).length, modificado: remoto.datos.modificado || '' };
+    guardarConfigNube(c);
+    shaNube = remoto ? remoto.sha : null;
+    if (remoto && modo === 'traer') {
+      const nuevo = validarEstado(remoto.datos);
+      delete nuevo.sistema;
+      nuevo.ultimoRespaldo = estado.ultimoRespaldo;
+      nuevo.pendienteNube = false;
+      await guardarEstado(nuevo);
+      estado = nuevo;
+      avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+    } else {
+      await modificarSinMarca((e) => { e.pendienteNube = true; });
+      if (subiendo) await subiendo;
+      await subirAhora();
+      if (estadoNube.estado === 'error') {
+        guardarConfigNube(null);
+        throw new ErrorValidacion(estadoNube.mensaje);
+      }
+    }
+    return { conectado: true };
+  }
+
+  function desconectarNube() {
+    guardarConfigNube(null);
+    shaNube = null;
+    avisarNube({ estado: 'apagado', mensaje: '' });
+  }
+
+  // Si se vuelve a la pestaña, se suben pendientes o se traen cambios de otra computadora.
+  try {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || !estado || !configNube() || subiendo) return;
+      if (estado.pendienteNube) programarSubida(0);
+    });
+  } catch { /* sin documento */ }
 
   const ahora = () => {
     const d = new Date();
@@ -100,8 +293,10 @@
     const copia = structuredClone(estado);
     const resultado = fn(copia);
     copia.modificado = ahora();
+    if (configNube()) copia.pendienteNube = true;
     await guardarEstado(copia);
     estado = copia;
+    programarSubida();
     return resultado;
   }
 
@@ -400,12 +595,14 @@
         colaboradores: estado.colaboradores.length, entidades: estado.entidades.length, empresas: estado.empresas.length,
       },
       ejemplos: Boolean(estado.ejemplos),
+      nube: { ...estadoNube, pendiente: Boolean(estado.pendienteNube) },
     };
   }
 
   async function exportarRespaldo() {
     const copia = { ...structuredClone(estado), sistema: 'Sistema de Retenciones', exportado: ahora() };
     delete copia.ultimoRespaldo;
+    delete copia.pendienteNube;
     const blob = new Blob([JSON.stringify(copia, null, 1)], { type: 'application/json' });
     await modificarSinMarca((e) => { e.ultimoRespaldo = ahora(); });
     return blob;
@@ -425,16 +622,20 @@
     delete nuevo.sistema; delete nuevo.exportado;
     nuevo.ultimoRespaldo = ahora();
     nuevo.modificado = ahora();
+    nuevo.pendienteNube = Boolean(configNube());
     await guardarEstado(nuevo);
     estado = nuevo;
+    programarSubida(0);
     return infoDatos();
   }
 
   async function borrarTodo() {
     const nuevo = estadoVacio();
     nuevo.modificado = ahora();
+    nuevo.pendienteNube = Boolean(configNube());
     await guardarEstado(nuevo);
     estado = nuevo;
+    programarSubida(0);
     return infoDatos();
   }
 
@@ -653,5 +854,9 @@
     exportarRespaldo: async () => { await iniciar(); return exportarRespaldo(); },
     importarRespaldo: async (t) => { await iniciar(); return importarRespaldo(t); },
     borrarTodo: async () => { await iniciar(); return borrarTodo(); },
+    conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
+    desconectarNube,
+    guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
+    estadoNube: () => estadoNube,
   };
 })();

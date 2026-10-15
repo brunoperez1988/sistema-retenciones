@@ -200,6 +200,23 @@ const vistas = {
 };
 
 if (LOCAL) {
+  const pastilla = document.createElement('a');
+  pastilla.id = 'estado-nube';
+  pastilla.className = 'estado-nube';
+  pastilla.href = '#/respaldo';
+  pastilla.hidden = true;
+  document.querySelector('.barra-interior').appendChild(pastilla);
+  const pintarNube = (n) => {
+    pastilla.hidden = !n || n.estado === 'apagado';
+    if (pastilla.hidden) return;
+    pastilla.dataset.estado = n.estado;
+    pastilla.textContent = n.estado === 'ok' ? '✓ En GitHub' : n.estado === 'subiendo' ? '↻ Guardando' : '⚠ Sin guardar';
+    pastilla.title = n.mensaje || '';
+  };
+  window.addEventListener('nube-estado', (ev) => pintarNube(ev.detail));
+  window.addEventListener('datos-actualizados', () => { aviso('Se cargaron los datos más nuevos desde GitHub.'); navegar(); });
+  pintarNube(window.backendLocal.estadoNube());
+
   const enlace = document.createElement('a');
   enlace.href = '#/respaldo';
   enlace.dataset.seccion = 'respaldo';
@@ -882,7 +899,8 @@ async function vistaRespaldo(_params, vigente) {
   const dias = diasDesde(info.ultimoRespaldo);
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Respaldo de los datos</h1>
-      <p>Todo lo que cargás se guarda automáticamente en este navegador, en esta computadora.</p></div></div>
+      <p>Todo lo que cargás se guarda automáticamente en este navegador${info.nube.estado !== 'apagado' ? ' y en tu repositorio privado de GitHub' : ', en esta computadora'}.</p></div></div>
+    ${seccionGithub(info.nube)}
     <div class="columnas">
       <section class="tarjeta">
         <h2>Descargar respaldo</h2>
@@ -916,6 +934,8 @@ async function vistaRespaldo(_params, vigente) {
         <div class="acciones"><button class="boton peligro" type="button" id="borrar-todo">Borrar todo y empezar de cero</button></div>
       </section>
     </div>`;
+
+  conectarSeccionGithub(info.nube);
 
   const zona = document.getElementById('zona-respaldo');
   const bajar = async () => {
@@ -954,6 +974,75 @@ async function vistaRespaldo(_params, vigente) {
     try { await window.backendLocal.borrarTodo(); aviso('Listo: el sistema quedó vacío.'); location.hash = '#/panel'; }
     catch (e) { console.error(e); aviso(MENSAJE_FALLA); }
   });
+}
+
+function seccionGithub(n) {
+  if (n.estado !== 'apagado') {
+    const txt = n.estado === 'ok' ? 'Todo guardado en GitHub.' : n.estado === 'subiendo' ? 'Guardando en GitHub…' : `No se pudo guardar en GitHub: ${esc(n.mensaje)} Tus datos están a salvo en este navegador y se suben solos cuando vuelva la conexión.`;
+    return `<section class="tarjeta">
+      <h2>Guardado en GitHub</h2>
+      <p>Cada cambio se guarda solo en el repositorio privado <a href="https://github.com/${esc(n.repo)}" target="_blank" rel="noopener"><strong>${esc(n.repo)}</strong></a>, con su historial de versiones. Desde otra computadora, conectá el mismo repositorio y vas a ver los mismos datos.</p>
+      <div class="${n.estado === 'error' ? 'mensaje error' : 'mensaje ok'}" style="margin:12px 0">${txt}</div>
+      <div class="acciones"><button class="boton" type="button" id="nube-ahora">Guardar ahora</button>
+        <button class="boton peligro" type="button" id="nube-desconectar">Desconectar de esta computadora</button></div>
+    </section>`;
+  }
+  return `<section class="tarjeta">
+    <h2>Guardar en GitHub (recomendado)</h2>
+    <p>Así los datos quedan guardados en un repositorio <strong>privado</strong> de tu cuenta, con historial, y los podés abrir desde cualquier computadora. Se hace una sola vez:</p>
+    <ol class="pasos">
+      <li>Creá un repositorio <strong>privado</strong>: entrá a <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a>, nombre <strong>sistema-retenciones-datos</strong>, marcá <strong>Private</strong> y tocá <strong>Create repository</strong>.</li>
+      <li>Creá la clave: entrá a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">esta página de GitHub</a>. Poné un nombre (por ejemplo “Retenciones”) y en <strong>Expiration</strong> elegí el plazo más largo. En <strong>Repository access</strong> elegí <strong>Only select repositories</strong> → <em>sistema-retenciones-datos</em>. En <strong>Permissions</strong> → <strong>Repository permissions</strong> → <strong>Contents</strong> elegí <strong>Read and write</strong>. Tocá <strong>Generate token</strong> y copiá la clave (empieza con <code>github_pat_</code>).</li>
+      <li>Pegala acá abajo y tocá <strong>Conectar</strong>.</li>
+    </ol>
+    <form class="formulario" id="form-nube" novalidate>
+      <div class="fila">
+        <div class="campo"><label for="nube-repo">Repositorio privado</label><input id="nube-repo" value="brunoperez1988/sistema-retenciones-datos" autocomplete="off"></div>
+        <div class="campo"><label for="nube-token">Clave de GitHub (token)</label><input id="nube-token" type="password" autocomplete="off" placeholder="github_pat_…"></div>
+      </div>
+      <p class="nota">La clave queda guardada solo en este navegador. Tratala como una contraseña: no la compartas.</p>
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton" type="submit">Conectar</button></div>
+    </form>
+  </section>`;
+}
+
+function conectarSeccionGithub(n) {
+  if (n.estado !== 'apagado') {
+    document.getElementById('nube-ahora').addEventListener('click', async (ev) => {
+      ev.target.disabled = true;
+      const r = await window.backendLocal.guardarEnNubeAhora().catch(() => null);
+      aviso(r && r.estado === 'ok' ? 'Guardado en GitHub.' : 'No se pudo guardar en GitHub. Tus datos están a salvo en este navegador.');
+      navegar();
+    });
+    document.getElementById('nube-desconectar').addEventListener('click', () => {
+      if (!confirm('¿Desconectar GitHub en esta computadora? Los datos que ya están en GitHub no se borran.')) return;
+      window.backendLocal.desconectarNube();
+      navegar();
+    });
+    return;
+  }
+  const form = document.getElementById('form-nube');
+  const zona = form.querySelector('.zona-mensaje');
+  const conectar = async (modo) => {
+    zona.innerHTML = '<p class="nota">Conectando con GitHub…</p>';
+    try {
+      const r = await window.backendLocal.conectarNube(form.querySelector('#nube-repo').value, form.querySelector('#nube-token').value, modo);
+      if (r.pregunta) {
+        zona.innerHTML = `<div class="falla-en-linea" style="display:block">
+          <p style="margin:0 0 10px">En ese repositorio ya hay datos guardados (${r.retenciones} retenciones y ${r.descuentos} descuentos${r.modificado ? `, último cambio ${fecha(r.modificado)}` : ''}). ¿Cuáles querés usar?</p>
+          <div class="acciones"><button class="boton" type="button" data-modo="traer">Usar los de GitHub</button>
+            <button class="boton secundario" type="button" data-modo="subir">Reemplazarlos por los de este navegador</button></div></div>`;
+        zona.querySelectorAll('[data-modo]').forEach((b) => b.addEventListener('click', () => conectar(b.dataset.modo)));
+        return;
+      }
+      aviso('Listo: los datos se guardan en GitHub.');
+      navegar();
+    } catch (e) {
+      zona.innerHTML = `<div class="mensaje error">${esc(e.message || 'No se pudo conectar con GitHub.')}</div>`;
+    }
+  };
+  form.addEventListener('submit', (ev) => { ev.preventDefault(); conectar(); });
 }
 
 navegar();

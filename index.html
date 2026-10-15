@@ -46,7 +46,7 @@ h2 { font-size: 1.1rem; color: var(--verde-profundo); }
   box-shadow: 0 2px 10px rgba(23, 82, 77, .25);
   border-bottom: 3px solid var(--ambar);
 }
-.barra-interior { max-width: 1440px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; gap: 24px; min-height: 60px; flex-wrap: wrap; }
+.barra-interior { max-width: 1440px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; gap: 16px; min-height: 60px; flex-wrap: wrap; }
 .marca { display: flex; align-items: center; gap: 10px; color: #fff; text-decoration: none; font-weight: 700; font-size: 1.05rem; white-space: nowrap; }
 .marca-logo { width: 32px; height: 32px; border-radius: 9px; background: var(--ambar); color: var(--verde-profundo); display: grid; place-items: center; }
 .marca-logo svg { width: 22px; height: 22px; }
@@ -207,6 +207,12 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 .radio-grupo label { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--texto); }
 .radio-grupo input { width: auto; }
 
+/* ── Estado del guardado en GitHub ── */
+.estado-nube { margin-left: auto; color: #fff; text-decoration: none; font-size: .82rem; font-weight: 600; padding: 5px 11px; border-radius: 999px; background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.3); white-space: nowrap; }
+.estado-nube[data-estado="error"] { background: var(--ambar); color: var(--verde-profundo); border-color: var(--ambar); }
+.pasos { margin: 8px 0 16px; padding-left: 22px; display: grid; gap: 8px; }
+.pasos code { background: var(--verde-claro); padding: 1px 5px; border-radius: 4px; }
+
 </style>
 </head>
 <body>
@@ -319,15 +325,208 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
       iniciando = (async () => {
         let e = await leerEstado();
         if (!e) {
-          e = estadoConEjemplos();
+          e = configNube() ? estadoVacio() : estadoConEjemplos();
           await guardarEstado(e);
         }
         estado = e;
         try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch { /* opcional */ }
+        sincronizarAlAbrir(); // en segundo plano: la app abre aunque GitHub tarde
       })().finally(() => { iniciando = null; });
     }
     await iniciando;
   }
+
+  // ── Guardado en GitHub (repositorio privado) ──
+  // Cada cambio se guarda primero en el navegador y enseguida se sube como un
+  // archivo JSON a un repositorio privado. Cada subida queda como un "commit",
+  // así que el repositorio guarda también el historial de versiones.
+
+  const CLAVE_NUBE = 'ret.nube';
+  const ARCHIVO_NUBE = 'datos/retenciones.json';
+  let shaNube = null;
+  let estadoNube = { estado: 'apagado', mensaje: '' };
+  let subiendo = null;
+  let temporizadorSubida = null;
+
+  function configNube() {
+    try { const c = JSON.parse(localStorage.getItem(CLAVE_NUBE) || 'null'); return c && c.token && c.repo ? c : null; } catch { return null; }
+  }
+  function guardarConfigNube(c) {
+    try { if (c) localStorage.setItem(CLAVE_NUBE, JSON.stringify(c)); else localStorage.removeItem(CLAVE_NUBE); } catch { /* sin almacenamiento */ }
+  }
+  function avisarNube(nuevo) {
+    estadoNube = { ...nuevo, repo: (configNube() || {}).repo || '', pendiente: Boolean(estado && estado.pendienteNube) };
+    try { window.dispatchEvent(new CustomEvent('nube-estado', { detail: estadoNube })); } catch { /* sin eventos */ }
+  }
+
+  function aBase64(texto) {
+    const bytes = new TextEncoder().encode(texto);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function deBase64(b64) {
+    const bin = atob(String(b64).replace(/\s/g, ''));
+    return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+  }
+
+  class ErrorNube extends Error {
+    constructor(mensaje, status = 0) { super(mensaje); this.status = status; }
+  }
+
+  async function github(config, metodo, ruta, cuerpo, accept = 'application/vnd.github+json') {
+    let res;
+    try {
+      res = await fetch(`https://api.github.com${ruta}`, {
+        method: metodo,
+        headers: { Authorization: `Bearer ${config.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(cuerpo ? { 'Content-Type': 'application/json' } : {}) },
+        body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+        cache: 'no-store',
+      });
+    } catch {
+      throw new ErrorNube('No hay conexión con GitHub.');
+    }
+    if (res.status === 401) throw new ErrorNube('La clave de GitHub no es válida o venció.', 401);
+    if (res.status === 403) throw new ErrorNube('La clave no tiene permiso sobre ese repositorio (revisá que tenga "Contents: Read and write").', 403);
+    return res;
+  }
+
+  const rutaArchivo = (c) => `/repos/${c.repo}/contents/${ARCHIVO_NUBE}`;
+
+  // Devuelve { datos, sha } del archivo en GitHub, o null si todavía no existe.
+  async function leerNube(c) {
+    const res = await github(c, 'GET', `${rutaArchivo(c)}?t=${Date.now()}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new ErrorNube(`GitHub respondió ${res.status}.`, res.status);
+    const info = await res.json();
+    let texto = info.content ? deBase64(info.content) : '';
+    if (!texto && info.size > 0) {
+      const raw = await github(c, 'GET', `${rutaArchivo(c)}?t=${Date.now()}`, null, 'application/vnd.github.raw+json');
+      texto = await raw.text();
+    }
+    return { datos: JSON.parse(texto), sha: info.sha };
+  }
+
+  function paraNube(e) {
+    const { ultimoRespaldo, pendienteNube, ...resto } = e;
+    return JSON.stringify({ sistema: 'Sistema de Retenciones', ...resto }, null, 1);
+  }
+
+  async function subirAhora() {
+    const c = configNube();
+    if (!c || !estado || !estado.pendienteNube) return;
+    const enviado = estado;
+    avisarNube({ estado: 'subiendo', mensaje: 'Guardando en GitHub…' });
+    try {
+      const cuerpo = (sha) => ({ message: `Datos actualizados ${enviado.modificado || ahora()}`, content: aBase64(paraNube(enviado)), ...(sha ? { sha } : {}) });
+      let res = await github(c, 'PUT', rutaArchivo(c), cuerpo(shaNube));
+      if (res.status === 409 || res.status === 422) {
+        // Otra computadora guardó antes: tomamos su versión del archivo y subimos encima (gana el último cambio).
+        const actual = await leerNube(c);
+        shaNube = actual ? actual.sha : null;
+        res = await github(c, 'PUT', rutaArchivo(c), cuerpo(shaNube));
+      }
+      if (!res.ok) throw new ErrorNube(`GitHub respondió ${res.status}.`, res.status);
+      shaNube = (await res.json()).content.sha;
+      if (estado === enviado || (estado && estado.modificado === enviado.modificado)) {
+        await modificarSinMarca((e) => { e.pendienteNube = false; });
+      }
+      avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+    } catch (err) {
+      avisarNube({ estado: 'error', mensaje: err instanceof ErrorNube ? err.message : 'No se pudo guardar en GitHub.' });
+    }
+  }
+
+  // Sube los cambios pendientes (agrupa cambios seguidos en una sola subida).
+  function programarSubida(espera = 800) {
+    if (!configNube()) return;
+    clearTimeout(temporizadorSubida);
+    temporizadorSubida = setTimeout(async () => {
+      if (subiendo) await subiendo;
+      subiendo = subirAhora().finally(() => { subiendo = null; });
+    }, espera);
+  }
+
+  // Al abrir: si GitHub tiene una versión más nueva, se usa esa; si la de este navegador es más nueva, se sube.
+  async function sincronizarAlAbrir() {
+    const c = configNube();
+    if (!c) { avisarNube({ estado: 'apagado', mensaje: '' }); return; }
+    avisarNube({ estado: 'subiendo', mensaje: 'Revisando GitHub…' });
+    try {
+      const remoto = await leerNube(c);
+      shaNube = remoto ? remoto.sha : null;
+      const remotoMasNuevo = remoto && (!estado.modificado || (remoto.datos.modificado || '') > estado.modificado);
+      if (remotoMasNuevo && !estado.pendienteNube) {
+        const nuevo = validarEstado(remoto.datos);
+        delete nuevo.sistema;
+        nuevo.ultimoRespaldo = estado.ultimoRespaldo;
+        nuevo.pendienteNube = false;
+        await guardarEstado(nuevo);
+        estado = nuevo;
+        avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+        try { window.dispatchEvent(new CustomEvent('datos-actualizados')); } catch { /* sin eventos */ }
+      } else if (!remoto || estado.pendienteNube || (estado.modificado || '') > (remoto.datos.modificado || '')) {
+        estado = { ...estado, pendienteNube: true };
+        await guardarEstado(estado);
+        programarSubida(0);
+      } else {
+        avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+      }
+    } catch (err) {
+      avisarNube({ estado: 'error', mensaje: err instanceof ErrorNube ? err.message : 'No se pudo leer GitHub.' });
+    }
+  }
+
+  // Conecta un repositorio. modo: 'traer' usa los datos de GitHub; 'subir' sube los de este navegador.
+  async function conectarNube(repo, token, modo) {
+    repo = String(repo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+    token = String(token || '').trim();
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new ErrorValidacion('Escribí el repositorio como usuario/nombre, por ejemplo brunoperez1988/sistema-retenciones-datos.');
+    if (!token) throw new ErrorValidacion('Pegá la clave (token) de GitHub.');
+    const c = { repo, token };
+    const res = await github(c, 'GET', `/repos/${repo}`).catch((e) => { throw new ErrorValidacion(e.message); });
+    if (res.status === 404) throw new ErrorValidacion('No encontré ese repositorio, o la clave no tiene acceso a él.');
+    if (!res.ok) throw new ErrorValidacion(`GitHub respondió ${res.status}.`);
+    const info = await res.json();
+    if (!info.private) throw new ErrorValidacion('Ese repositorio es PÚBLICO: cualquiera vería las cédulas y los juicios. Usá un repositorio privado.');
+    if (info.permissions && info.permissions.push === false) throw new ErrorValidacion('La clave no tiene permiso para escribir en ese repositorio.');
+    const remoto = await leerNube(c).catch((e) => { throw new ErrorValidacion(e.message); });
+    if (remoto && modo === undefined) return { pregunta: true, retenciones: (remoto.datos.retenciones || []).length, descuentos: (remoto.datos.descuentos || []).length, modificado: remoto.datos.modificado || '' };
+    guardarConfigNube(c);
+    shaNube = remoto ? remoto.sha : null;
+    if (remoto && modo === 'traer') {
+      const nuevo = validarEstado(remoto.datos);
+      delete nuevo.sistema;
+      nuevo.ultimoRespaldo = estado.ultimoRespaldo;
+      nuevo.pendienteNube = false;
+      await guardarEstado(nuevo);
+      estado = nuevo;
+      avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+    } else {
+      await modificarSinMarca((e) => { e.pendienteNube = true; });
+      if (subiendo) await subiendo;
+      await subirAhora();
+      if (estadoNube.estado === 'error') {
+        guardarConfigNube(null);
+        throw new ErrorValidacion(estadoNube.mensaje);
+      }
+    }
+    return { conectado: true };
+  }
+
+  function desconectarNube() {
+    guardarConfigNube(null);
+    shaNube = null;
+    avisarNube({ estado: 'apagado', mensaje: '' });
+  }
+
+  // Si se vuelve a la pestaña, se suben pendientes o se traen cambios de otra computadora.
+  try {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || !estado || !configNube() || subiendo) return;
+      if (estado.pendienteNube) programarSubida(0);
+    });
+  } catch { /* sin documento */ }
 
   const ahora = () => {
     const d = new Date();
@@ -340,8 +539,10 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
     const copia = structuredClone(estado);
     const resultado = fn(copia);
     copia.modificado = ahora();
+    if (configNube()) copia.pendienteNube = true;
     await guardarEstado(copia);
     estado = copia;
+    programarSubida();
     return resultado;
   }
 
@@ -640,12 +841,14 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
         colaboradores: estado.colaboradores.length, entidades: estado.entidades.length, empresas: estado.empresas.length,
       },
       ejemplos: Boolean(estado.ejemplos),
+      nube: { ...estadoNube, pendiente: Boolean(estado.pendienteNube) },
     };
   }
 
   async function exportarRespaldo() {
     const copia = { ...structuredClone(estado), sistema: 'Sistema de Retenciones', exportado: ahora() };
     delete copia.ultimoRespaldo;
+    delete copia.pendienteNube;
     const blob = new Blob([JSON.stringify(copia, null, 1)], { type: 'application/json' });
     await modificarSinMarca((e) => { e.ultimoRespaldo = ahora(); });
     return blob;
@@ -665,16 +868,20 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
     delete nuevo.sistema; delete nuevo.exportado;
     nuevo.ultimoRespaldo = ahora();
     nuevo.modificado = ahora();
+    nuevo.pendienteNube = Boolean(configNube());
     await guardarEstado(nuevo);
     estado = nuevo;
+    programarSubida(0);
     return infoDatos();
   }
 
   async function borrarTodo() {
     const nuevo = estadoVacio();
     nuevo.modificado = ahora();
+    nuevo.pendienteNube = Boolean(configNube());
     await guardarEstado(nuevo);
     estado = nuevo;
+    programarSubida(0);
     return infoDatos();
   }
 
@@ -893,6 +1100,10 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
     exportarRespaldo: async () => { await iniciar(); return exportarRespaldo(); },
     importarRespaldo: async (t) => { await iniciar(); return importarRespaldo(t); },
     borrarTodo: async () => { await iniciar(); return borrarTodo(); },
+    conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
+    desconectarNube,
+    guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
+    estadoNube: () => estadoNube,
   };
 })();
 
@@ -1100,6 +1311,23 @@ const vistas = {
 };
 
 if (LOCAL) {
+  const pastilla = document.createElement('a');
+  pastilla.id = 'estado-nube';
+  pastilla.className = 'estado-nube';
+  pastilla.href = '#/respaldo';
+  pastilla.hidden = true;
+  document.querySelector('.barra-interior').appendChild(pastilla);
+  const pintarNube = (n) => {
+    pastilla.hidden = !n || n.estado === 'apagado';
+    if (pastilla.hidden) return;
+    pastilla.dataset.estado = n.estado;
+    pastilla.textContent = n.estado === 'ok' ? '✓ En GitHub' : n.estado === 'subiendo' ? '↻ Guardando' : '⚠ Sin guardar';
+    pastilla.title = n.mensaje || '';
+  };
+  window.addEventListener('nube-estado', (ev) => pintarNube(ev.detail));
+  window.addEventListener('datos-actualizados', () => { aviso('Se cargaron los datos más nuevos desde GitHub.'); navegar(); });
+  pintarNube(window.backendLocal.estadoNube());
+
   const enlace = document.createElement('a');
   enlace.href = '#/respaldo';
   enlace.dataset.seccion = 'respaldo';
@@ -1782,7 +2010,8 @@ async function vistaRespaldo(_params, vigente) {
   const dias = diasDesde(info.ultimoRespaldo);
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Respaldo de los datos</h1>
-      <p>Todo lo que cargás se guarda automáticamente en este navegador, en esta computadora.</p></div></div>
+      <p>Todo lo que cargás se guarda automáticamente en este navegador${info.nube.estado !== 'apagado' ? ' y en tu repositorio privado de GitHub' : ', en esta computadora'}.</p></div></div>
+    ${seccionGithub(info.nube)}
     <div class="columnas">
       <section class="tarjeta">
         <h2>Descargar respaldo</h2>
@@ -1816,6 +2045,8 @@ async function vistaRespaldo(_params, vigente) {
         <div class="acciones"><button class="boton peligro" type="button" id="borrar-todo">Borrar todo y empezar de cero</button></div>
       </section>
     </div>`;
+
+  conectarSeccionGithub(info.nube);
 
   const zona = document.getElementById('zona-respaldo');
   const bajar = async () => {
@@ -1854,6 +2085,75 @@ async function vistaRespaldo(_params, vigente) {
     try { await window.backendLocal.borrarTodo(); aviso('Listo: el sistema quedó vacío.'); location.hash = '#/panel'; }
     catch (e) { console.error(e); aviso(MENSAJE_FALLA); }
   });
+}
+
+function seccionGithub(n) {
+  if (n.estado !== 'apagado') {
+    const txt = n.estado === 'ok' ? 'Todo guardado en GitHub.' : n.estado === 'subiendo' ? 'Guardando en GitHub…' : `No se pudo guardar en GitHub: ${esc(n.mensaje)} Tus datos están a salvo en este navegador y se suben solos cuando vuelva la conexión.`;
+    return `<section class="tarjeta">
+      <h2>Guardado en GitHub</h2>
+      <p>Cada cambio se guarda solo en el repositorio privado <a href="https://github.com/${esc(n.repo)}" target="_blank" rel="noopener"><strong>${esc(n.repo)}</strong></a>, con su historial de versiones. Desde otra computadora, conectá el mismo repositorio y vas a ver los mismos datos.</p>
+      <div class="${n.estado === 'error' ? 'mensaje error' : 'mensaje ok'}" style="margin:12px 0">${txt}</div>
+      <div class="acciones"><button class="boton" type="button" id="nube-ahora">Guardar ahora</button>
+        <button class="boton peligro" type="button" id="nube-desconectar">Desconectar de esta computadora</button></div>
+    </section>`;
+  }
+  return `<section class="tarjeta">
+    <h2>Guardar en GitHub (recomendado)</h2>
+    <p>Así los datos quedan guardados en un repositorio <strong>privado</strong> de tu cuenta, con historial, y los podés abrir desde cualquier computadora. Se hace una sola vez:</p>
+    <ol class="pasos">
+      <li>Creá un repositorio <strong>privado</strong>: entrá a <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a>, nombre <strong>sistema-retenciones-datos</strong>, marcá <strong>Private</strong> y tocá <strong>Create repository</strong>.</li>
+      <li>Creá la clave: entrá a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">esta página de GitHub</a>. Poné un nombre (por ejemplo “Retenciones”) y en <strong>Expiration</strong> elegí el plazo más largo. En <strong>Repository access</strong> elegí <strong>Only select repositories</strong> → <em>sistema-retenciones-datos</em>. En <strong>Permissions</strong> → <strong>Repository permissions</strong> → <strong>Contents</strong> elegí <strong>Read and write</strong>. Tocá <strong>Generate token</strong> y copiá la clave (empieza con <code>github_pat_</code>).</li>
+      <li>Pegala acá abajo y tocá <strong>Conectar</strong>.</li>
+    </ol>
+    <form class="formulario" id="form-nube" novalidate>
+      <div class="fila">
+        <div class="campo"><label for="nube-repo">Repositorio privado</label><input id="nube-repo" value="brunoperez1988/sistema-retenciones-datos" autocomplete="off"></div>
+        <div class="campo"><label for="nube-token">Clave de GitHub (token)</label><input id="nube-token" type="password" autocomplete="off" placeholder="github_pat_…"></div>
+      </div>
+      <p class="nota">La clave queda guardada solo en este navegador. Tratala como una contraseña: no la compartas.</p>
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton" type="submit">Conectar</button></div>
+    </form>
+  </section>`;
+}
+
+function conectarSeccionGithub(n) {
+  if (n.estado !== 'apagado') {
+    document.getElementById('nube-ahora').addEventListener('click', async (ev) => {
+      ev.target.disabled = true;
+      const r = await window.backendLocal.guardarEnNubeAhora().catch(() => null);
+      aviso(r && r.estado === 'ok' ? 'Guardado en GitHub.' : 'No se pudo guardar en GitHub. Tus datos están a salvo en este navegador.');
+      navegar();
+    });
+    document.getElementById('nube-desconectar').addEventListener('click', () => {
+      if (!confirm('¿Desconectar GitHub en esta computadora? Los datos que ya están en GitHub no se borran.')) return;
+      window.backendLocal.desconectarNube();
+      navegar();
+    });
+    return;
+  }
+  const form = document.getElementById('form-nube');
+  const zona = form.querySelector('.zona-mensaje');
+  const conectar = async (modo) => {
+    zona.innerHTML = '<p class="nota">Conectando con GitHub…</p>';
+    try {
+      const r = await window.backendLocal.conectarNube(form.querySelector('#nube-repo').value, form.querySelector('#nube-token').value, modo);
+      if (r.pregunta) {
+        zona.innerHTML = `<div class="falla-en-linea" style="display:block">
+          <p style="margin:0 0 10px">En ese repositorio ya hay datos guardados (${r.retenciones} retenciones y ${r.descuentos} descuentos${r.modificado ? `, último cambio ${fecha(r.modificado)}` : ''}). ¿Cuáles querés usar?</p>
+          <div class="acciones"><button class="boton" type="button" data-modo="traer">Usar los de GitHub</button>
+            <button class="boton secundario" type="button" data-modo="subir">Reemplazarlos por los de este navegador</button></div></div>`;
+        zona.querySelectorAll('[data-modo]').forEach((b) => b.addEventListener('click', () => conectar(b.dataset.modo)));
+        return;
+      }
+      aviso('Listo: los datos se guardan en GitHub.');
+      navegar();
+    } catch (e) {
+      zona.innerHTML = `<div class="mensaje error">${esc(e.message || 'No se pudo conectar con GitHub.')}</div>`;
+    }
+  };
+  form.addEventListener('submit', (ev) => { ev.preventDefault(); conectar(); });
 }
 
 navegar();

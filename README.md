@@ -15,6 +15,7 @@ Si la computadora no deja instalar programas ni abrir archivos `.bat`, usá **Si
    - **Descargar respaldo**: baja un archivo con todos los datos. Hacelo seguido y guardalo en un pendrive, en la nube o en tu correo.
    - **Recuperar un respaldo**: vuelve a cargar los datos desde ese archivo (también sirve para pasarlos a otra computadora).
    - **Empezar de cero**: borra los datos de ejemplo para cargar los reales.
+   - **Guardar en GitHub** (recomendado): conecta un repositorio **privado** de tu cuenta (por ejemplo `sistema-retenciones-datos`) con una clave de acceso de GitHub (*fine-grained token* con permiso *Contents: Read and write* solo sobre ese repositorio). Desde ahí cada cambio se sube solo al archivo `datos/retenciones.json`, cada subida queda como una versión en el historial, y desde otra computadora se conecta el mismo repositorio para ver los mismos datos. La app no deja usar un repositorio público.
 
 Ojo: si se borran los datos de navegación del navegador (“cookies y datos de sitios”), se borran también los datos del sistema. Por eso es importante el respaldo.
 
