@@ -52,7 +52,7 @@ h2 { font-size: 1.1rem; color: var(--verde-profundo); }
 .marca-logo svg { width: 22px; height: 22px; }
 .menu { display: flex; gap: 4px; flex-wrap: wrap; }
 .menu a {
-  color: #e6f6f3; text-decoration: none; padding: 8px 12px; border-radius: 8px; font-weight: 500; font-size: .93rem;
+  color: #e6f6f3; text-decoration: none; padding: 8px 10px; border-radius: 8px; font-weight: 500; font-size: .93rem;
   transition: background .15s, color .15s;
 }
 .menu a:hover { background: rgba(255, 255, 255, .14); color: #fff; }
@@ -213,6 +213,18 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 .pasos { margin: 8px 0 16px; padding-left: 22px; display: grid; gap: 8px; }
 .pasos code { background: var(--verde-claro); padding: 1px 5px; border-radius: 4px; }
 
+/* ── Acceso ── */
+.boton-salir { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.boton-salir:hover { background: rgba(255,255,255,.15); }
+.estado-nube + .boton-salir, .estado-nube[hidden] + .boton-salir { margin-left: 0; }
+.estado-nube[hidden] + .boton-salir { margin-left: auto; }
+body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, body.bloqueado .boton-salir { display: none !important; }
+.acceso { max-width: 440px; margin: 48px auto; border-top: 4px solid var(--ambar); }
+.acceso h1 { margin-bottom: 8px; }
+.acceso p { color: var(--texto-suave); }
+.enlace { background: none; border: none; padding: 0; font: inherit; color: var(--verde-oscuro); text-decoration: underline; cursor: pointer; }
+@media (max-width: 900px) { .boton-salir { order: 2; } }
+
 </style>
 </head>
 <body>
@@ -289,25 +301,146 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
     return bd;
   }
 
-  async function leerEstado() {
+  async function leerRegistro(clave) {
     const b = await conexion();
     return new Promise((resolve, reject) => {
       const tx = b.transaction(ALMACEN, 'readonly');
-      const p = tx.objectStore(ALMACEN).get(CLAVE);
-      p.onsuccess = () => resolve(p.result || null);
+      const p = tx.objectStore(ALMACEN).get(clave);
+      p.onsuccess = () => resolve(p.result === undefined ? null : p.result);
       p.onerror = () => reject(p.error);
     });
   }
 
-  async function guardarEstado(valor) {
+  async function guardarRegistro(clave, valor) {
     const b = await conexion();
     return new Promise((resolve, reject) => {
       const tx = b.transaction(ALMACEN, 'readwrite');
-      tx.objectStore(ALMACEN).put(valor, CLAVE);
+      if (valor === null) tx.objectStore(ALMACEN).delete(clave); else tx.objectStore(ALMACEN).put(valor, clave);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('Escritura cancelada'));
     });
+  }
+
+  // ── Usuario y contraseña ──
+  // La contraseña nunca se guarda: de ella se deriva (PBKDF2) una llave AES-GCM que
+  // cifra los datos y la clave de GitHub guardados en este navegador. Sin la
+  // contraseña, lo guardado en la compu no se puede leer.
+
+  const CLAVE_CUENTA = 'ret.cuenta';
+  const ITERACIONES = 310000;
+  let llave = null;
+  let usuarioActual = '';
+
+  class ErrorBloqueado extends Error { constructor() { super('Ingresá con tu usuario y contraseña.'); this.bloqueado = true; } }
+
+  const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+  const deB64 = (t) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+
+  function leerCuenta() {
+    try { return JSON.parse(localStorage.getItem(CLAVE_CUENTA) || 'null'); } catch { return null; }
+  }
+
+  async function derivarLlave(contrasena, sal, iteraciones) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(contrasena), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: sal, iterations: iteraciones, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+
+  async function cifrar(valor, conLlave = llave) {
+    if (!conLlave) throw new ErrorBloqueado();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const datos = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, conLlave, new TextEncoder().encode(JSON.stringify(valor)));
+    return { cifrado: 1, iv, datos };
+  }
+
+  async function descifrar(registro, conLlave = llave) {
+    if (!registro || !registro.cifrado) return registro; // dato anterior a la contraseña
+    if (!conLlave) throw new ErrorBloqueado();
+    const plano = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: registro.iv }, conLlave, registro.datos);
+    return JSON.parse(new TextDecoder().decode(plano));
+  }
+
+  async function leerEstado() { return descifrar(await leerRegistro(CLAVE)); }
+  async function guardarEstado(valor) { await guardarRegistro(CLAVE, await cifrar(valor)); }
+
+  function normalizarUsuario(u) { return String(u || '').trim().toLowerCase(); }
+
+  async function desbloquear(nuevaLlave, usuario) {
+    llave = nuevaLlave;
+    usuarioActual = usuario;
+    // Pasa al formato cifrado lo que estuviera guardado sin cifrar (versiones anteriores).
+    const registro = await leerRegistro(CLAVE);
+    if (registro && !registro.cifrado) await guardarRegistro(CLAVE, await cifrar(registro));
+    let nube = await descifrar(await leerRegistro('nube'));
+    try {
+      const vieja = JSON.parse(localStorage.getItem('ret.nube') || 'null');
+      if (!nube && vieja && vieja.token) nube = vieja;
+      localStorage.removeItem('ret.nube');
+    } catch { /* sin almacenamiento */ }
+    nubeCfg = nube && nube.token && nube.repo ? nube : null;
+    if (nubeCfg) await guardarRegistro('nube', await cifrar(nubeCfg));
+  }
+
+  async function crearCuenta(usuario, contrasena, repetida) {
+    if (leerCuenta()) throw new ErrorValidacion('Ya hay un usuario creado en este navegador.');
+    const u = normalizarUsuario(usuario);
+    if (!/^[a-z0-9._-]{3,40}$/.test(u)) throw new ErrorValidacion('El usuario debe tener entre 3 y 40 letras o números, sin espacios.');
+    if (String(contrasena || '').length < 8) throw new ErrorValidacion('La contraseña debe tener al menos 8 caracteres.');
+    if (contrasena !== repetida) throw new ErrorValidacion('Las dos contraseñas no coinciden.');
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const nueva = await derivarLlave(contrasena, sal, ITERACIONES);
+    const verif = await cifrar({ usuario: u }, nueva);
+    await desbloquear(nueva, u);
+    localStorage.setItem(CLAVE_CUENTA, JSON.stringify({ usuario: u, sal: b64(sal), iteraciones: ITERACIONES, verif: { iv: b64(verif.iv), datos: b64(verif.datos) } }));
+    return { usuario: u };
+  }
+
+  async function ingresar(usuario, contrasena) {
+    const c = leerCuenta();
+    if (!c) throw new ErrorValidacion('Todavía no hay un usuario creado.');
+    const incorrecto = new ErrorValidacion('Usuario o contraseña incorrectos.');
+    if (normalizarUsuario(usuario) !== c.usuario) { await new Promise((r) => setTimeout(r, 600)); throw incorrecto; }
+    const candidata = await derivarLlave(String(contrasena || ''), deB64(c.sal), c.iteraciones);
+    try {
+      await descifrar({ cifrado: 1, iv: deB64(c.verif.iv), datos: deB64(c.verif.datos) }, candidata);
+    } catch {
+      throw incorrecto;
+    }
+    await desbloquear(candidata, c.usuario);
+    return { usuario: c.usuario };
+  }
+
+  async function cambiarContrasena(actual, nueva, repetida) {
+    const c = leerCuenta();
+    if (!c || !llave) throw new ErrorBloqueado();
+    const vieja = await derivarLlave(String(actual || ''), deB64(c.sal), c.iteraciones);
+    try { await descifrar({ cifrado: 1, iv: deB64(c.verif.iv), datos: deB64(c.verif.datos) }, vieja); } catch { throw new ErrorValidacion('La contraseña actual no es correcta.'); }
+    if (String(nueva || '').length < 8) throw new ErrorValidacion('La contraseña nueva debe tener al menos 8 caracteres.');
+    if (nueva !== repetida) throw new ErrorValidacion('Las dos contraseñas nuevas no coinciden.');
+    await iniciar();
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const llaveNueva = await derivarLlave(nueva, sal, ITERACIONES);
+    const verif = await cifrar({ usuario: c.usuario }, llaveNueva);
+    await guardarRegistro(CLAVE, await cifrar(estado, llaveNueva));
+    await guardarRegistro('nube', nubeCfg ? await cifrar(nubeCfg, llaveNueva) : null);
+    localStorage.setItem(CLAVE_CUENTA, JSON.stringify({ usuario: c.usuario, sal: b64(sal), iteraciones: ITERACIONES, verif: { iv: b64(verif.iv), datos: b64(verif.datos) } }));
+    llave = llaveNueva;
+    return { ok: true };
+  }
+
+  // Olvidé la contraseña: se borra lo guardado en este navegador (los datos de GitHub no se tocan).
+  async function olvideContrasena() {
+    await guardarRegistro(CLAVE, null);
+    await guardarRegistro('nube', null);
+    try { localStorage.removeItem(CLAVE_CUENTA); localStorage.removeItem('ret.nube'); localStorage.setItem('ret.sinEjemplos', '1'); } catch { /* sin almacenamiento */ }
+    llave = null; estado = null; nubeCfg = null;
+  }
+
+  function salir() { llave = null; estado = null; nubeCfg = null; usuarioActual = ''; }
+
+  function cuenta() {
+    const c = leerCuenta();
+    return { existe: Boolean(c), usuario: c ? c.usuario : '', desbloqueada: Boolean(llave) };
   }
 
   // ── Estado en memoria ──
@@ -320,12 +453,15 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
   }
 
   async function iniciar() {
+    if (!llave) throw new ErrorBloqueado();
     if (estado) return;
     if (!iniciando) {
       iniciando = (async () => {
         let e = await leerEstado();
         if (!e) {
-          e = configNube() ? estadoVacio() : estadoConEjemplos();
+          let sinEjemplos = false;
+          try { sinEjemplos = localStorage.getItem('ret.sinEjemplos') === '1'; } catch { /* sin almacenamiento */ }
+          e = configNube() || sinEjemplos ? estadoVacio() : estadoConEjemplos();
           await guardarEstado(e);
         }
         estado = e;
@@ -341,18 +477,18 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
   // archivo JSON a un repositorio privado. Cada subida queda como un "commit",
   // así que el repositorio guarda también el historial de versiones.
 
-  const CLAVE_NUBE = 'ret.nube';
-  const ARCHIVO_NUBE = 'datos/retenciones.json';
+    const ARCHIVO_NUBE = 'datos/retenciones.json';
   let shaNube = null;
   let estadoNube = { estado: 'apagado', mensaje: '' };
   let subiendo = null;
   let temporizadorSubida = null;
 
-  function configNube() {
-    try { const c = JSON.parse(localStorage.getItem(CLAVE_NUBE) || 'null'); return c && c.token && c.repo ? c : null; } catch { return null; }
-  }
-  function guardarConfigNube(c) {
-    try { if (c) localStorage.setItem(CLAVE_NUBE, JSON.stringify(c)); else localStorage.removeItem(CLAVE_NUBE); } catch { /* sin almacenamiento */ }
+  // La clave de GitHub se guarda cifrada con la contraseña (registro 'nube').
+  let nubeCfg = null;
+  function configNube() { return nubeCfg; }
+  async function guardarConfigNube(c) {
+    nubeCfg = c;
+    await guardarRegistro('nube', c ? await cifrar(c) : null);
   }
   function avisarNube(nuevo) {
     estadoNube = { ...nuevo, repo: (configNube() || {}).repo || '', pendiente: Boolean(estado && estado.pendienteNube) };
@@ -492,7 +628,7 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
     if (info.permissions && info.permissions.push === false) throw new ErrorValidacion('La clave no tiene permiso para escribir en ese repositorio.');
     const remoto = await leerNube(c).catch((e) => { throw new ErrorValidacion(e.message); });
     if (remoto && modo === undefined) return { pregunta: true, retenciones: (remoto.datos.retenciones || []).length, descuentos: (remoto.datos.descuentos || []).length, modificado: remoto.datos.modificado || '' };
-    guardarConfigNube(c);
+    await guardarConfigNube(c);
     shaNube = remoto ? remoto.sha : null;
     if (remoto && modo === 'traer') {
       const nuevo = validarEstado(remoto.datos);
@@ -507,15 +643,15 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
       if (subiendo) await subiendo;
       await subirAhora();
       if (estadoNube.estado === 'error') {
-        guardarConfigNube(null);
+        await guardarConfigNube(null);
         throw new ErrorValidacion(estadoNube.mensaje);
       }
     }
     return { conectado: true };
   }
 
-  function desconectarNube() {
-    guardarConfigNube(null);
+  async function desconectarNube() {
+    await guardarConfigNube(null);
     shaNube = null;
     avisarNube({ estado: 'apagado', mensaje: '' });
   }
@@ -1095,6 +1231,7 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 
   window.backendLocal = {
     ErrorValidacion,
+    cuenta, crearCuenta, ingresar, cambiarContrasena, olvideContrasena, salir,
     manejar,
     descargar,
     exportarRespaldo: async () => { await iniciar(); return exportarRespaldo(); },
@@ -1328,6 +1465,21 @@ if (LOCAL) {
   window.addEventListener('datos-actualizados', () => { aviso('Se cargaron los datos más nuevos desde GitHub.'); navegar(); });
   pintarNube(window.backendLocal.estadoNube());
 
+  const salir = document.createElement('button');
+  salir.type = 'button';
+  salir.id = 'boton-salir';
+  salir.className = 'boton-salir';
+  salir.textContent = 'Salir';
+  salir.addEventListener('click', cerrarSesion);
+  document.querySelector('.barra-interior').appendChild(salir);
+
+  // Se cierra sola la sesión después de 20 minutos sin usar el sistema.
+  let ultimoUso = Date.now();
+  ['click', 'keydown', 'mousemove', 'touchstart'].forEach((t) => window.addEventListener(t, () => { ultimoUso = Date.now(); }, { passive: true }));
+  setInterval(() => {
+    if (window.backendLocal.cuenta().desbloqueada && Date.now() - ultimoUso > 20 * 60 * 1000) cerrarSesion();
+  }, 30 * 1000);
+
   const enlace = document.createElement('a');
   enlace.href = '#/respaldo';
   enlace.dataset.seccion = 'respaldo';
@@ -1337,6 +1489,12 @@ if (LOCAL) {
 
 let navegacionActual = 0;
 async function navegar() {
+  if (LOCAL) {
+    const c = window.backendLocal.cuenta();
+    document.body.classList.toggle('bloqueado', !c.desbloqueada);
+    if (!c.desbloqueada) { pantallaAcceso(c); return; }
+    document.getElementById('boton-salir').title = `Cerrar la sesión de ${c.usuario}`;
+  }
   const [ruta, consulta = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const seccion = vistas[ruta] ? ruta : 'panel';
   document.querySelectorAll('.menu a').forEach((a) => a.classList.toggle('activo', a.dataset.seccion === seccion));
@@ -1452,7 +1610,7 @@ async function vistaRetenciones(_params, vigente) {
           <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
             <input id="r-benef" maxlength="200" placeholder="A quién se le abona"><span class="ayuda">Obligatorio en retenciones judiciales.</span></div>
           <div class="campo"><label for="r-cargo">Cargada por <span class="obligatorio">*</span></label>
-            <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo'))}" required></div>
+            <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo') || usuarioSesion())}" required></div>
           <div class="zona-mensaje"></div>
           <div class="acciones"><button class="boton" type="submit">Guardar retención</button></div>
         </form>
@@ -1588,7 +1746,7 @@ async function vistaDescuentos(params, vigente) {
               ${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="fila">
             <div class="campo"><label for="d-quien">Descontado por <span class="obligatorio">*</span></label>
-              <input id="d-quien" maxlength="80" value="${esc(recordar.leer('quien'))}" required></div>
+              <input id="d-quien" maxlength="80" value="${esc(recordar.leer('quien') || usuarioSesion())}" required></div>
             <div class="campo"><label for="d-fecha">Fecha <span class="obligatorio">*</span></label>
               <input type="date" id="d-fecha" value="${hoy()}" required></div>
           </div>
@@ -1992,6 +2150,7 @@ async function avisoRespaldo() {
   if (!LOCAL) return '';
   let info;
   try { info = await api('/api/datos'); } catch { return ''; }
+  if (info.nube && info.nube.estado !== 'apagado') return ''; // ya se guarda solo en GitHub
   const hayCambios = info.modificado && (!info.ultimoRespaldo || info.modificado > info.ultimoRespaldo);
   const dias = diasDesde(info.ultimoRespaldo);
   if (info.ejemplos && !info.ultimoRespaldo) {
@@ -2012,6 +2171,7 @@ async function vistaRespaldo(_params, vigente) {
     <div class="encabezado"><div><h1>Respaldo de los datos</h1>
       <p>Todo lo que cargás se guarda automáticamente en este navegador${info.nube.estado !== 'apagado' ? ' y en tu repositorio privado de GitHub' : ', en esta computadora'}.</p></div></div>
     ${seccionGithub(info.nube)}
+    ${seccionContrasena()}
     <div class="columnas">
       <section class="tarjeta">
         <h2>Descargar respaldo</h2>
@@ -2047,6 +2207,7 @@ async function vistaRespaldo(_params, vigente) {
     </div>`;
 
   conectarSeccionGithub(info.nube);
+  conectarSeccionContrasena();
 
   const zona = document.getElementById('zona-respaldo');
   const bajar = async () => {
@@ -2154,6 +2315,92 @@ function conectarSeccionGithub(n) {
     }
   };
   form.addEventListener('submit', (ev) => { ev.preventDefault(); conectar(); });
+}
+
+// ── Usuario y contraseña (versión de archivo único) ──
+
+function usuarioSesion() { return LOCAL ? window.backendLocal.cuenta().usuario : ''; }
+
+function cerrarSesion() {
+  window.backendLocal.salir();
+  location.hash = '#/panel';
+  location.reload();
+}
+
+function pantallaAcceso(c) {
+  const crear = !c.existe;
+  $app.innerHTML = `
+    <section class="acceso tarjeta">
+      <h1>${crear ? 'Creá tu usuario' : 'Ingresar'}</h1>
+      <p>${crear
+        ? 'Elegí un usuario y una contraseña. Con la contraseña se cifran los datos guardados en esta computadora: sin ella nadie los puede leer. <strong>Anotala en un lugar seguro.</strong>'
+        : 'Ingresá con tu usuario y contraseña para ver las retenciones.'}</p>
+      <form class="formulario" id="form-acceso" novalidate>
+        <div class="campo"><label for="ac-usuario">Usuario</label><input id="ac-usuario" autocomplete="username" value="${esc(c.usuario)}" autocapitalize="off" spellcheck="false"></div>
+        <div class="campo"><label for="ac-clave">Contraseña</label><input id="ac-clave" type="password" autocomplete="${crear ? 'new-password' : 'current-password'}"></div>
+        ${crear ? '<div class="campo"><label for="ac-clave2">Repetí la contraseña</label><input id="ac-clave2" type="password" autocomplete="new-password"><span class="ayuda">Mínimo 8 caracteres.</span></div>' : ''}
+        <div class="zona-mensaje"></div>
+        <div class="acciones"><button class="boton" type="submit">${crear ? 'Crear usuario y entrar' : 'Ingresar'}</button></div>
+      </form>
+      ${crear ? '' : '<p class="nota" style="margin-top:16px"><button type="button" class="enlace" id="olvide">Olvidé mi contraseña</button></p>'}
+    </section>`;
+  const form = document.getElementById('form-acceso');
+  (c.usuario ? form.querySelector('#ac-clave') : form.querySelector('#ac-usuario')).focus();
+  const zona = form.querySelector('.zona-mensaje');
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const boton = form.querySelector('button[type="submit"]');
+    boton.disabled = true;
+    zona.innerHTML = '<p class="nota">Verificando…</p>';
+    try {
+      const u = form.querySelector('#ac-usuario').value;
+      const k = form.querySelector('#ac-clave').value;
+      if (crear) await window.backendLocal.crearCuenta(u, k, form.querySelector('#ac-clave2').value);
+      else await window.backendLocal.ingresar(u, k);
+      navegar();
+    } catch (e) {
+      zona.innerHTML = `<div class="mensaje error" role="alert">${esc(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA)}</div>`;
+      form.querySelector('#ac-clave').value = '';
+      boton.disabled = false;
+    }
+  });
+  const olvide = document.getElementById('olvide');
+  if (olvide) olvide.addEventListener('click', async () => {
+    if (!confirm('Si olvidaste la contraseña, se borran los datos guardados en ESTE navegador y creás un usuario nuevo.\n\nSi los datos están guardados en GitHub, los recuperás desde Respaldo → Guardar en GitHub (vas a necesitar la clave de GitHub; si no la tenés, en GitHub podés tocar "Regenerate token").\n\n¿Continuar?')) return;
+    try { await window.backendLocal.olvideContrasena(); } catch (e) { console.error(e); }
+    location.reload();
+  });
+}
+
+function seccionContrasena() {
+  return `<section class="tarjeta">
+    <h2>Cambiar contraseña</h2>
+    <form class="formulario" id="form-contrasena" novalidate>
+      <div class="fila">
+        <div class="campo"><label for="cc-actual">Contraseña actual</label><input id="cc-actual" type="password" autocomplete="current-password"></div>
+        <div class="campo"><label for="cc-nueva">Contraseña nueva</label><input id="cc-nueva" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="campo"><label for="cc-nueva2">Repetí la contraseña nueva</label><input id="cc-nueva2" type="password" autocomplete="new-password"></div>
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton secundario" type="submit">Cambiar contraseña</button></div>
+    </form>
+  </section>`;
+}
+
+function conectarSeccionContrasena() {
+  const form = document.getElementById('form-contrasena');
+  const zona = form.querySelector('.zona-mensaje');
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    zona.innerHTML = '<p class="nota">Cambiando…</p>';
+    try {
+      await window.backendLocal.cambiarContrasena(form.querySelector('#cc-actual').value, form.querySelector('#cc-nueva').value, form.querySelector('#cc-nueva2').value);
+      form.reset();
+      zona.innerHTML = '<div class="mensaje ok">Listo: la contraseña quedó cambiada.</div>';
+    } catch (e) {
+      zona.innerHTML = `<div class="mensaje error">${esc(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA)}</div>`;
+    }
+  });
 }
 
 navegar();

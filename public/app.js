@@ -217,6 +217,21 @@ if (LOCAL) {
   window.addEventListener('datos-actualizados', () => { aviso('Se cargaron los datos más nuevos desde GitHub.'); navegar(); });
   pintarNube(window.backendLocal.estadoNube());
 
+  const salir = document.createElement('button');
+  salir.type = 'button';
+  salir.id = 'boton-salir';
+  salir.className = 'boton-salir';
+  salir.textContent = 'Salir';
+  salir.addEventListener('click', cerrarSesion);
+  document.querySelector('.barra-interior').appendChild(salir);
+
+  // Se cierra sola la sesión después de 20 minutos sin usar el sistema.
+  let ultimoUso = Date.now();
+  ['click', 'keydown', 'mousemove', 'touchstart'].forEach((t) => window.addEventListener(t, () => { ultimoUso = Date.now(); }, { passive: true }));
+  setInterval(() => {
+    if (window.backendLocal.cuenta().desbloqueada && Date.now() - ultimoUso > 20 * 60 * 1000) cerrarSesion();
+  }, 30 * 1000);
+
   const enlace = document.createElement('a');
   enlace.href = '#/respaldo';
   enlace.dataset.seccion = 'respaldo';
@@ -226,6 +241,12 @@ if (LOCAL) {
 
 let navegacionActual = 0;
 async function navegar() {
+  if (LOCAL) {
+    const c = window.backendLocal.cuenta();
+    document.body.classList.toggle('bloqueado', !c.desbloqueada);
+    if (!c.desbloqueada) { pantallaAcceso(c); return; }
+    document.getElementById('boton-salir').title = `Cerrar la sesión de ${c.usuario}`;
+  }
   const [ruta, consulta = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const seccion = vistas[ruta] ? ruta : 'panel';
   document.querySelectorAll('.menu a').forEach((a) => a.classList.toggle('activo', a.dataset.seccion === seccion));
@@ -341,7 +362,7 @@ async function vistaRetenciones(_params, vigente) {
           <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
             <input id="r-benef" maxlength="200" placeholder="A quién se le abona"><span class="ayuda">Obligatorio en retenciones judiciales.</span></div>
           <div class="campo"><label for="r-cargo">Cargada por <span class="obligatorio">*</span></label>
-            <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo'))}" required></div>
+            <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo') || usuarioSesion())}" required></div>
           <div class="zona-mensaje"></div>
           <div class="acciones"><button class="boton" type="submit">Guardar retención</button></div>
         </form>
@@ -477,7 +498,7 @@ async function vistaDescuentos(params, vigente) {
               ${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="fila">
             <div class="campo"><label for="d-quien">Descontado por <span class="obligatorio">*</span></label>
-              <input id="d-quien" maxlength="80" value="${esc(recordar.leer('quien'))}" required></div>
+              <input id="d-quien" maxlength="80" value="${esc(recordar.leer('quien') || usuarioSesion())}" required></div>
             <div class="campo"><label for="d-fecha">Fecha <span class="obligatorio">*</span></label>
               <input type="date" id="d-fecha" value="${hoy()}" required></div>
           </div>
@@ -881,6 +902,7 @@ async function avisoRespaldo() {
   if (!LOCAL) return '';
   let info;
   try { info = await api('/api/datos'); } catch { return ''; }
+  if (info.nube && info.nube.estado !== 'apagado') return ''; // ya se guarda solo en GitHub
   const hayCambios = info.modificado && (!info.ultimoRespaldo || info.modificado > info.ultimoRespaldo);
   const dias = diasDesde(info.ultimoRespaldo);
   if (info.ejemplos && !info.ultimoRespaldo) {
@@ -901,6 +923,7 @@ async function vistaRespaldo(_params, vigente) {
     <div class="encabezado"><div><h1>Respaldo de los datos</h1>
       <p>Todo lo que cargás se guarda automáticamente en este navegador${info.nube.estado !== 'apagado' ? ' y en tu repositorio privado de GitHub' : ', en esta computadora'}.</p></div></div>
     ${seccionGithub(info.nube)}
+    ${seccionContrasena()}
     <div class="columnas">
       <section class="tarjeta">
         <h2>Descargar respaldo</h2>
@@ -936,6 +959,7 @@ async function vistaRespaldo(_params, vigente) {
     </div>`;
 
   conectarSeccionGithub(info.nube);
+  conectarSeccionContrasena();
 
   const zona = document.getElementById('zona-respaldo');
   const bajar = async () => {
@@ -1043,6 +1067,92 @@ function conectarSeccionGithub(n) {
     }
   };
   form.addEventListener('submit', (ev) => { ev.preventDefault(); conectar(); });
+}
+
+// ── Usuario y contraseña (versión de archivo único) ──
+
+function usuarioSesion() { return LOCAL ? window.backendLocal.cuenta().usuario : ''; }
+
+function cerrarSesion() {
+  window.backendLocal.salir();
+  location.hash = '#/panel';
+  location.reload();
+}
+
+function pantallaAcceso(c) {
+  const crear = !c.existe;
+  $app.innerHTML = `
+    <section class="acceso tarjeta">
+      <h1>${crear ? 'Creá tu usuario' : 'Ingresar'}</h1>
+      <p>${crear
+        ? 'Elegí un usuario y una contraseña. Con la contraseña se cifran los datos guardados en esta computadora: sin ella nadie los puede leer. <strong>Anotala en un lugar seguro.</strong>'
+        : 'Ingresá con tu usuario y contraseña para ver las retenciones.'}</p>
+      <form class="formulario" id="form-acceso" novalidate>
+        <div class="campo"><label for="ac-usuario">Usuario</label><input id="ac-usuario" autocomplete="username" value="${esc(c.usuario)}" autocapitalize="off" spellcheck="false"></div>
+        <div class="campo"><label for="ac-clave">Contraseña</label><input id="ac-clave" type="password" autocomplete="${crear ? 'new-password' : 'current-password'}"></div>
+        ${crear ? '<div class="campo"><label for="ac-clave2">Repetí la contraseña</label><input id="ac-clave2" type="password" autocomplete="new-password"><span class="ayuda">Mínimo 8 caracteres.</span></div>' : ''}
+        <div class="zona-mensaje"></div>
+        <div class="acciones"><button class="boton" type="submit">${crear ? 'Crear usuario y entrar' : 'Ingresar'}</button></div>
+      </form>
+      ${crear ? '' : '<p class="nota" style="margin-top:16px"><button type="button" class="enlace" id="olvide">Olvidé mi contraseña</button></p>'}
+    </section>`;
+  const form = document.getElementById('form-acceso');
+  (c.usuario ? form.querySelector('#ac-clave') : form.querySelector('#ac-usuario')).focus();
+  const zona = form.querySelector('.zona-mensaje');
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const boton = form.querySelector('button[type="submit"]');
+    boton.disabled = true;
+    zona.innerHTML = '<p class="nota">Verificando…</p>';
+    try {
+      const u = form.querySelector('#ac-usuario').value;
+      const k = form.querySelector('#ac-clave').value;
+      if (crear) await window.backendLocal.crearCuenta(u, k, form.querySelector('#ac-clave2').value);
+      else await window.backendLocal.ingresar(u, k);
+      navegar();
+    } catch (e) {
+      zona.innerHTML = `<div class="mensaje error" role="alert">${esc(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA)}</div>`;
+      form.querySelector('#ac-clave').value = '';
+      boton.disabled = false;
+    }
+  });
+  const olvide = document.getElementById('olvide');
+  if (olvide) olvide.addEventListener('click', async () => {
+    if (!confirm('Si olvidaste la contraseña, se borran los datos guardados en ESTE navegador y creás un usuario nuevo.\n\nSi los datos están guardados en GitHub, los recuperás desde Respaldo → Guardar en GitHub (vas a necesitar la clave de GitHub; si no la tenés, en GitHub podés tocar "Regenerate token").\n\n¿Continuar?')) return;
+    try { await window.backendLocal.olvideContrasena(); } catch (e) { console.error(e); }
+    location.reload();
+  });
+}
+
+function seccionContrasena() {
+  return `<section class="tarjeta">
+    <h2>Cambiar contraseña</h2>
+    <form class="formulario" id="form-contrasena" novalidate>
+      <div class="fila">
+        <div class="campo"><label for="cc-actual">Contraseña actual</label><input id="cc-actual" type="password" autocomplete="current-password"></div>
+        <div class="campo"><label for="cc-nueva">Contraseña nueva</label><input id="cc-nueva" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="campo"><label for="cc-nueva2">Repetí la contraseña nueva</label><input id="cc-nueva2" type="password" autocomplete="new-password"></div>
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton secundario" type="submit">Cambiar contraseña</button></div>
+    </form>
+  </section>`;
+}
+
+function conectarSeccionContrasena() {
+  const form = document.getElementById('form-contrasena');
+  const zona = form.querySelector('.zona-mensaje');
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    zona.innerHTML = '<p class="nota">Cambiando…</p>';
+    try {
+      await window.backendLocal.cambiarContrasena(form.querySelector('#cc-actual').value, form.querySelector('#cc-nueva').value, form.querySelector('#cc-nueva2').value);
+      form.reset();
+      zona.innerHTML = '<div class="mensaje ok">Listo: la contraseña quedó cambiada.</div>';
+    } catch (e) {
+      zona.innerHTML = `<div class="mensaje error">${esc(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA)}</div>`;
+    }
+  });
 }
 
 navegar();

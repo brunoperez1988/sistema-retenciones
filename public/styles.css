@@ -44,7 +44,7 @@ h2 { font-size: 1.1rem; color: var(--verde-profundo); }
 .marca-logo svg { width: 22px; height: 22px; }
 .menu { display: flex; gap: 4px; flex-wrap: wrap; }
 .menu a {
-  color: #e6f6f3; text-decoration: none; padding: 8px 12px; border-radius: 8px; font-weight: 500; font-size: .93rem;
+  color: #e6f6f3; text-decoration: none; padding: 8px 10px; border-radius: 8px; font-weight: 500; font-size: .93rem;
   transition: background .15s, color .15s;
 }
 .menu a:hover { background: rgba(255, 255, 255, .14); color: #fff; }
@@ -204,3 +204,15 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 .estado-nube[data-estado="error"] { background: var(--ambar); color: var(--verde-profundo); border-color: var(--ambar); }
 .pasos { margin: 8px 0 16px; padding-left: 22px; display: grid; gap: 8px; }
 .pasos code { background: var(--verde-claro); padding: 1px 5px; border-radius: 4px; }
+
+/* ── Acceso ── */
+.boton-salir { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.35); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.boton-salir:hover { background: rgba(255,255,255,.15); }
+.estado-nube + .boton-salir, .estado-nube[hidden] + .boton-salir { margin-left: 0; }
+.estado-nube[hidden] + .boton-salir { margin-left: auto; }
+body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, body.bloqueado .boton-salir { display: none !important; }
+.acceso { max-width: 440px; margin: 48px auto; border-top: 4px solid var(--ambar); }
+.acceso h1 { margin-bottom: 8px; }
+.acceso p { color: var(--texto-suave); }
+.enlace { background: none; border: none; padding: 0; font: inherit; color: var(--verde-oscuro); text-decoration: underline; cursor: pointer; }
+@media (max-width: 900px) { .boton-salir { order: 2; } }

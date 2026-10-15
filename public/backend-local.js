@@ -43,25 +43,146 @@
     return bd;
   }
 
-  async function leerEstado() {
+  async function leerRegistro(clave) {
     const b = await conexion();
     return new Promise((resolve, reject) => {
       const tx = b.transaction(ALMACEN, 'readonly');
-      const p = tx.objectStore(ALMACEN).get(CLAVE);
-      p.onsuccess = () => resolve(p.result || null);
+      const p = tx.objectStore(ALMACEN).get(clave);
+      p.onsuccess = () => resolve(p.result === undefined ? null : p.result);
       p.onerror = () => reject(p.error);
     });
   }
 
-  async function guardarEstado(valor) {
+  async function guardarRegistro(clave, valor) {
     const b = await conexion();
     return new Promise((resolve, reject) => {
       const tx = b.transaction(ALMACEN, 'readwrite');
-      tx.objectStore(ALMACEN).put(valor, CLAVE);
+      if (valor === null) tx.objectStore(ALMACEN).delete(clave); else tx.objectStore(ALMACEN).put(valor, clave);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error('Escritura cancelada'));
     });
+  }
+
+  // ── Usuario y contraseña ──
+  // La contraseña nunca se guarda: de ella se deriva (PBKDF2) una llave AES-GCM que
+  // cifra los datos y la clave de GitHub guardados en este navegador. Sin la
+  // contraseña, lo guardado en la compu no se puede leer.
+
+  const CLAVE_CUENTA = 'ret.cuenta';
+  const ITERACIONES = 310000;
+  let llave = null;
+  let usuarioActual = '';
+
+  class ErrorBloqueado extends Error { constructor() { super('Ingresá con tu usuario y contraseña.'); this.bloqueado = true; } }
+
+  const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+  const deB64 = (t) => Uint8Array.from(atob(t), (c) => c.charCodeAt(0));
+
+  function leerCuenta() {
+    try { return JSON.parse(localStorage.getItem(CLAVE_CUENTA) || 'null'); } catch { return null; }
+  }
+
+  async function derivarLlave(contrasena, sal, iteraciones) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(contrasena), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: sal, iterations: iteraciones, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+
+  async function cifrar(valor, conLlave = llave) {
+    if (!conLlave) throw new ErrorBloqueado();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const datos = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, conLlave, new TextEncoder().encode(JSON.stringify(valor)));
+    return { cifrado: 1, iv, datos };
+  }
+
+  async function descifrar(registro, conLlave = llave) {
+    if (!registro || !registro.cifrado) return registro; // dato anterior a la contraseña
+    if (!conLlave) throw new ErrorBloqueado();
+    const plano = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: registro.iv }, conLlave, registro.datos);
+    return JSON.parse(new TextDecoder().decode(plano));
+  }
+
+  async function leerEstado() { return descifrar(await leerRegistro(CLAVE)); }
+  async function guardarEstado(valor) { await guardarRegistro(CLAVE, await cifrar(valor)); }
+
+  function normalizarUsuario(u) { return String(u || '').trim().toLowerCase(); }
+
+  async function desbloquear(nuevaLlave, usuario) {
+    llave = nuevaLlave;
+    usuarioActual = usuario;
+    // Pasa al formato cifrado lo que estuviera guardado sin cifrar (versiones anteriores).
+    const registro = await leerRegistro(CLAVE);
+    if (registro && !registro.cifrado) await guardarRegistro(CLAVE, await cifrar(registro));
+    let nube = await descifrar(await leerRegistro('nube'));
+    try {
+      const vieja = JSON.parse(localStorage.getItem('ret.nube') || 'null');
+      if (!nube && vieja && vieja.token) nube = vieja;
+      localStorage.removeItem('ret.nube');
+    } catch { /* sin almacenamiento */ }
+    nubeCfg = nube && nube.token && nube.repo ? nube : null;
+    if (nubeCfg) await guardarRegistro('nube', await cifrar(nubeCfg));
+  }
+
+  async function crearCuenta(usuario, contrasena, repetida) {
+    if (leerCuenta()) throw new ErrorValidacion('Ya hay un usuario creado en este navegador.');
+    const u = normalizarUsuario(usuario);
+    if (!/^[a-z0-9._-]{3,40}$/.test(u)) throw new ErrorValidacion('El usuario debe tener entre 3 y 40 letras o números, sin espacios.');
+    if (String(contrasena || '').length < 8) throw new ErrorValidacion('La contraseña debe tener al menos 8 caracteres.');
+    if (contrasena !== repetida) throw new ErrorValidacion('Las dos contraseñas no coinciden.');
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const nueva = await derivarLlave(contrasena, sal, ITERACIONES);
+    const verif = await cifrar({ usuario: u }, nueva);
+    await desbloquear(nueva, u);
+    localStorage.setItem(CLAVE_CUENTA, JSON.stringify({ usuario: u, sal: b64(sal), iteraciones: ITERACIONES, verif: { iv: b64(verif.iv), datos: b64(verif.datos) } }));
+    return { usuario: u };
+  }
+
+  async function ingresar(usuario, contrasena) {
+    const c = leerCuenta();
+    if (!c) throw new ErrorValidacion('Todavía no hay un usuario creado.');
+    const incorrecto = new ErrorValidacion('Usuario o contraseña incorrectos.');
+    if (normalizarUsuario(usuario) !== c.usuario) { await new Promise((r) => setTimeout(r, 600)); throw incorrecto; }
+    const candidata = await derivarLlave(String(contrasena || ''), deB64(c.sal), c.iteraciones);
+    try {
+      await descifrar({ cifrado: 1, iv: deB64(c.verif.iv), datos: deB64(c.verif.datos) }, candidata);
+    } catch {
+      throw incorrecto;
+    }
+    await desbloquear(candidata, c.usuario);
+    return { usuario: c.usuario };
+  }
+
+  async function cambiarContrasena(actual, nueva, repetida) {
+    const c = leerCuenta();
+    if (!c || !llave) throw new ErrorBloqueado();
+    const vieja = await derivarLlave(String(actual || ''), deB64(c.sal), c.iteraciones);
+    try { await descifrar({ cifrado: 1, iv: deB64(c.verif.iv), datos: deB64(c.verif.datos) }, vieja); } catch { throw new ErrorValidacion('La contraseña actual no es correcta.'); }
+    if (String(nueva || '').length < 8) throw new ErrorValidacion('La contraseña nueva debe tener al menos 8 caracteres.');
+    if (nueva !== repetida) throw new ErrorValidacion('Las dos contraseñas nuevas no coinciden.');
+    await iniciar();
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const llaveNueva = await derivarLlave(nueva, sal, ITERACIONES);
+    const verif = await cifrar({ usuario: c.usuario }, llaveNueva);
+    await guardarRegistro(CLAVE, await cifrar(estado, llaveNueva));
+    await guardarRegistro('nube', nubeCfg ? await cifrar(nubeCfg, llaveNueva) : null);
+    localStorage.setItem(CLAVE_CUENTA, JSON.stringify({ usuario: c.usuario, sal: b64(sal), iteraciones: ITERACIONES, verif: { iv: b64(verif.iv), datos: b64(verif.datos) } }));
+    llave = llaveNueva;
+    return { ok: true };
+  }
+
+  // Olvidé la contraseña: se borra lo guardado en este navegador (los datos de GitHub no se tocan).
+  async function olvideContrasena() {
+    await guardarRegistro(CLAVE, null);
+    await guardarRegistro('nube', null);
+    try { localStorage.removeItem(CLAVE_CUENTA); localStorage.removeItem('ret.nube'); localStorage.setItem('ret.sinEjemplos', '1'); } catch { /* sin almacenamiento */ }
+    llave = null; estado = null; nubeCfg = null;
+  }
+
+  function salir() { llave = null; estado = null; nubeCfg = null; usuarioActual = ''; }
+
+  function cuenta() {
+    const c = leerCuenta();
+    return { existe: Boolean(c), usuario: c ? c.usuario : '', desbloqueada: Boolean(llave) };
   }
 
   // ── Estado en memoria ──
@@ -74,12 +195,15 @@
   }
 
   async function iniciar() {
+    if (!llave) throw new ErrorBloqueado();
     if (estado) return;
     if (!iniciando) {
       iniciando = (async () => {
         let e = await leerEstado();
         if (!e) {
-          e = configNube() ? estadoVacio() : estadoConEjemplos();
+          let sinEjemplos = false;
+          try { sinEjemplos = localStorage.getItem('ret.sinEjemplos') === '1'; } catch { /* sin almacenamiento */ }
+          e = configNube() || sinEjemplos ? estadoVacio() : estadoConEjemplos();
           await guardarEstado(e);
         }
         estado = e;
@@ -95,18 +219,18 @@
   // archivo JSON a un repositorio privado. Cada subida queda como un "commit",
   // así que el repositorio guarda también el historial de versiones.
 
-  const CLAVE_NUBE = 'ret.nube';
-  const ARCHIVO_NUBE = 'datos/retenciones.json';
+    const ARCHIVO_NUBE = 'datos/retenciones.json';
   let shaNube = null;
   let estadoNube = { estado: 'apagado', mensaje: '' };
   let subiendo = null;
   let temporizadorSubida = null;
 
-  function configNube() {
-    try { const c = JSON.parse(localStorage.getItem(CLAVE_NUBE) || 'null'); return c && c.token && c.repo ? c : null; } catch { return null; }
-  }
-  function guardarConfigNube(c) {
-    try { if (c) localStorage.setItem(CLAVE_NUBE, JSON.stringify(c)); else localStorage.removeItem(CLAVE_NUBE); } catch { /* sin almacenamiento */ }
+  // La clave de GitHub se guarda cifrada con la contraseña (registro 'nube').
+  let nubeCfg = null;
+  function configNube() { return nubeCfg; }
+  async function guardarConfigNube(c) {
+    nubeCfg = c;
+    await guardarRegistro('nube', c ? await cifrar(c) : null);
   }
   function avisarNube(nuevo) {
     estadoNube = { ...nuevo, repo: (configNube() || {}).repo || '', pendiente: Boolean(estado && estado.pendienteNube) };
@@ -246,7 +370,7 @@
     if (info.permissions && info.permissions.push === false) throw new ErrorValidacion('La clave no tiene permiso para escribir en ese repositorio.');
     const remoto = await leerNube(c).catch((e) => { throw new ErrorValidacion(e.message); });
     if (remoto && modo === undefined) return { pregunta: true, retenciones: (remoto.datos.retenciones || []).length, descuentos: (remoto.datos.descuentos || []).length, modificado: remoto.datos.modificado || '' };
-    guardarConfigNube(c);
+    await guardarConfigNube(c);
     shaNube = remoto ? remoto.sha : null;
     if (remoto && modo === 'traer') {
       const nuevo = validarEstado(remoto.datos);
@@ -261,15 +385,15 @@
       if (subiendo) await subiendo;
       await subirAhora();
       if (estadoNube.estado === 'error') {
-        guardarConfigNube(null);
+        await guardarConfigNube(null);
         throw new ErrorValidacion(estadoNube.mensaje);
       }
     }
     return { conectado: true };
   }
 
-  function desconectarNube() {
-    guardarConfigNube(null);
+  async function desconectarNube() {
+    await guardarConfigNube(null);
     shaNube = null;
     avisarNube({ estado: 'apagado', mensaje: '' });
   }
@@ -849,6 +973,7 @@
 
   window.backendLocal = {
     ErrorValidacion,
+    cuenta, crearCuenta, ingresar, cambiarContrasena, olvideContrasena, salir,
     manejar,
     descargar,
     exportarRespaldo: async () => { await iniciar(); return exportarRespaldo(); },

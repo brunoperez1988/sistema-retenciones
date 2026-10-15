@@ -10,8 +10,9 @@ Si la computadora no deja instalar programas ni abrir archivos `.bat`, usá **Si
 
 1. Guardá el archivo en un lugar fijo (por ejemplo, *Documentos*).
 2. Hacé doble clic: se abre en el navegador. Funciona en **Chrome** o **Edge**. Si se abre con otro navegador, hacé clic derecho → **Abrir con** → Chrome o Edge.
-3. Usalo normalmente. Todo se guarda solo, en ese navegador y en esa computadora. Al cerrar y volver a abrir el archivo, los datos siguen ahí.
-4. En el menú **Respaldo**:
+3. La primera vez creá tu **usuario y contraseña**. Con la contraseña se cifran (AES-256) los datos y la clave de GitHub guardados en el navegador: sin ella no se pueden leer. La sesión se cierra sola a los 20 minutos sin uso. Si se olvida la contraseña, “Olvidé mi contraseña” borra lo de ese navegador y los datos se recuperan desde GitHub.
+4. Usalo normalmente. Todo se guarda solo, en ese navegador y en esa computadora. Al cerrar y volver a abrir el archivo, los datos siguen ahí.
+5. En el menú **Respaldo**:
    - **Descargar respaldo**: baja un archivo con todos los datos. Hacelo seguido y guardalo en un pendrive, en la nube o en tu correo.
    - **Recuperar un respaldo**: vuelve a cargar los datos desde ese archivo (también sirve para pasarlos a otra computadora).
    - **Empezar de cero**: borra los datos de ejemplo para cargar los reales.
