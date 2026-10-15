@@ -233,3 +233,9 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
 .grupo-benef legend { font-weight: 700; font-size: .87rem; color: var(--verde-profundo); padding: 0 6px; }
 td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 [hidden] { display: none !important; }
+.orden-acciones { display: flex; flex-wrap: wrap; gap: 8px; }
+.dialogo.ancho { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; }
+.detalle-cabecera { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+.detalle-cabecera h2 { margin: 0; }
+.tabla-detalle th { text-align: left; width: 38%; font-weight: 600; color: var(--texto-suave); background: none; text-transform: none; letter-spacing: 0; font-size: .9rem; }
+.dialogo h3 { margin: 18px 0 8px; font-size: 1rem; color: var(--verde-profundo); }

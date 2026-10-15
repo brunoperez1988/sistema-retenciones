@@ -297,6 +297,7 @@ async function vistaPanel(_params, vigente) {
       : `<div class="tarjeta vacio">No hay retenciones cargadas para este mes.</div>`}`;
 
   conectarDefinirImporte($app, navegar);
+  conectarDetalle($app, d.retenciones, navegar);
   document.getElementById('panel-mes').addEventListener('change', (ev) => {
     if (!ev.target.value) return;
     estado.mes = ev.target.value;
@@ -324,7 +325,7 @@ function tarjetaOrden(r) {
         <span>Retenido <strong>${moneda(r.descontado_real)}</strong> de <strong>${moneda(r.importe_total)}</strong> (${pct}%)</span>
         ${r.completa ? '' : `<span class="falta">Falta <strong>${moneda(r.pendiente)}</strong></span>`}
       </div>
-      ${r.completa ? '' : `<div><a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a></div>`}
+      <div class="orden-acciones"><button class="boton chico secundario" type="button" data-detalle="${r.id}">Ver detalle</button>${r.completa ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a>`}</div>
     </article>`;
 }
 
@@ -365,7 +366,7 @@ function tarjetaPorcentaje(r) {
       </div>
       <div class="orden-cifras"><span>Retener ${etiquetaRegla(r)}</span></div>
       <div class="orden-cifras"><span>Descontado <strong>${moneda(r.descontado_real)}</strong>${r.cantidad_descuentos ? ` en ${r.cantidad_descuentos} ${r.cantidad_descuentos === 1 ? 'descuento' : 'descuentos'}${r.empresas ? ` (${esc(r.empresas)})` : ''}` : ''}</span></div>
-      <div><a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a></div>
+      <div class="orden-acciones"><button class="boton chico secundario" type="button" data-detalle="${r.id}">Ver detalle</button><a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a></div>
     </article>`;
 }
 
@@ -383,7 +384,7 @@ function tarjetaADefinir(r) {
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
       </div>
       <div class="orden-cifras"><span>Retener ${etiquetaRegla(r)}</span><span class="sec">Importe a definir</span></div>
-      <div><button class="boton chico ambar" type="button" ${atributosDefinir(r)}>Definir importe</button></div>
+      <div class="orden-acciones"><button class="boton chico secundario" type="button" data-detalle="${r.id}">Ver detalle</button><button class="boton chico ambar" type="button" ${atributosDefinir(r)}>Definir importe</button></div>
     </article>`;
 }
 
@@ -492,6 +493,59 @@ function conectarEditarBeneficiario(raiz, filas, alTerminar) {
     dlg.addEventListener('close', () => dlg.remove());
     dlg.showModal();
     dlg.querySelector('#eb-benef').focus();
+  }));
+}
+
+// Detalle completo de una retención, con sus descuentos.
+function conectarDetalle(raiz, filas, alTerminar) {
+  raiz.querySelectorAll('[data-detalle]').forEach((b) => b.addEventListener('click', async () => {
+    const r = filas.find((x) => String(x.id) === b.dataset.detalle);
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dialogo ancho';
+    dlg.innerHTML = '<p class="cargando">Cargando…</p>';
+    document.body.appendChild(dlg);
+    dlg.addEventListener('close', () => dlg.remove());
+    dlg.showModal();
+    let descuentos;
+    try { descuentos = await api(`/api/descuentos?retencion_id=${r.id}`); }
+    catch { dlg.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div><div class="acciones"><button class="boton secundario" type="button" data-cerrar>Cerrar</button></div>`; dlg.querySelector('[data-cerrar]').onclick = () => dlg.close(); return; }
+    const fila = (t, v) => (v ? `<tr><th>${t}</th><td>${v}</td></tr>` : '');
+    const total = r.sin_tope ? `${etiquetaRegla(r)} · sin tope` : r.a_definir ? `A definir · ${etiquetaRegla(r)}` : `${moneda(r.importe_total)}${r.regla ? ` · ${etiquetaRegla(r)}` : ''}`;
+    dlg.innerHTML = `
+      <div class="detalle-cabecera"><div><h2>${esc(r.colaborador)}</h2><p class="nota">CI ${esc(cedula(r.cedula))}</p></div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div></div>
+      <div class="tabla-contenedor"><table class="tabla-detalle"><tbody>
+        ${fila('Entidad', esc(r.entidad))}
+        ${fila('Período', esc(nombreMes(r.periodo)))}
+        ${fila('Retener', total)}
+        ${fila('Descontado', moneda(r.descontado_real))}
+        ${r.sin_tope || r.a_definir ? '' : fila('Falta descontar', r.completa ? 'Nada: está completa' : `<strong>${moneda(r.pendiente)}</strong>`)}
+        ${fila('Concepto', esc(r.concepto))}
+        ${fila('Expediente / Juzgado', esc(r.expediente))}
+        ${r.tipo === 'judicial' ? fila('Beneficiario', r.beneficiario === 'A completar' ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(r.beneficiario)) : ''}
+        ${r.tipo === 'judicial' ? fila('Documento', esc(r.beneficiario_doc)) : ''}
+        ${r.tipo === 'judicial' ? fila('Medio de cobro', esc(r.beneficiario_cobro)) : ''}
+        ${r.tipo === 'judicial' ? fila('Cuenta / detalle', esc(r.beneficiario_cuenta)) : ''}
+        ${fila('Se repite', r.repite ? 'Todos los meses' : '')}
+        ${fila('Cargada por', `${esc(r.cargado_por)} · ${fecha(r.creado_en)}`)}
+      </tbody></table></div>
+      <h3>Descuentos (${descuentos.length})</h3>
+      ${descuentos.length ? `<div class="tabla-contenedor"><table>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Empresa</th><th class="num">Importe</th><th class="num">Saldo luego</th><th>Descontó</th></tr></thead>
+        <tbody>${descuentos.map((d) => `<tr><td>${fecha(d.fecha)}</td><td>${esc(d.tipo)}</td><td>${esc(d.empresa)}</td>
+          <td class="num">${moneda(d.importe)}</td><td class="num">${d.saldo_despues == null ? '<span class="sec">sin tope</span>' : moneda(d.saldo_despues)}</td><td>${esc(d.descontado_por)}</td></tr>`).join('')}</tbody>
+      </table></div>` : '<p class="nota">Todavía no tiene descuentos.</p>'}
+      <div class="acciones" style="margin-top:16px">
+        ${r.completa || r.a_definir ? '' : `<a class="boton" href="#/descuentos?retencion=${r.id}">Registrar descuento</a>`}
+        ${r.a_definir ? `<button class="boton ambar" type="button" ${atributosDefinir(r)}>Definir importe</button>` : ''}
+        ${r.tipo === 'judicial' ? `<button class="boton secundario" type="button" data-benef="${r.id}">${r.beneficiario === 'A completar' ? 'Completar beneficiario' : 'Editar beneficiario'}</button>` : ''}
+        <button class="boton secundario" type="button" data-cerrar>Cerrar</button>
+      </div>`;
+    dlg.querySelector('[data-cerrar]').addEventListener('click', () => dlg.close());
+    dlg.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => dlg.close()));
+    const tras = () => { dlg.close(); alTerminar(); };
+    conectarDefinirImporte(dlg, tras);
+    conectarEditarBeneficiario(dlg, filas, tras);
   }));
 }
 
