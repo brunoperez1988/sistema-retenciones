@@ -431,7 +431,7 @@ function conectarDefinirImporte(raiz, alTerminar) {
 
 // ── Beneficiario (judiciales): nombre, documento y medio de cobro ──
 
-const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
+const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Mi Dinero', 'Prex', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
 
 function camposBeneficiario(p, b = {}) {
   return `
@@ -1242,7 +1242,7 @@ async function vistaRespaldo(_params, vigente) {
       let datos;
       try { datos = JSON.parse(await archivo.text()); } catch { throw new window.backendLocal.ErrorValidacion('El archivo no es una importación de retenciones.'); }
       const r = await api('/api/importar', { metodo: 'POST', cuerpo: datos });
-      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}${r.mensualesNuevas ? `; ${r.mensualesNuevas} quedaron como mensuales` : ''}.`);
+      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}${r.mensualesNuevas ? `; ${r.mensualesNuevas} quedaron como mensuales` : ''}${r.beneficiarios ? `; se completaron ${r.beneficiarios} beneficiarios` : ''}.`);
       navegar();
     } catch (e) {
       ev.target.value = '';

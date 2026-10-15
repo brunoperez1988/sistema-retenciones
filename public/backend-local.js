@@ -452,7 +452,7 @@
     return `${String(porcentaje).replace('.', ',')}% ${base === 'nominal' ? 'Nominal' : 'Líquido'}`;
   }
 
-  const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
+  const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Mi Dinero', 'Prex', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
   // Documento, medio de cobro y cuenta del beneficiario (solo judiciales; todo opcional).
   function datosBeneficiario(datos) {
     const medio = texto(datos.beneficiario_cobro, 'medio de cobro', { obligatorio: false, max: 40 });
@@ -815,6 +815,13 @@
           res.repetidas += 1;
           // Si ya estaba cargada sin repetirse, el archivo puede marcarla como mensual.
           if (r.mensual && !ya.mensual && !ya.origen_id) { ya.mensual = true; ya.hasta = r.hasta; res.mensualesNuevas = (res.mensualesNuevas || 0) + 1; }
+          // Completa el beneficiario si todavía decía "A completar".
+          if (ya.beneficiario === 'A completar' && r.beneficiario && r.beneficiario !== 'A completar') {
+            const datosB = { beneficiario: r.beneficiario, beneficiario_doc: r.beneficiario_doc, beneficiario_cobro: r.beneficiario_cobro, beneficiario_cuenta: r.beneficiario_cuenta };
+            const familia = ya.mensual ? ya.id : ya.origen_id;
+            for (const z of e.retenciones) if (z === ya || (familia && (z.id === familia || z.origen_id === familia) && z.beneficiario === 'A completar')) Object.assign(z, datosB);
+            res.beneficiarios = (res.beneficiarios || 0) + 1;
+          }
           continue;
         }
         const nueva = { id: e.sig++, ...r };
