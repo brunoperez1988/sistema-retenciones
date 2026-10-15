@@ -271,7 +271,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .acceso { border-top-color: var(--lima); }
 .boton.ambar { background: var(--lima); color: var(--grafito); border-color: var(--lima); }
 .boton.ambar:hover { background: #8aa80b; }
-.acceso-logo { display: block; width: min(260px, 70%); height: auto; margin: 0 auto 18px; }
+.acceso-logo { display: block; width: min(260px, 70%); margin: 0 auto 18px; }
 @media (max-width: 600px) { .marca-texto { display: none; } .marca-img { height: 34px; } }
 .etiqueta-tipo.mensual { background: var(--lima-claro); color: #4b6409; }
 
@@ -299,8 +299,6 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 :root[data-tema="oscuro"] .menu-boton { background: #333539; border-color: #45484d; }
 :root[data-tema="oscuro"] .boton-tema, :root[data-tema="oscuro"] .boton-salir { border-color: #45484d; }
 :root[data-tema="oscuro"] .estado-nube { border-color: #4b5a22; }
-:root[data-tema="oscuro"] .marca-img { filter: invert(1) hue-rotate(180deg) brightness(1.15); }
-:root[data-tema="oscuro"] .acceso-logo { filter: invert(1) hue-rotate(180deg) brightness(1.15); }
 :root[data-tema="oscuro"] .panel-cabecera { background: linear-gradient(120deg, #2c2e31 0%, #383a3e 70%, #45484c 100%); }
 :root[data-tema="oscuro"] .indicador.ordenes { --c-texto: #eef0ea; background: linear-gradient(180deg, #2c2e31, var(--superficie) 70%); }
 :root[data-tema="oscuro"] .boton.ambar { color: #17181a; }
@@ -316,3 +314,26 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 :root[data-tema="oscuro"] .boton.peligro { border-color: #6b3530; }
 :root[data-tema="oscuro"] .aviso { background: #2e3033; color: #f0f1ec; border-left-color: var(--lima); }
 :root[data-tema="oscuro"] .dialogo::backdrop { background: rgba(0, 0, 0, .6); }
+
+/* ── Logo animado: las letras aparecen y la hoja verde crece y se mece ── */
+.logo-anim { position: relative; display: inline-block; line-height: 0; }
+.logo-anim img { display: block; width: 100%; height: auto; }
+.marca-img.logo-anim { height: 40px; width: auto; aspect-ratio: 420 / 184; }
+.marca-img.logo-anim img { height: 100%; width: auto; }
+.logo-anim .logo-hoja { position: absolute; left: 0; top: 0; transform-origin: 89% 74%; }
+.logo-anim .logo-letras { animation: logo-letras .8s cubic-bezier(.2, .7, .2, 1) both; }
+.logo-anim .logo-hoja { animation: logo-hoja 1.3s cubic-bezier(.3, 1.4, .5, 1) .45s both; }
+.acceso-logo .logo-hoja { animation: logo-hoja 1.3s cubic-bezier(.3, 1.4, .5, 1) .45s both, logo-mecer 5s ease-in-out 2.2s infinite; }
+.marca:hover .logo-hoja { animation: logo-mecer 1.6s ease-in-out; }
+@keyframes logo-letras { from { opacity: 0; transform: translateY(8px); filter: blur(2px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes logo-hoja {
+  0% { opacity: 0; clip-path: inset(100% 0 0 0); transform: rotate(-35deg) scale(.6); }
+  40% { opacity: 1; }
+  100% { opacity: 1; clip-path: inset(0 0 0 0); transform: none; }
+}
+@keyframes logo-mecer { 0%, 100% { transform: rotate(0); } 30% { transform: rotate(-7deg); } 60% { transform: rotate(3deg); } }
+@media (prefers-reduced-motion: reduce) { .logo-anim img { animation: none !important; } }
+:root[data-tema="oscuro"] .logo-anim .logo-letras { filter: invert(1) brightness(1.1); }
+:root[data-tema="oscuro"] .logo-anim .logo-letras { animation-name: logo-letras-oscuro; }
+@keyframes logo-letras-oscuro { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (max-width: 600px) { .marca-img.logo-anim { height: 34px; } }
