@@ -778,13 +778,21 @@
   // Agrega retenciones desde un archivo de importación (no borra nada de lo que ya hay).
   // Crea los colaboradores y entidades que falten; no repite una retención ya cargada.
   function importarRetenciones(datos) {
-    if (!datos || datos.tipo !== 'importacion-retenciones' || !Array.isArray(datos.retenciones)) {
+    if (!datos || datos.tipo !== 'importacion-retenciones' || !Array.isArray(datos.retenciones) || (datos.empresas && !Array.isArray(datos.empresas))) {
       throw new ErrorValidacion('El archivo no es una importación de retenciones.');
     }
     return modificar((e) => {
       const res = { retenciones: 0, colaboradores: 0, entidades: 0, repetidas: 0, ejemplosQuitados: Boolean(e.ejemplos) };
       // Los datos de ejemplo no se mezclan con los reales.
       if (e.ejemplos) { e.colaboradores = []; e.entidades = []; e.empresas = []; e.retenciones = []; e.descuentos = []; }
+      // Empresas que falten (no repite nombres ya cargados).
+      res.empresas = 0;
+      for (const nom of datos.empresas || []) {
+        const nombre = texto(nom, 'nombre de la empresa', { obligatorio: false });
+        if (!nombre || e.empresas.some((x) => mismoNombre(x.nombre, nombre))) continue;
+        e.empresas.push({ id: e.sig++, nombre });
+        res.empresas += 1;
+      }
       const colPorCi = new Map(e.colaboradores.map((c) => [c.cedula, c]));
       const entPorNombre = new Map(e.entidades.map((x) => [normalizar(x.nombre), x]));
       const claveRet = (r) => [r.colaborador_id, r.entidad_id, r.periodo, r.importe_total ?? '', reglaCanonica(r.regla, { exigirBase: false }), r.concepto || ''].join('|');

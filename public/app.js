@@ -1304,7 +1304,7 @@ async function vistaRespaldo(_params, vigente) {
       let datos;
       try { datos = JSON.parse(await archivo.text()); } catch { throw new window.backendLocal.ErrorValidacion('El archivo no es una importación de retenciones.'); }
       const r = await api('/api/importar', { metodo: 'POST', cuerpo: datos });
-      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}${r.mensualesNuevas ? `; ${r.mensualesNuevas} quedaron como mensuales` : ''}${r.beneficiarios ? `; se completaron ${r.beneficiarios} beneficiarios` : ''}.`);
+      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}${r.mensualesNuevas ? `; ${r.mensualesNuevas} quedaron como mensuales` : ''}${r.beneficiarios ? `; se completaron ${r.beneficiarios} beneficiarios` : ''}${r.empresas ? `; ${r.empresas} empresas nuevas` : ''}.`);
       navegar();
     } catch (e) {
       ev.target.value = '';
