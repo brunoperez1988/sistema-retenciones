@@ -288,11 +288,11 @@ async function vistaPanel(_params, vigente) {
 
     ${await avisoRespaldo()}
     <section class="indicadores" aria-label="Resumen del mes">
-      <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}${d.aDefinir ? ` · ${d.aDefinir} a definir` : ''}</div></div>
+      <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}${d.sinTope ? ` · ${d.sinTope} por porcentaje` : ''}${d.aDefinir ? ` · ${d.aDefinir} a definir` : ''}</div></div>
       <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">${d.arrastradas ? `Incluye ${moneda(d.saldoAnterior)} que vienen de meses anteriores` : 'Suma de las retenciones del mes'}</div></div>
       <div class="indicador retenido"><div class="titulo">Total retenido</div><div class="valor">${moneda(d.retenido)}</div>
         <div class="avance-general" title="${avance}% retenido"><span style="width:${Math.min(avance, 100)}%"></span></div></div>
-      <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar</div></div>
+      <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar${d.sinTope ? ' (sin contar las de porcentaje)' : ''}</div></div>
     </section>
 
     <div class="encabezado"><h2>Órdenes de ${esc(nombreMes(d.periodo).toLowerCase())}</h2>
@@ -309,6 +309,7 @@ async function vistaPanel(_params, vigente) {
 }
 
 function tarjetaOrden(r) {
+  if (r.sin_tope) return tarjetaPorcentaje(r);
   if (r.a_definir) return tarjetaADefinir(r);
   const pct = Math.min(100, Math.round((r.descontado_real / r.importe_total) * 100));
   return `
@@ -331,6 +332,19 @@ function tarjetaOrden(r) {
     </article>`;
 }
 
+// Retenciones a las que se les puede cargar un descuento: con saldo, o por porcentaje del mes actual o el anterior.
+function abierta(r) {
+  if (r.sin_tope) return r.periodo >= mesAnterior();
+  return r.pendiente > 0;
+}
+function mesAnterior() {
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function textoPct(r) {
+  return `${String(r.porcentaje).replace('.', ',')}% del ${r.base === 'liquido' ? 'líquido' : r.base === 'nominal' ? 'nominal' : '?'}`;
+}
+
 // "20% del NOMINAL", bien visible; otras reglas (BPC) como texto.
 function etiquetaRegla(r) {
   if (r.porcentaje != null) {
@@ -341,7 +355,25 @@ function etiquetaRegla(r) {
   return r.regla ? `<span class="etiqueta-regla">${esc(r.regla)}</span>` : '';
 }
 
-// Orden por porcentaje (u otra regla) a la que todavía le falta el importe.
+// Orden por porcentaje: no tiene tope; se carga lo que se logró descontar en cada empresa.
+function tarjetaPorcentaje(r) {
+  return `
+    <article class="orden ${esc(r.tipo)}">
+      <div class="orden-cabecera">
+        <div class="orden-persona">${esc(r.colaborador)}
+          <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
+          ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
+          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+        </div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}</div>
+      </div>
+      <div class="orden-cifras"><span>Retener ${etiquetaRegla(r)}</span></div>
+      <div class="orden-cifras"><span>Descontado <strong>${moneda(r.descontado_real)}</strong>${r.cantidad_descuentos ? ` en ${r.cantidad_descuentos} ${r.cantidad_descuentos === 1 ? 'descuento' : 'descuentos'}${r.empresas ? ` (${esc(r.empresas)})` : ''}` : ''}</span></div>
+      <div><a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a></div>
+    </article>`;
+}
+
+// Orden con otra regla (BPC, etc.) a la que todavía le falta el importe.
 function tarjetaADefinir(r) {
   return `
     <article class="orden ${esc(r.tipo)}">
@@ -443,7 +475,7 @@ async function vistaRetenciones(_params, vigente) {
             <span class="ayuda" id="importe-ayuda" hidden>Si todavía no sabés el importe, dejalo vacío: la retención queda “a definir”.</span></div>
           <div class="fila">
             <div class="campo"><label class="check"><input type="checkbox" id="r-mensual"> Se repite todos los meses</label>
-              <span class="ayuda">Se crea sola cada mes hasta que le des de baja. Si es por porcentaje, cada mes queda “a definir”.</span></div>
+              <span class="ayuda">Se crea sola cada mes hasta que le des de baja. Si es por porcentaje, se crea cada mes con el mismo porcentaje.</span></div>
             <div class="campo" id="campo-hasta" hidden><label for="r-hasta">Hasta (opcional)</label><input type="month" id="r-hasta"></div>
           </div>
           <div class="campo"><label for="r-concepto">Concepto</label><input id="r-concepto" maxlength="200" placeholder="Ej.: Pensión alimenticia, cuota crédito"></div>
@@ -578,11 +610,12 @@ function tablaRetenciones(filas) {
 }
 
 function celdaTotal(r) {
+  if (r.sin_tope) return `${etiquetaRegla(r)}<span class="sec">sin tope</span>`;
   if (r.a_definir) return `<span class="etiqueta-tipo a-definir">A definir</span><span class="sec">${etiquetaRegla(r)}</span>`;
   return `${moneda(r.importe_total)}${r.regla ? `<span class="sec">${etiquetaRegla(r)}</span>` : ''}`;
 }
 function celdaFalta(r) {
-  if (r.a_definir) return '<span class="sec">—</span>';
+  if (r.a_definir || r.sin_tope) return '<span class="sec">—</span>';
   return r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(r.pendiente);
 }
 
@@ -665,7 +698,7 @@ async function vistaDescuentos(params, vigente) {
 
   function llenarPersonas() {
     const actual = selColab.value;
-    const conPendientes = new Set(retenciones.filter((r) => r.pendiente > 0).map((r) => r.colaborador_id));
+    const conPendientes = new Set(retenciones.filter(abierta).map((r) => r.colaborador_id));
     const personas = cat.colaboradores.filter((c) => conPendientes.has(c.id));
     selColab.innerHTML = `<option value="">${personas.length ? 'Elegí…' : 'No hay retenciones pendientes'}</option>` +
       personas.map((c) => `<option value="${c.id}">${esc(c.nombre)} · CI ${esc(cedula(c.cedula))}</option>`).join('');
@@ -673,11 +706,11 @@ async function vistaDescuentos(params, vigente) {
   }
 
   function llenarRetenciones(preferida) {
-    const propias = retenciones.filter((r) => String(r.colaborador_id) === selColab.value && r.pendiente > 0);
+    const propias = retenciones.filter((r) => String(r.colaborador_id) === selColab.value && abierta(r));
     selRet.disabled = !propias.length;
     selRet.innerHTML = propias.length
       ? (propias.length > 1 ? '<option value="">Elegí…</option>' : '') + propias.map((r) =>
-        `<option value="${r.id}">${esc(r.entidad)} · ${esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — falta ${moneda(r.pendiente)}</option>`).join('')
+        `<option value="${r.id}">${esc(r.entidad)} · ${esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — ${r.sin_tope ? `${esc(textoPct(r))}, sin tope` : `falta ${moneda(r.pendiente)}`}</option>`).join('')
       : `<option value="">${selColab.value ? 'Sin retenciones pendientes' : 'Elegí primero la persona'}</option>`;
     if (preferida && propias.some((r) => r.id === preferida)) selRet.value = String(preferida);
     actualizarAyuda();
@@ -685,7 +718,9 @@ async function vistaDescuentos(params, vigente) {
 
   function actualizarAyuda() {
     const r = retElegida();
-    ayudaRet.innerHTML = r
+    ayudaRet.innerHTML = r && r.sin_tope
+      ? `Retener ${etiquetaRegla(r)} · Ingresá lo que se logró descontar en esta empresa. Ya descontado: <strong>${moneda(r.descontado_real)}</strong>${r.empresas ? ` (${esc(r.empresas)})` : ''}.`
+      : r
       ? `Total ${moneda(r.importe_total)} · descontado ${moneda(r.descontado_real)} · <strong>máximo a descontar ${moneda(r.pendiente)}</strong>
          <button type="button" class="boton chico secundario" id="usar-saldo" style="margin-left:6px">Usar saldo</button>`
       : '';
@@ -701,7 +736,7 @@ async function vistaDescuentos(params, vigente) {
     const valor = leerImporte(texto);
     let msg = '';
     if (texto && !(valor > 0)) msg = 'Importe no válido. Ej.: 1.500 o 1.500,50';
-    else if (r && valor > r.pendiente) msg = `Supera lo que falta descontar (${moneda(r.pendiente)}).`;
+    else if (r && !r.sin_tope && valor > r.pendiente) msg = `Supera lo que falta descontar (${moneda(r.pendiente)}).`;
     errImporte.textContent = msg;
     errImporte.hidden = !msg;
     inImporte.setAttribute('aria-invalid', msg ? 'true' : 'false');
@@ -714,7 +749,7 @@ async function vistaDescuentos(params, vigente) {
   inImporte.addEventListener('input', validarImporte);
 
   llenarPersonas();
-  if (preRet && preRet.pendiente > 0) {
+  if (preRet && abierta(preRet)) {
     selColab.value = String(preRet.colaborador_id);
     llenarRetenciones(preRet.id);
     inImporte.focus();
@@ -752,7 +787,7 @@ async function vistaDescuentos(params, vigente) {
       const importe = leerImporte(inImporte.value);
       if (!r) throw errorLocal('Elegí la persona y la retención.');
       if (!(importe > 0)) throw errorLocal('Ingresá un importe válido mayor a cero.');
-      if (importe > r.pendiente) throw errorLocal(`No se puede descontar más de lo que falta (${moneda(r.pendiente)}).`);
+      if (!r.sin_tope && importe > r.pendiente) throw errorLocal(`No se puede descontar más de lo que falta (${moneda(r.pendiente)}).`);
       if (!form.querySelector('#d-tipo').value) throw errorLocal('Elegí el tipo de descuento.');
       if (!form.querySelector('#d-empresa').value) throw errorLocal('Elegí la empresa donde se retuvo.');
       if (!form.querySelector('#d-quien').value.trim()) throw errorLocal('Indicá quién hizo el descuento.');
@@ -789,8 +824,8 @@ function tablaDescuentos(filas) {
       <td>${esc(d.tipo)}</td>
       <td>${esc(d.empresa)}</td>
       <td class="num">${moneda(d.importe)}</td>
-      <td class="num">${moneda(d.saldo_despues)}</td>
-      <td class="num">${d.saldo_actual <= 0 ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(d.saldo_actual)}</td>
+      <td class="num">${d.saldo_despues == null ? '<span class="sec">sin tope</span>' : moneda(d.saldo_despues)}</td>
+      <td class="num">${d.saldo_actual == null ? '<span class="sec">—</span>' : d.saldo_actual <= 0 ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(d.saldo_actual)}</td>
       <td>${esc(d.descontado_por)}</td>
       <td><button class="boton chico peligro" type="button" data-eliminar="${d.id}" title="Eliminar descuento">Eliminar</button></td>
     </tr>`).join('')}</tbody>
