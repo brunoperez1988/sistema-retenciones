@@ -318,16 +318,27 @@ function tarjetaOrden(r) {
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
       </div>
       <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Avance ${pct}%"><span style="width:${pct}%"></span></div>
       <div class="orden-cifras">
-        <span>Retenido <strong>${moneda(r.descontado_real)}</strong> de <strong>${moneda(r.importe_total)}</strong> (${pct}%)${r.regla ? ` · ${esc(r.regla)}` : ''}</span>
+        <span>Retenido <strong>${moneda(r.descontado_real)}</strong> de <strong>${moneda(r.importe_total)}</strong> (${pct}%)</span>
         ${r.completa ? '' : `<span class="falta">Falta <strong>${moneda(r.pendiente)}</strong></span>`}
       </div>
       ${r.completa ? '' : `<div><a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a></div>`}
     </article>`;
+}
+
+// "20% del NOMINAL", bien visible; otras reglas (BPC) como texto.
+function etiquetaRegla(r) {
+  if (r.porcentaje != null) {
+    const pct = String(r.porcentaje).replace('.', ',');
+    if (!r.base) return `<span class="etiqueta-pct">${esc(pct)}% · ¿nominal o líquido?</span>`;
+    return `<span class="etiqueta-pct ${r.base}">${esc(pct)}% del ${r.base === 'nominal' ? 'NOMINAL' : 'LÍQUIDO'}</span>`;
+  }
+  return r.regla ? `<span class="etiqueta-regla">${esc(r.regla)}</span>` : '';
 }
 
 // Orden por porcentaje (u otra regla) a la que todavía le falta el importe.
@@ -339,26 +350,54 @@ function tarjetaADefinir(r) {
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
       </div>
-      <div class="orden-cifras"><span>Regla: <strong>${esc(r.regla)}</strong> · importe a definir</span></div>
-      <div><button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button></div>
+      <div class="orden-cifras"><span>Retener ${etiquetaRegla(r)}</span><span class="sec">Importe a definir</span></div>
+      <div><button class="boton chico ambar" type="button" ${atributosDefinir(r)}>Definir importe</button></div>
     </article>`;
 }
 
-// Pide el importe de una retención "a definir" y lo guarda.
+function atributosDefinir(r) {
+  return `data-definir="${r.id}" data-regla="${esc(r.regla)}" data-pct="${r.porcentaje ?? ''}" data-base="${r.base || ''}" data-persona="${esc(r.colaborador)}"`;
+}
+
+// Pide el importe de una retención "a definir" (si es porcentaje, lo calcula desde el sueldo) y lo guarda.
 function conectarDefinirImporte(raiz, alTerminar) {
-  raiz.querySelectorAll('[data-definir]').forEach((b) => b.addEventListener('click', async () => {
-    const texto = prompt(`Importe total de esta retención (regla: ${b.dataset.regla}).\nEj.: 4.500 o 4.500,50`);
-    if (texto == null) return;
-    const importe = leerImporte(texto);
-    if (!(importe > 0)) { aviso('Importe no válido. Ej.: 4.500 o 4.500,50'); return; }
-    try {
-      await api(`/api/retenciones/${b.dataset.definir}/importe`, { metodo: 'POST', cuerpo: { importe_total: importe } });
-      aviso('Importe guardado.');
-      alTerminar();
-    } catch (e) { if (e.validacion) aviso(e.message); else aviso(MENSAJE_FALLA); }
+  raiz.querySelectorAll('[data-definir]').forEach((b) => b.addEventListener('click', () => {
+    const pct = b.dataset.pct ? Number(b.dataset.pct) : null;
+    const base = b.dataset.base;
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dialogo';
+    dlg.innerHTML = `<form method="dialog" class="formulario" novalidate>
+      <h2>Definir importe</h2>
+      <p>${esc(b.dataset.persona)}<br>Retener ${pct != null ? `<span class="etiqueta-pct ${esc(base)}">${esc(String(pct).replace('.', ','))}% del ${base === 'liquido' ? 'LÍQUIDO' : base === 'nominal' ? 'NOMINAL' : '¿nominal o líquido?'}</span>` : `<strong>${esc(b.dataset.regla)}</strong>`}</p>
+      ${pct != null ? `<div class="campo"><label for="dl-sueldo">Sueldo ${base === 'liquido' ? 'líquido' : 'nominal'} del mes</label><input id="dl-sueldo" inputmode="decimal" autocomplete="off" placeholder="Ej.: 45.000"><span class="ayuda">Opcional: si lo ponés, calculo el importe.</span></div>` : ''}
+      <div class="campo"><label for="dl-importe">Importe a retener</label><input id="dl-importe" inputmode="decimal" autocomplete="off" placeholder="Ej.: 4.500,50"></div>
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton" value="ok" id="dl-guardar">Guardar</button><button class="boton secundario" value="cancelar" formnovalidate>Cancelar</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    const inSueldo = dlg.querySelector('#dl-sueldo');
+    const inImp = dlg.querySelector('#dl-importe');
+    if (inSueldo) inSueldo.addEventListener('input', () => {
+      const v = leerImporte(inSueldo.value);
+      inImp.value = v > 0 ? numeroPlano(Math.round((v * pct) / 100)) : '';
+    });
+    dlg.querySelector('#dl-guardar').addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      const importe = leerImporte(inImp.value);
+      const zona = dlg.querySelector('.zona-mensaje');
+      if (!(importe > 0)) { zona.innerHTML = '<div class="mensaje error">Importe no válido. Ej.: 4.500 o 4.500,50</div>'; return; }
+      try {
+        await api(`/api/retenciones/${b.dataset.definir}/importe`, { metodo: 'POST', cuerpo: { importe_total: importe } });
+        dlg.close(); aviso('Importe guardado.'); alTerminar();
+      } catch (e) { zona.innerHTML = `<div class="mensaje error">${esc(e.validacion ? e.message : MENSAJE_FALLA)}</div>`; }
+    });
+    dlg.addEventListener('close', () => dlg.remove());
+    dlg.showModal();
+    (inSueldo || inImp).focus();
   }));
 }
 
@@ -388,11 +427,20 @@ async function vistaRetenciones(_params, vigente) {
           <div class="fila">
             <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
               <input type="month" id="r-periodo" value="${mesActual()}" required></div>
-            <div class="campo"><label for="r-importe">Importe total <span class="obligatorio">*</span></label>
-              <input id="r-importe" inputmode="decimal" placeholder="2.000,00" autocomplete="off"></div>
+            <div class="campo"><label for="r-calculo">Cómo se calcula <span class="obligatorio">*</span></label>
+              <select id="r-calculo"><option value="fijo">Importe fijo</option><option value="porcentaje">Porcentaje del sueldo</option><option value="otra">Otra regla (BPC, etc.)</option></select></div>
           </div>
-          <div class="campo"><label for="r-regla">Regla (si todavía no sabés el importe)</label>
-            <input id="r-regla" maxlength="60" placeholder="Ej.: 25% Nominal, 3 BPC"><span class="ayuda">Si ponés la regla, podés dejar el importe vacío y definirlo después.</span></div>
+          <div class="fila" id="campos-pct" hidden>
+            <div class="campo"><label for="r-pct">Porcentaje a retener <span class="obligatorio">*</span></label>
+              <input id="r-pct" inputmode="decimal" placeholder="20" autocomplete="off"></div>
+            <div class="campo"><label for="r-base">Sobre el sueldo <span class="obligatorio">*</span></label>
+              <select id="r-base"><option value="">Elegí…</option><option value="Nominal">Nominal</option><option value="Líquido">Líquido</option></select></div>
+          </div>
+          <div class="campo" id="campo-regla" hidden><label for="r-regla">Regla <span class="obligatorio">*</span></label>
+            <input id="r-regla" maxlength="60" placeholder="Ej.: 1,5 BPC"></div>
+          <div class="campo"><label for="r-importe">Importe total <span class="obligatorio" id="importe-obligatorio">*</span></label>
+            <input id="r-importe" inputmode="decimal" placeholder="2.000,00" autocomplete="off">
+            <span class="ayuda" id="importe-ayuda" hidden>Si todavía no sabés el importe, dejalo vacío: la retención queda “a definir”.</span></div>
           <div class="fila">
             <div class="campo"><label class="check"><input type="checkbox" id="r-mensual"> Se repite todos los meses</label>
               <span class="ayuda">Se crea sola cada mes hasta que le des de baja. Si es por porcentaje, cada mes queda “a definir”.</span></div>
@@ -426,6 +474,15 @@ async function vistaRetenciones(_params, vigente) {
   const campoBenef = document.getElementById('campo-benef');
   const esJudicial = () => selEnt.selectedOptions[0]?.dataset.tipo === 'judicial';
   selEnt.addEventListener('change', () => { campoBenef.hidden = !esJudicial(); });
+  const selCalculo = document.getElementById('r-calculo');
+  const mostrarCalculo = () => {
+    const c = selCalculo.value;
+    document.getElementById('campos-pct').hidden = c !== 'porcentaje';
+    document.getElementById('campo-regla').hidden = c !== 'otra';
+    document.getElementById('importe-obligatorio').hidden = c !== 'fijo';
+    document.getElementById('importe-ayuda').hidden = c === 'fijo';
+  };
+  selCalculo.addEventListener('change', mostrarCalculo);
   const chkMensual = document.getElementById('r-mensual');
   chkMensual.addEventListener('change', () => { document.getElementById('campo-hasta').hidden = !chkMensual.checked; });
 
@@ -454,11 +511,17 @@ async function vistaRetenciones(_params, vigente) {
     enviar: async () => {
       const textoImporte = form.querySelector('#r-importe').value.trim();
       const importe = textoImporte ? leerImporte(textoImporte) : null;
-      const regla = form.querySelector('#r-regla').value.trim();
+      const calculo = selCalculo.value;
+      const pct = Number(form.querySelector('#r-pct').value.trim().replace(',', '.'));
+      const base = form.querySelector('#r-base').value;
+      if (calculo === 'porcentaje' && !(pct > 0 && pct <= 100)) throw errorLocal('Ingresá el porcentaje a retener, por ejemplo 20.');
+      if (calculo === 'porcentaje' && !base) throw errorLocal('Indicá si el porcentaje es sobre el sueldo nominal o el líquido.');
+      const regla = calculo === 'porcentaje' ? `${String(pct).replace('.', ',')}% ${base}` : calculo === 'otra' ? form.querySelector('#r-regla').value.trim() : '';
+      if (calculo === 'otra' && !regla) throw errorLocal('Escribí la regla, por ejemplo "1,5 BPC".');
       if (!form.querySelector('#r-colab').value) throw errorLocal('Elegí el colaborador.');
       if (!selEnt.value) throw errorLocal('Elegí la entidad acreedora.');
       if (!form.querySelector('#r-periodo').value) throw errorLocal('Elegí el período.');
-      if (importe == null && !regla) throw errorLocal('Ingresá el importe total, o la regla (por ejemplo "25% Nominal") si todavía no se sabe el importe.');
+      if (importe == null && !regla) throw errorLocal('Ingresá el importe total.');
       if (importe != null && !(importe > 0)) throw errorLocal('Ingresá un importe total válido, por ejemplo 2.000 o 2.000,50.');
       if (esJudicial() && !form.querySelector('#r-benef').value.trim()) throw errorLocal('El beneficiario es obligatorio en las retenciones judiciales.');
       if (!form.querySelector('#r-cargo').value.trim()) throw errorLocal('Indicá quién carga la retención.');
@@ -479,7 +542,8 @@ async function vistaRetenciones(_params, vigente) {
     },
     alTerminar: async () => {
       aviso('Retención guardada.');
-      ['#r-importe', '#r-regla', '#r-concepto', '#r-exp', '#r-benef', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
+      ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
+      selCalculo.value = 'fijo'; mostrarCalculo();
       chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
       form.querySelector('#r-colab').focus();
       recargar();
@@ -505,7 +569,7 @@ function tablaRetenciones(filas) {
       <td>${esc(r.cargado_por)}<span class="sec">${fecha(r.creado_en)}</span></td>
       <td>${r.cantidad_descuentos === 0 ? `<button class="boton chico peligro" type="button" data-eliminar="${r.id}">Eliminar</button>`
         : (r.completa || r.a_definir ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Descontar</a>`)}
-        ${r.a_definir ? `<button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button>` : ''}
+        ${r.a_definir ? `<button class="boton chico ambar" type="button" ${atributosDefinir(r)}>Definir importe</button>` : ''}
         ${r.repite ? `<button class="boton chico secundario" type="button" data-baja="${r.id}" title="Dejar de repetir cada mes">Dar de baja</button>` : ''}</td>
     </tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="5">Total (${filas.length})</td><td class="num">${moneda(suma('importe_total'))}</td>
@@ -514,8 +578,8 @@ function tablaRetenciones(filas) {
 }
 
 function celdaTotal(r) {
-  if (r.a_definir) return `<span class="etiqueta-tipo a-definir">A definir</span><span class="sec">${esc(r.regla)}</span>`;
-  return `${moneda(r.importe_total)}${r.regla ? `<span class="sec">${esc(r.regla)}</span>` : ''}`;
+  if (r.a_definir) return `<span class="etiqueta-tipo a-definir">A definir</span><span class="sec">${etiquetaRegla(r)}</span>`;
+  return `${moneda(r.importe_total)}${r.regla ? `<span class="sec">${etiquetaRegla(r)}</span>` : ''}`;
 }
 function celdaFalta(r) {
   if (r.a_definir) return '<span class="sec">—</span>';

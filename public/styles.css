@@ -221,3 +221,10 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
 @media (max-width: 900px) { .boton-salir { order: 2; } }
 .campo label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
 .campo label.check input { width: 18px; height: 18px; margin: 0; }
+.etiqueta-pct { display: inline-block; padding: 3px 10px; border-radius: 6px; font-weight: 750; font-size: .85rem; letter-spacing: .01em; background: #fff1d6; color: #8a4b00; border: 1px solid #f0b54a; white-space: nowrap; }
+.etiqueta-pct.nominal { background: #e6eefc; color: #1d3f8f; border-color: #8aa7e6; }
+.etiqueta-pct.liquido { background: #e3f5ea; color: #17643a; border-color: #7cc79b; }
+.etiqueta-regla { font-weight: 650; color: var(--texto); }
+.dialogo { border: none; border-radius: 14px; padding: 22px; width: min(420px, calc(100vw - 32px)); box-shadow: 0 20px 50px rgba(0,0,0,.25); background: var(--superficie, #fff); color: var(--texto); }
+.dialogo::backdrop { background: rgba(10, 40, 40, .45); }
+.dialogo h2 { margin-top: 0; }

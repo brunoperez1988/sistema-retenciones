@@ -432,6 +432,26 @@
     if (v.length > max) throw new ErrorValidacion(`${campo}: máximo ${max} caracteres.`);
     return v;
   }
+  // "20% del nominal" → { porcentaje: 20, base: 'nominal' }
+  function leerRegla(regla) {
+    const t = String(regla || '');
+    const m = t.match(/(\d+(?:[.,]\d+)?)\s*%/);
+    const base = /nominal/i.test(t) ? 'nominal' : /l[ií]quido/i.test(t) ? 'liquido' : null;
+    return { porcentaje: m ? Number(m[1].replace(',', '.')) : null, base };
+  }
+  // Deja la regla escrita siempre igual; un porcentaje tiene que decir si es sobre el nominal o el líquido.
+  function reglaCanonica(regla, { exigirBase = true } = {}) {
+    const t = texto(regla, 'regla', { obligatorio: false, max: 60 });
+    const { porcentaje, base } = leerRegla(t);
+    if (porcentaje == null) return t;
+    if (!(porcentaje > 0 && porcentaje <= 100)) throw new ErrorValidacion('El porcentaje tiene que estar entre 0 y 100.');
+    if (!base) {
+      if (exigirBase) throw new ErrorValidacion(`Indicá si el ${String(porcentaje).replace('.', ',')}% es sobre el sueldo nominal o sobre el líquido.`);
+      return t;
+    }
+    return `${String(porcentaje).replace('.', ',')}% ${base === 'nominal' ? 'Nominal' : 'Líquido'}`;
+  }
+
   function entero(valor, campo) {
     const n = Number(valor);
     if (!Number.isInteger(n) || n <= 0) throw new ErrorValidacion(`Elegí ${campo}.`);
@@ -539,7 +559,8 @@
           descontado_real: real, cantidad_descuentos: todos.length, descontado_filtrado: filtrado,
           empresas: [...new Set(fil.map((d) => emp.get(d.empresa_id).nombre))].join(', '),
           descontado: filtraDescuentos ? filtrado : real,
-          regla: r.regla || '',
+          regla: reglaCanonica(r.regla, { exigirBase: false }),
+          ...leerRegla(r.regla),
           a_definir: r.importe_total == null,
           pendiente: r.importe_total == null ? null : r.importe_total - real,
           completa: r.importe_total != null && real >= r.importe_total,
@@ -641,7 +662,7 @@
     const fila = {
       colaborador_id, entidad_id,
       periodo: periodo(datos.periodo),
-      regla: texto(datos.regla, 'regla', { obligatorio: false, max: 60 }),
+      regla: reglaCanonica(datos.regla),
       importe_total: null,
       concepto: texto(datos.concepto, 'concepto', { obligatorio: false }),
       expediente: texto(datos.expediente, 'expediente / juzgado', { obligatorio: false }),
@@ -730,7 +751,7 @@
       if (e.ejemplos) { e.colaboradores = []; e.entidades = []; e.empresas = []; e.retenciones = []; e.descuentos = []; }
       const colPorCi = new Map(e.colaboradores.map((c) => [c.cedula, c]));
       const entPorNombre = new Map(e.entidades.map((x) => [normalizar(x.nombre), x]));
-      const claveRet = (r) => [r.colaborador_id, r.entidad_id, r.periodo, r.importe_total ?? '', r.regla || '', r.concepto || ''].join('|');
+      const claveRet = (r) => [r.colaborador_id, r.entidad_id, r.periodo, r.importe_total ?? '', reglaCanonica(r.regla, { exigirBase: false }), r.concepto || ''].join('|');
       const existentes = new Map(e.retenciones.map((r) => [claveRet(r), r]));
       for (const x of datos.retenciones) {
         const ci = String(x.cedula || '').replace(/\D/g, '');
@@ -742,7 +763,7 @@
         if (!ent) { ent = { id: e.sig++, nombre: texto(x.entidad, 'entidad'), tipo }; e.entidades.push(ent); entPorNombre.set(normalizar(ent.nombre), ent); res.entidades += 1; }
         const r = {
           colaborador_id: col.id, entidad_id: ent.id, periodo: periodo(x.periodo),
-          regla: texto(x.regla, 'regla', { obligatorio: false, max: 60 }),
+          regla: reglaCanonica(x.regla),
           importe_total: x.importe_total == null ? null : importe(x.importe_total, 'el importe total'),
           concepto: texto(x.concepto, 'concepto', { obligatorio: false }),
           expediente: texto(x.expediente, 'expediente', { obligatorio: false }),
@@ -1044,12 +1065,12 @@
     const columnas = [
       { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
       { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
-      { titulo: 'Regla', ancho: 16 }, { titulo: 'Total', tipo: 'moneda', ancho: 14 }, { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta descontar', tipo: 'moneda', ancho: 15 },
+      { titulo: 'Regla', ancho: 16 }, { titulo: '% a retener', ancho: 11 }, { titulo: 'Sobre', ancho: 10 }, { titulo: 'Total', tipo: 'moneda', ancho: 14 }, { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta descontar', tipo: 'moneda', ancho: 15 },
       { titulo: 'Empresas donde se retuvo', ancho: 28 }, { titulo: 'Cargado por', ancho: 16 },
     ];
-    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.regla || '', x.importe_total == null ? 'A definir' : x.importe_total, x.descontado, x.pendiente == null ? '' : x.pendiente, x.empresas, x.cargado_por]);
+    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.regla || '', x.porcentaje == null ? '' : `${String(x.porcentaje).replace('.', ',')}%`, x.base === 'nominal' ? 'Nominal' : x.base === 'liquido' ? 'Líquido' : '', x.importe_total == null ? 'A definir' : x.importe_total, x.descontado, x.pendiente == null ? '' : x.pendiente, x.empresas, x.cargado_por]);
     const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
-    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
     return { columnas, filas: cuerpo, titulo: 'Planilla de retenciones', hoja: 'Planilla' };
   }
 
