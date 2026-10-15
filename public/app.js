@@ -976,6 +976,7 @@ async function vistaReportes(_params, vigente) {
 
     <div class="pestanas" role="tablist">
       <button type="button" role="tab" data-pestana="planilla">Planilla de personas con retenciones</button>
+      <button type="button" role="tab" data-pestana="entidades">Por entidad acreedora</button>
       <button type="button" role="tab" data-pestana="abonar">A abonar</button>
     </div>
 
@@ -1008,6 +1009,9 @@ async function vistaReportes(_params, vigente) {
       opciones.innerHTML = '<h2>Planilla de personas con retenciones</h2>';
       const filas = await api(`/api/reportes/planilla?${consulta()}`);
       resultado.innerHTML = tablaPlanilla(filas);
+    } else if (filtrosRep.pestana === 'entidades') {
+      opciones.innerHTML = '<h2>Por entidad acreedora</h2>';
+      resultado.innerHTML = tablaPorEntidad(await api(`/api/reportes/entidades?${consulta()}`));
     } else {
       opciones.innerHTML = `<div class="campo"><span class="etiqueta">Agrupar por</span><div class="radio-grupo">
         <label><input type="radio" name="agrupar" value="beneficiario" ${filtrosRep.agrupar === 'beneficiario' ? 'checked' : ''}> Beneficiario</label>
@@ -1024,10 +1028,10 @@ async function vistaReportes(_params, vigente) {
   const zonaDescarga = document.getElementById('rp-descarga');
   const bajar = async (formato) => {
     zonaDescarga.innerHTML = '';
-    const ruta = filtrosRep.pestana === 'planilla' ? 'planilla' : 'abonar';
+    const ruta = filtrosRep.pestana;
     const qs = consulta();
     qs.set('formato', formato);
-    const nombre = `${ruta === 'planilla' ? 'planilla-retenciones' : 'a-abonar'}${filtrosRep.periodo ? '-' + filtrosRep.periodo : ''}.${formato}`;
+    const nombre = `${{ planilla: 'planilla-retenciones', entidades: 'retenciones-por-entidad', abonar: 'a-abonar' }[ruta]}${filtrosRep.periodo ? '-' + filtrosRep.periodo : ''}.${formato}`;
     try { await descargarArchivo(`/api/reportes/${ruta}?${qs}`, nombre); }
     catch { fallaEnLinea(zonaDescarga, () => bajar(formato)); }
   };
@@ -1051,6 +1055,26 @@ function tablaPlanilla(filas) {
       <td>${esc(r.empresas) || '<span class="sec">—</span>'}</td></tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="7">Total (${filas.length} retenciones)</td><td class="num">${moneda(suma('importe_total'))}</td>
       <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td></td></tr></tfoot>
+  </table></div>`;
+}
+
+function tablaPorEntidad(rep) {
+  if (!rep.grupos.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
+  const para = (x) => (x.para_descontar == null ? etiquetaRegla(x) || '<span class="sec">A definir</span>' : `${moneda(x.para_descontar)}${x.regla ? `<span class="sec">${etiquetaRegla(x)}</span>` : ''}`);
+  return `<div class="tabla-contenedor"><table>
+    <thead><tr><th>Cédula</th><th>Nombre y apellido</th><th class="num">Para descontar</th><th class="num">Descontado</th><th class="num">Falta</th></tr></thead>
+    <tbody>${rep.grupos.map((g) => `
+      <tr class="grupo"><td colspan="5">${esc(g.entidad)} · ${tipoTxt[g.tipo] || ''}</td></tr>
+      ${g.filas.map((x) => `<tr>
+        <td>${esc(cedula(x.cedula))}</td>
+        <td>${esc(x.colaborador)}${x.arrastre ? `<span class="sec">Saldo de ${esc(mesCorto(x.periodo))}</span>` : ''}</td>
+        <td class="num">${para(x)}</td>
+        <td class="num">${moneda(x.descontado)}</td>
+        <td class="num">${x.falta == null ? '<span class="sec">—</span>' : moneda(x.falta)}</td></tr>`).join('')}
+      <tr class="subtotal"><td colspan="2">Subtotal ${esc(g.entidad)} (${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'})</td>
+        <td class="num">${moneda(g.para_descontar)}</td><td class="num">${moneda(g.descontado)}</td><td class="num">${moneda(g.falta)}</td></tr>`).join('')}
+    </tbody>
+    <tfoot><tr><td colspan="2">Total</td><td class="num">${moneda(rep.para_descontar)}</td><td class="num">${moneda(rep.descontado)}</td><td class="num">${moneda(rep.falta)}</td></tr></tfoot>
   </table></div>`;
 }
 

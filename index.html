@@ -1422,6 +1422,45 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     return { columnas, filas: cuerpo, titulo: 'Planilla de retenciones', hoja: 'Planilla' };
   }
 
+  // Por entidad acreedora: cada funcionario con lo que tenía para descontar y lo descontado.
+  function reportePorEntidad(f) {
+    const mes = f.periodo ? periodo(f.periodo) : null;
+    const antes = (id) => (mes ? estado.descuentos.filter((d) => d.retencion_id === id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0) : 0);
+    const grupos = new Map();
+    for (const x of listarRetenciones({ ...f, con_saldo: true })) {
+      if (!grupos.has(x.entidad)) grupos.set(x.entidad, { entidad: x.entidad, tipo: x.tipo, filas: [], para_descontar: 0, descontado: 0, falta: 0 });
+      const g = grupos.get(x.entidad);
+      const previo = x.arrastre ? antes(x.id) : 0;
+      const para = x.importe_total == null ? null : x.importe_total - previo;
+      const desc = (f.tipo_descuento || f.empresa_id ? x.descontado : x.descontado_real) - (f.tipo_descuento || f.empresa_id ? 0 : previo);
+      g.filas.push({ id: x.id, cedula: x.cedula, colaborador: x.colaborador, periodo: x.periodo, arrastre: x.arrastre, regla: x.regla, porcentaje: x.porcentaje, base: x.base,
+        sin_tope: x.sin_tope, a_definir: x.a_definir, para_descontar: para, descontado: desc, falta: x.pendiente });
+      g.para_descontar += para || 0; g.descontado += desc; g.falta += x.pendiente || 0;
+    }
+    const lista = [...grupos.values()].sort((a, b) => a.entidad.localeCompare(b.entidad, 'es'));
+    lista.forEach((g) => g.filas.sort((a, b) => a.colaborador.localeCompare(b.colaborador, 'es')));
+    return { grupos: lista, para_descontar: lista.reduce((a, g) => a + g.para_descontar, 0), descontado: lista.reduce((a, g) => a + g.descontado, 0), falta: lista.reduce((a, g) => a + g.falta, 0) };
+  }
+
+  function armarPorEntidad(f) {
+    const rep = reportePorEntidad(f);
+    const columnas = [
+      { titulo: 'Entidad acreedora', ancho: 26 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Nombre y apellido', ancho: 30 },
+      { titulo: 'Período', ancho: 10 }, { titulo: 'Para descontar', tipo: 'moneda', ancho: 15 }, { titulo: 'Regla', ancho: 16 },
+      { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta', tipo: 'moneda', ancho: 14 },
+    ];
+    const cuerpo = [];
+    for (const g of rep.grupos) {
+      for (const x of g.filas) {
+        cuerpo.push([g.entidad, x.cedula, x.colaborador, x.periodo + (x.arrastre ? ' (saldo)' : ''),
+          x.para_descontar == null ? (x.regla || 'A definir') : x.para_descontar, x.regla || '', x.descontado, x.falta == null ? '' : x.falta]);
+      }
+      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.entidad}`, '', `${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'}`, '', g.para_descontar, '', g.descontado, g.falta] });
+    }
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', '', '', rep.para_descontar, '', rep.descontado, rep.falta] });
+    return { columnas, filas: cuerpo, titulo: 'Retenciones por entidad acreedora', hoja: 'Por entidad' };
+  }
+
   function armarAbonar(f) {
     const rep = reporteAbonar(f);
     const porEntidad = rep.agrupar === 'entidad';
@@ -1459,6 +1498,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
       if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
       if (ruta === '/api/reportes/planilla') return listarRetenciones({ ...f, con_saldo: true });
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
+      if (ruta === '/api/reportes/entidades') return reportePorEntidad(f);
       if (ruta === '/api/datos') return infoDatos();
     }
     if (metodo === 'POST') {
@@ -1484,8 +1524,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     await iniciar();
     const url = new URL(rutaCompleta, 'http://local');
     const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
-    const esPlanilla = url.pathname.endsWith('planilla');
-    const rep = esPlanilla ? armarPlanilla(f) : armarAbonar(f);
+    const rep = url.pathname.endsWith('planilla') ? armarPlanilla(f) : url.pathname.endsWith('entidades') ? armarPorEntidad(f) : armarAbonar(f);
     if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
     return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });
   }
@@ -2485,6 +2524,7 @@ async function vistaReportes(_params, vigente) {
 
     <div class="pestanas" role="tablist">
       <button type="button" role="tab" data-pestana="planilla">Planilla de personas con retenciones</button>
+      <button type="button" role="tab" data-pestana="entidades">Por entidad acreedora</button>
       <button type="button" role="tab" data-pestana="abonar">A abonar</button>
     </div>
 
@@ -2517,6 +2557,9 @@ async function vistaReportes(_params, vigente) {
       opciones.innerHTML = '<h2>Planilla de personas con retenciones</h2>';
       const filas = await api(`/api/reportes/planilla?${consulta()}`);
       resultado.innerHTML = tablaPlanilla(filas);
+    } else if (filtrosRep.pestana === 'entidades') {
+      opciones.innerHTML = '<h2>Por entidad acreedora</h2>';
+      resultado.innerHTML = tablaPorEntidad(await api(`/api/reportes/entidades?${consulta()}`));
     } else {
       opciones.innerHTML = `<div class="campo"><span class="etiqueta">Agrupar por</span><div class="radio-grupo">
         <label><input type="radio" name="agrupar" value="beneficiario" ${filtrosRep.agrupar === 'beneficiario' ? 'checked' : ''}> Beneficiario</label>
@@ -2533,10 +2576,10 @@ async function vistaReportes(_params, vigente) {
   const zonaDescarga = document.getElementById('rp-descarga');
   const bajar = async (formato) => {
     zonaDescarga.innerHTML = '';
-    const ruta = filtrosRep.pestana === 'planilla' ? 'planilla' : 'abonar';
+    const ruta = filtrosRep.pestana;
     const qs = consulta();
     qs.set('formato', formato);
-    const nombre = `${ruta === 'planilla' ? 'planilla-retenciones' : 'a-abonar'}${filtrosRep.periodo ? '-' + filtrosRep.periodo : ''}.${formato}`;
+    const nombre = `${{ planilla: 'planilla-retenciones', entidades: 'retenciones-por-entidad', abonar: 'a-abonar' }[ruta]}${filtrosRep.periodo ? '-' + filtrosRep.periodo : ''}.${formato}`;
     try { await descargarArchivo(`/api/reportes/${ruta}?${qs}`, nombre); }
     catch { fallaEnLinea(zonaDescarga, () => bajar(formato)); }
   };
@@ -2560,6 +2603,26 @@ function tablaPlanilla(filas) {
       <td>${esc(r.empresas) || '<span class="sec">—</span>'}</td></tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="7">Total (${filas.length} retenciones)</td><td class="num">${moneda(suma('importe_total'))}</td>
       <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td></td></tr></tfoot>
+  </table></div>`;
+}
+
+function tablaPorEntidad(rep) {
+  if (!rep.grupos.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
+  const para = (x) => (x.para_descontar == null ? etiquetaRegla(x) || '<span class="sec">A definir</span>' : `${moneda(x.para_descontar)}${x.regla ? `<span class="sec">${etiquetaRegla(x)}</span>` : ''}`);
+  return `<div class="tabla-contenedor"><table>
+    <thead><tr><th>Cédula</th><th>Nombre y apellido</th><th class="num">Para descontar</th><th class="num">Descontado</th><th class="num">Falta</th></tr></thead>
+    <tbody>${rep.grupos.map((g) => `
+      <tr class="grupo"><td colspan="5">${esc(g.entidad)} · ${tipoTxt[g.tipo] || ''}</td></tr>
+      ${g.filas.map((x) => `<tr>
+        <td>${esc(cedula(x.cedula))}</td>
+        <td>${esc(x.colaborador)}${x.arrastre ? `<span class="sec">Saldo de ${esc(mesCorto(x.periodo))}</span>` : ''}</td>
+        <td class="num">${para(x)}</td>
+        <td class="num">${moneda(x.descontado)}</td>
+        <td class="num">${x.falta == null ? '<span class="sec">—</span>' : moneda(x.falta)}</td></tr>`).join('')}
+      <tr class="subtotal"><td colspan="2">Subtotal ${esc(g.entidad)} (${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'})</td>
+        <td class="num">${moneda(g.para_descontar)}</td><td class="num">${moneda(g.descontado)}</td><td class="num">${moneda(g.falta)}</td></tr>`).join('')}
+    </tbody>
+    <tfoot><tr><td colspan="2">Total</td><td class="num">${moneda(rep.para_descontar)}</td><td class="num">${moneda(rep.descontado)}</td><td class="num">${moneda(rep.falta)}</td></tr></tfoot>
   </table></div>`;
 }
 

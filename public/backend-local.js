@@ -1141,6 +1141,45 @@
     return { columnas, filas: cuerpo, titulo: 'Planilla de retenciones', hoja: 'Planilla' };
   }
 
+  // Por entidad acreedora: cada funcionario con lo que tenía para descontar y lo descontado.
+  function reportePorEntidad(f) {
+    const mes = f.periodo ? periodo(f.periodo) : null;
+    const antes = (id) => (mes ? estado.descuentos.filter((d) => d.retencion_id === id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0) : 0);
+    const grupos = new Map();
+    for (const x of listarRetenciones({ ...f, con_saldo: true })) {
+      if (!grupos.has(x.entidad)) grupos.set(x.entidad, { entidad: x.entidad, tipo: x.tipo, filas: [], para_descontar: 0, descontado: 0, falta: 0 });
+      const g = grupos.get(x.entidad);
+      const previo = x.arrastre ? antes(x.id) : 0;
+      const para = x.importe_total == null ? null : x.importe_total - previo;
+      const desc = (f.tipo_descuento || f.empresa_id ? x.descontado : x.descontado_real) - (f.tipo_descuento || f.empresa_id ? 0 : previo);
+      g.filas.push({ id: x.id, cedula: x.cedula, colaborador: x.colaborador, periodo: x.periodo, arrastre: x.arrastre, regla: x.regla, porcentaje: x.porcentaje, base: x.base,
+        sin_tope: x.sin_tope, a_definir: x.a_definir, para_descontar: para, descontado: desc, falta: x.pendiente });
+      g.para_descontar += para || 0; g.descontado += desc; g.falta += x.pendiente || 0;
+    }
+    const lista = [...grupos.values()].sort((a, b) => a.entidad.localeCompare(b.entidad, 'es'));
+    lista.forEach((g) => g.filas.sort((a, b) => a.colaborador.localeCompare(b.colaborador, 'es')));
+    return { grupos: lista, para_descontar: lista.reduce((a, g) => a + g.para_descontar, 0), descontado: lista.reduce((a, g) => a + g.descontado, 0), falta: lista.reduce((a, g) => a + g.falta, 0) };
+  }
+
+  function armarPorEntidad(f) {
+    const rep = reportePorEntidad(f);
+    const columnas = [
+      { titulo: 'Entidad acreedora', ancho: 26 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Nombre y apellido', ancho: 30 },
+      { titulo: 'Período', ancho: 10 }, { titulo: 'Para descontar', tipo: 'moneda', ancho: 15 }, { titulo: 'Regla', ancho: 16 },
+      { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta', tipo: 'moneda', ancho: 14 },
+    ];
+    const cuerpo = [];
+    for (const g of rep.grupos) {
+      for (const x of g.filas) {
+        cuerpo.push([g.entidad, x.cedula, x.colaborador, x.periodo + (x.arrastre ? ' (saldo)' : ''),
+          x.para_descontar == null ? (x.regla || 'A definir') : x.para_descontar, x.regla || '', x.descontado, x.falta == null ? '' : x.falta]);
+      }
+      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.entidad}`, '', `${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'}`, '', g.para_descontar, '', g.descontado, g.falta] });
+    }
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', '', '', rep.para_descontar, '', rep.descontado, rep.falta] });
+    return { columnas, filas: cuerpo, titulo: 'Retenciones por entidad acreedora', hoja: 'Por entidad' };
+  }
+
   function armarAbonar(f) {
     const rep = reporteAbonar(f);
     const porEntidad = rep.agrupar === 'entidad';
@@ -1178,6 +1217,7 @@
       if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
       if (ruta === '/api/reportes/planilla') return listarRetenciones({ ...f, con_saldo: true });
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
+      if (ruta === '/api/reportes/entidades') return reportePorEntidad(f);
       if (ruta === '/api/datos') return infoDatos();
     }
     if (metodo === 'POST') {
@@ -1203,8 +1243,7 @@
     await iniciar();
     const url = new URL(rutaCompleta, 'http://local');
     const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
-    const esPlanilla = url.pathname.endsWith('planilla');
-    const rep = esPlanilla ? armarPlanilla(f) : armarAbonar(f);
+    const rep = url.pathname.endsWith('planilla') ? armarPlanilla(f) : url.pathname.endsWith('entidades') ? armarPorEntidad(f) : armarAbonar(f);
     if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
     return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });
   }
