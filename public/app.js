@@ -195,6 +195,29 @@ const vistas = {
   ...(LOCAL ? { respaldo: vistaRespaldo } : {}),
 };
 
+// ── Modo claro / oscuro (se recuerda en este navegador) ──
+function leerTema() {
+  try { const t = localStorage.getItem('ret.tema'); if (t === 'oscuro' || t === 'claro') return t; } catch { /* sin almacenamiento */ }
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro';
+}
+const botonTema = document.createElement('button');
+botonTema.type = 'button';
+botonTema.id = 'boton-tema';
+botonTema.className = 'boton-tema';
+function aplicarTema(t) {
+  document.documentElement.dataset.tema = t;
+  botonTema.textContent = t === 'oscuro' ? '☀' : '☾';
+  botonTema.title = t === 'oscuro' ? 'Pasar a modo claro' : 'Pasar a modo oscuro';
+  botonTema.setAttribute('aria-label', botonTema.title);
+}
+botonTema.addEventListener('click', () => {
+  const t = document.documentElement.dataset.tema === 'oscuro' ? 'claro' : 'oscuro';
+  try { localStorage.setItem('ret.tema', t); } catch { /* sin almacenamiento */ }
+  aplicarTema(t);
+});
+aplicarTema(leerTema());
+if (!LOCAL) document.querySelector('.barra-interior').appendChild(botonTema);
+
 if (LOCAL) {
   const pastilla = document.createElement('a');
   pastilla.id = 'estado-nube';
@@ -219,6 +242,7 @@ if (LOCAL) {
   salir.className = 'boton-salir';
   salir.textContent = 'Salir';
   salir.addEventListener('click', cerrarSesion);
+  document.querySelector('.barra-interior').appendChild(botonTema);
   document.querySelector('.barra-interior').appendChild(salir);
 
   // Se cierra sola la sesión después de 20 minutos sin usar el sistema.
