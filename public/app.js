@@ -314,7 +314,7 @@ function tarjetaOrden(r) {
         <div class="orden-persona">${esc(r.colaborador)}
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
-          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${textoBeneficiario(r)}
           ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
@@ -359,7 +359,7 @@ function tarjetaPorcentaje(r) {
         <div class="orden-persona">${esc(r.colaborador)}
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
-          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${textoBeneficiario(r)}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}</div>
       </div>
@@ -377,7 +377,7 @@ function tarjetaADefinir(r) {
         <div class="orden-persona">${esc(r.colaborador)}
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
-          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${textoBeneficiario(r)}
           ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
@@ -429,6 +429,72 @@ function conectarDefinirImporte(raiz, alTerminar) {
   }));
 }
 
+// ── Beneficiario (judiciales): nombre, documento y medio de cobro ──
+
+const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
+
+function camposBeneficiario(p, b = {}) {
+  return `
+    <div class="campo"><label for="${p}-benef">Nombre y apellido <span class="obligatorio">*</span></label>
+      <input id="${p}-benef" maxlength="200" placeholder="A quién se le abona" value="${esc(b.beneficiario === 'A completar' ? '' : b.beneficiario || '')}"></div>
+    <div class="fila">
+      <div class="campo"><label for="${p}-benef-doc">Documento</label>
+        <input id="${p}-benef-doc" maxlength="20" inputmode="numeric" placeholder="Solo números" value="${esc(b.beneficiario_doc || '')}"></div>
+      <div class="campo"><label for="${p}-benef-cobro">Medio de cobro</label>
+        <select id="${p}-benef-cobro"><option value="">Elegí…</option>${MEDIOS_COBRO.map((m) => `<option ${b.beneficiario_cobro === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+    </div>
+    <div class="campo"><label for="${p}-benef-cuenta">Cuenta / detalle de cobro</label>
+      <input id="${p}-benef-cuenta" maxlength="120" placeholder="Ej.: BROU caja de ahorro 001234567-00001" value="${esc(b.beneficiario_cuenta || '')}"></div>`;
+}
+
+function leerBeneficiario(raiz, p) {
+  const v = (s) => raiz.querySelector(`#${p}-${s}`).value.trim();
+  if (!v('benef')) throw errorLocal('Ingresá el nombre y apellido del beneficiario (obligatorio en las judiciales).');
+  return { beneficiario: v('benef'), beneficiario_doc: v('benef-doc'), beneficiario_cobro: v('benef-cobro'), beneficiario_cuenta: v('benef-cuenta') };
+}
+
+// "Ana Gómez · Doc. 12345678 · Depósito en cuenta bancaria (BROU …)"
+function detalleBeneficiario(r) {
+  const partes = [];
+  if (r.beneficiario_doc) partes.push(`Doc. ${esc(r.beneficiario_doc)}`);
+  if (r.beneficiario_cobro) partes.push(esc(r.beneficiario_cobro) + (r.beneficiario_cuenta ? ` (${esc(r.beneficiario_cuenta)})` : ''));
+  else if (r.beneficiario_cuenta) partes.push(esc(r.beneficiario_cuenta));
+  return partes.join(' · ');
+}
+
+function textoBeneficiario(r) {
+  if (!r.beneficiario) return '';
+  const falta = r.beneficiario === 'A completar';
+  return `<span class="sec">Beneficiario: ${falta ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(r.beneficiario)}${detalleBeneficiario(r) ? ` · ${detalleBeneficiario(r)}` : ''}</span>`;
+}
+
+function conectarEditarBeneficiario(raiz, filas, alTerminar) {
+  raiz.querySelectorAll('[data-benef]').forEach((b) => b.addEventListener('click', () => {
+    const r = filas.find((x) => String(x.id) === b.dataset.benef);
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dialogo';
+    dlg.innerHTML = `<form method="dialog" class="formulario" novalidate>
+      <h2>Datos del beneficiario</h2>
+      <p class="nota">${esc(r.colaborador)} · ${esc(r.entidad)}${r.repite ? '<br>Se aplica también a los meses que se repiten.' : ''}</p>
+      ${camposBeneficiario('eb', r)}
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton" id="eb-guardar">Guardar</button><button class="boton secundario" value="cancelar" formnovalidate>Cancelar</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    dlg.querySelector('#eb-guardar').addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      const zona = dlg.querySelector('.zona-mensaje');
+      try {
+        await api(`/api/retenciones/${r.id}/beneficiario`, { metodo: 'POST', cuerpo: leerBeneficiario(dlg, 'eb') });
+        dlg.close(); aviso('Beneficiario guardado.'); alTerminar();
+      } catch (e) { zona.innerHTML = `<div class="mensaje error">${esc(e.validacion || e.local ? e.message : MENSAJE_FALLA)}</div>`; }
+    });
+    dlg.addEventListener('close', () => dlg.remove());
+    dlg.showModal();
+    dlg.querySelector('#eb-benef').focus();
+  }));
+}
+
 // ── Retenciones recibidas ──
 
 const filtrosRet = { periodo: '', tipo: '', q: '' };
@@ -476,8 +542,10 @@ async function vistaRetenciones(_params, vigente) {
           </div>
           <div class="campo"><label for="r-concepto">Concepto</label><input id="r-concepto" maxlength="200" placeholder="Ej.: Pensión alimenticia, cuota crédito"></div>
           <div class="campo"><label for="r-exp">N° de expediente / Juzgado</label><input id="r-exp" maxlength="200"></div>
-          <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
-            <input id="r-benef" maxlength="200" placeholder="A quién se le abona"><span class="ayuda">Obligatorio en retenciones judiciales.</span></div>
+          <fieldset class="grupo-benef" id="campo-benef" hidden>
+            <legend>Beneficiario</legend>
+            ${camposBeneficiario('r')}
+          </fieldset>
           <div class="campo"><label for="r-cargo">Cargada por <span class="obligatorio">*</span></label>
             <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo') || usuarioSesion())}" required></div>
           <div class="zona-mensaje"></div>
@@ -520,6 +588,7 @@ async function vistaRetenciones(_params, vigente) {
     const filas = await api(`/api/retenciones?${qs}`);
     lista.innerHTML = tablaRetenciones(filas);
     conectarDefinirImporte(lista, recargar);
+    conectarEditarBeneficiario(lista, filas, recargar);
     lista.querySelectorAll('[data-baja]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('¿Dejar de repetir esta retención? Desde el mes que viene no se crea más. Lo ya cargado queda igual.')) return;
       try { await api(`/api/retenciones/${b.dataset.baja}/baja`, { metodo: 'POST', cuerpo: {} }); aviso('Listo: no se repite más desde el mes que viene.'); recargar(); }
@@ -563,14 +632,14 @@ async function vistaRetenciones(_params, vigente) {
         hasta: chkMensual.checked ? form.querySelector('#r-hasta').value : '',
         concepto: form.querySelector('#r-concepto').value,
         expediente: form.querySelector('#r-exp').value,
-        beneficiario: esJudicial() ? form.querySelector('#r-benef').value : null,
+        ...(esJudicial() ? leerBeneficiario(form, 'r') : { beneficiario: null }),
         cargado_por: form.querySelector('#r-cargo').value,
       } });
       recordar.guardar('cargo', form.querySelector('#r-cargo').value.trim());
     },
     alTerminar: async () => {
       aviso('Retención guardada.');
-      ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
+      ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-benef-doc', '#r-benef-cobro', '#r-benef-cuenta', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
       selCalculo.value = 'fijo'; mostrarCalculo();
       chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
       form.querySelector('#r-colab').focus();
@@ -590,7 +659,8 @@ function tablaRetenciones(filas) {
       <td>${esc(r.colaborador)}<span class="sec">CI ${esc(cedula(r.cedula))}</span></td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}${r.repite ? ' <span class="etiqueta-tipo mensual">Mensual</span>' : ''}</span></td>
       <td>${esc(r.concepto) || '—'}${r.expediente ? `<span class="sec">${esc(r.expediente)}</span>` : ''}</td>
-      <td>${r.tipo === 'judicial' ? esc(r.beneficiario) : '<span class="sec">—</span>'}</td>
+      <td>${r.tipo === 'judicial' ? `${r.beneficiario === 'A completar' ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(r.beneficiario)}${detalleBeneficiario(r) ? `<span class="sec">${detalleBeneficiario(r)}</span>` : ''}
+        <button class="enlace" type="button" data-benef="${r.id}">${r.beneficiario === 'A completar' ? 'Completar' : 'Editar'}</button>` : '<span class="sec">—</span>'}</td>
       <td class="num">${celdaTotal(r)}</td>
       <td class="num">${moneda(r.descontado)}</td>
       <td class="num">${celdaFalta(r)}</td>
@@ -921,7 +991,7 @@ function tablaPlanilla(filas) {
     <tbody>${filas.map((r) => `<tr>
       <td>${esc(mesCorto(r.periodo))}${r.arrastre ? '<span class="sec">saldo que pasa</span>' : ''}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
-      <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}</td>
+      <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}${detalleBeneficiario(r) ? `<span class="sec">${detalleBeneficiario(r)}</span>` : ''}</td>
       <td class="num">${celdaTotal(r)}</td><td class="num">${moneda(r.descontado)}</td>
       <td class="num">${celdaFalta(r)}</td>
       <td>${esc(r.empresas) || '<span class="sec">—</span>'}</td></tr>`).join('')}</tbody>
@@ -936,7 +1006,7 @@ function tablaAbonar(rep) {
   return `<div class="tabla-contenedor"><table>
     <thead><tr><th>Colaborador</th><th>${porEntidad ? 'Beneficiario' : 'Entidad'}</th><th>Concepto</th><th>Expediente</th><th>Período</th><th class="num">A abonar</th></tr></thead>
     <tbody>${rep.grupos.map((g) => `
-      <tr class="grupo"><td colspan="6">${esc(g.grupo)} · ${esc(g.tipo.split(' / ').map((t) => tipoTxt[t] || t).join(' / '))}</td></tr>
+      <tr class="grupo"><td colspan="6">${esc(g.grupo)} · ${esc(g.tipo.split(' / ').map((t) => tipoTxt[t] || t).join(' / '))}${!porEntidad && detalleBeneficiario(g.detalle[0]) ? `<span class="sec">${detalleBeneficiario(g.detalle[0])}</span>` : ''}</td></tr>
       ${g.detalle.map((x) => `<tr>
         <td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td>
         <td>${esc(porEntidad ? (x.beneficiario || '—') : x.entidad)}</td>

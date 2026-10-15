@@ -236,6 +236,11 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
 .dialogo { border: none; border-radius: 14px; padding: 22px; width: min(420px, calc(100vw - 32px)); box-shadow: 0 20px 50px rgba(0,0,0,.25); background: var(--superficie, #fff); color: var(--texto); }
 .dialogo::backdrop { background: rgba(10, 40, 40, .45); }
 .dialogo h2 { margin-top: 0; }
+.grupo-benef { border: 1px solid var(--borde, #d8e4e2); border-radius: 10px; padding: 10px 14px 4px; margin: 0; display: grid; gap: 12px; }
+.grupo-benef[hidden] { display: none; }
+.grupo-benef legend { font-weight: 700; font-size: .87rem; color: var(--verde-profundo); padding: 0 6px; }
+td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
+[hidden] { display: none !important; }
 
 </style>
 </head>
@@ -722,6 +727,18 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
     return `${String(porcentaje).replace('.', ',')}% ${base === 'nominal' ? 'Nominal' : 'Líquido'}`;
   }
 
+  const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
+  // Documento, medio de cobro y cuenta del beneficiario (solo judiciales; todo opcional).
+  function datosBeneficiario(datos) {
+    const medio = texto(datos.beneficiario_cobro, 'medio de cobro', { obligatorio: false, max: 40 });
+    if (medio && !MEDIOS_COBRO.includes(medio)) throw new ErrorValidacion('Elegí un medio de cobro de la lista.');
+    return {
+      beneficiario_doc: texto(datos.beneficiario_doc, 'documento del beneficiario', { obligatorio: false, max: 20 }).replace(/[.\-\s]/g, ''),
+      beneficiario_cobro: medio,
+      beneficiario_cuenta: texto(datos.beneficiario_cuenta, 'cuenta / detalle de cobro', { obligatorio: false, max: 120 }),
+    };
+  }
+
   function entero(valor, campo) {
     const n = Number(valor);
     if (!Number.isInteger(n) || n <= 0) throw new ErrorValidacion(`Elegí ${campo}.`);
@@ -845,7 +862,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
-    return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.expediente]);
+    return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.beneficiario_doc, x.expediente]);
   }
 
   function listarDescuentos(f = {}) {
@@ -940,6 +957,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       concepto: texto(datos.concepto, 'concepto', { obligatorio: false }),
       expediente: texto(datos.expediente, 'expediente / juzgado', { obligatorio: false }),
       beneficiario: entidad.tipo === 'judicial' ? texto(datos.beneficiario, 'beneficiario') : null,
+      ...(entidad.tipo === 'judicial' ? datosBeneficiario(datos) : {}),
       cargado_por: texto(datos.cargado_por, 'quién la cargó', { max: 80 }),
       creado_en: ahora(),
       ...datosMensual(datos),
@@ -980,6 +998,9 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
           colaborador_id: t.colaborador_id, entidad_id: t.entidad_id, periodo: m, regla: t.regla || '',
           importe_total: esPorcentaje(t.regla) ? null : t.importe_total,
           concepto: t.concepto || '', expediente: t.expediente || '', beneficiario: t.beneficiario,
+          ...(t.beneficiario_doc ? { beneficiario_doc: t.beneficiario_doc } : {}),
+          ...(t.beneficiario_cobro ? { beneficiario_cobro: t.beneficiario_cobro } : {}),
+          ...(t.beneficiario_cuenta ? { beneficiario_cuenta: t.beneficiario_cuenta } : {}),
           cargado_por: 'Automática (se repite cada mes)', creado_en: ahora(), origen_id: t.id,
         });
       }
@@ -1000,6 +1021,23 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
     if (!tId) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
     const desde = mesSiguiente(mesDeHoy());
     return modificar((e) => { e.retenciones.find((x) => x.id === tId).baja = desde; return { ok: true, desde }; });
+  }
+
+  // Cambia los datos del beneficiario de una retención judicial (y de sus copias mensuales).
+  function editarBeneficiario(id, datos) {
+    const n = Number(id);
+    const r = estado.retenciones.find((x) => x.id === n);
+    if (!r) throw new ErrorValidacion('La retención no existe.', 404);
+    if (estado.entidades.find((x) => x.id === r.entidad_id).tipo !== 'judicial') throw new ErrorValidacion('Solo las retenciones judiciales tienen beneficiario.');
+    const cambios = { beneficiario: texto(datos.beneficiario, 'nombre y apellido del beneficiario'), ...datosBeneficiario(datos) };
+    const familia = r.mensual ? r.id : r.origen_id;
+    return modificar((e) => {
+      let cuantas = 0;
+      for (const x of e.retenciones) {
+        if (x.id === n || (familia && (x.id === familia || x.origen_id === familia))) { Object.assign(x, cambios); cuantas += 1; }
+      }
+      return { ok: true, retenciones: cuantas };
+    });
   }
 
   // Define (o corrige) el importe total de una retención; nunca por debajo de lo ya descontado.
@@ -1041,6 +1079,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
           concepto: texto(x.concepto, 'concepto', { obligatorio: false }),
           expediente: texto(x.expediente, 'expediente', { obligatorio: false }),
           beneficiario: ent.tipo === 'judicial' ? (texto(x.beneficiario, 'beneficiario', { obligatorio: false }) || 'A completar') : null,
+          ...(ent.tipo === 'judicial' ? datosBeneficiario(x) : {}),
           cargado_por: texto(x.cargado_por || 'Importación', 'quién la cargó', { max: 80 }),
           creado_en: ahora(),
           ...datosMensual(x),
@@ -1343,12 +1382,13 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
     const columnas = [
       { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
       { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
+      { titulo: 'Doc. beneficiario', ancho: 14 }, { titulo: 'Medio de cobro', ancho: 22 }, { titulo: 'Cuenta / detalle', ancho: 24 },
       { titulo: 'Regla', ancho: 16 }, { titulo: '% a retener', ancho: 11 }, { titulo: 'Sobre', ancho: 10 }, { titulo: 'Total', tipo: 'moneda', ancho: 14 }, { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta descontar', tipo: 'moneda', ancho: 15 },
       { titulo: 'Empresas donde se retuvo', ancho: 28 }, { titulo: 'Cargado por', ancho: 16 },
     ];
-    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.regla || '', x.porcentaje == null ? '' : `${String(x.porcentaje).replace('.', ',')}%`, x.base === 'nominal' ? 'Nominal' : x.base === 'liquido' ? 'Líquido' : '', x.sin_tope ? 'Sin tope' : x.importe_total == null ? 'A definir' : x.importe_total, x.descontado, x.pendiente == null ? '' : x.pendiente, x.empresas, x.cargado_por]);
+    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.beneficiario_doc || '', x.beneficiario_cobro || '', x.beneficiario_cuenta || '', x.regla || '', x.porcentaje == null ? '' : `${String(x.porcentaje).replace('.', ',')}%`, x.base === 'nominal' ? 'Nominal' : x.base === 'liquido' ? 'Líquido' : '', x.sin_tope ? 'Sin tope' : x.importe_total == null ? 'A definir' : x.importe_total, x.descontado, x.pendiente == null ? '' : x.pendiente, x.empresas, x.cargado_por]);
     const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
-    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', '', '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
     return { columnas, filas: cuerpo, titulo: 'Planilla de retenciones', hoja: 'Planilla' };
   }
 
@@ -1358,14 +1398,15 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
     const columnas = [
       { titulo: porEntidad ? 'Entidad' : 'Beneficiario', ancho: 28 }, { titulo: 'Tipo', ancho: 11 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 },
       { titulo: porEntidad ? 'Beneficiario' : 'Entidad', ancho: 26 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Período', ancho: 10 },
+      { titulo: 'Doc. beneficiario', ancho: 14 }, { titulo: 'Medio de cobro', ancho: 22 }, { titulo: 'Cuenta / detalle', ancho: 24 },
       { titulo: 'A abonar', tipo: 'moneda', ancho: 15 },
     ];
     const cuerpo = [];
     for (const g of rep.grupos) {
-      for (const x of g.detalle) cuerpo.push([g.grupo, TIPO_TXT[x.tipo], x.cedula, x.colaborador, porEntidad ? (x.beneficiario || '') : x.entidad, x.concepto, x.expediente, x.periodo, x.descontado]);
-      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.grupo}`, '', '', `${g.ordenes} ${g.ordenes === 1 ? 'orden' : 'órdenes'}`, '', '', '', '', g.abonar] });
+      for (const x of g.detalle) cuerpo.push([g.grupo, TIPO_TXT[x.tipo], x.cedula, x.colaborador, porEntidad ? (x.beneficiario || '') : x.entidad, x.concepto, x.expediente, x.periodo, x.beneficiario_doc || '', x.beneficiario_cobro || '', x.beneficiario_cuenta || '', x.descontado]);
+      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.grupo}`, '', '', `${g.ordenes} ${g.ordenes === 1 ? 'orden' : 'órdenes'}`, '', '', '', '', '', '', '', g.abonar] });
     }
-    cuerpo.push({ negrita: true, celdas: ['TOTAL A ABONAR', '', '', '', '', '', '', '', rep.total] });
+    cuerpo.push({ negrita: true, celdas: ['TOTAL A ABONAR', '', '', '', '', '', '', '', '', '', '', rep.total] });
     return { columnas, filas: cuerpo, titulo: `A abonar por ${porEntidad ? 'entidad' : 'beneficiario'}`, hoja: 'A abonar' };
   }
 
@@ -1399,6 +1440,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       if (ruta === '/api/importar') return importarRetenciones(cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) return definirImporte(m[1], cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return darDeBaja(m[1]);
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/beneficiario$/))) return editarBeneficiario(m[1], cuerpo || {});
     }
     if (metodo === 'DELETE') {
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) return eliminarRetencion(m[1]);
@@ -1750,7 +1792,7 @@ function tarjetaOrden(r) {
         <div class="orden-persona">${esc(r.colaborador)}
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
-          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${textoBeneficiario(r)}
           ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
@@ -1795,7 +1837,7 @@ function tarjetaPorcentaje(r) {
         <div class="orden-persona">${esc(r.colaborador)}
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
-          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${textoBeneficiario(r)}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}</div>
       </div>
@@ -1813,7 +1855,7 @@ function tarjetaADefinir(r) {
         <div class="orden-persona">${esc(r.colaborador)}
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
-          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+          ${textoBeneficiario(r)}
           ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
@@ -1865,6 +1907,72 @@ function conectarDefinirImporte(raiz, alTerminar) {
   }));
 }
 
+// ── Beneficiario (judiciales): nombre, documento y medio de cobro ──
+
+const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
+
+function camposBeneficiario(p, b = {}) {
+  return `
+    <div class="campo"><label for="${p}-benef">Nombre y apellido <span class="obligatorio">*</span></label>
+      <input id="${p}-benef" maxlength="200" placeholder="A quién se le abona" value="${esc(b.beneficiario === 'A completar' ? '' : b.beneficiario || '')}"></div>
+    <div class="fila">
+      <div class="campo"><label for="${p}-benef-doc">Documento</label>
+        <input id="${p}-benef-doc" maxlength="20" inputmode="numeric" placeholder="Solo números" value="${esc(b.beneficiario_doc || '')}"></div>
+      <div class="campo"><label for="${p}-benef-cobro">Medio de cobro</label>
+        <select id="${p}-benef-cobro"><option value="">Elegí…</option>${MEDIOS_COBRO.map((m) => `<option ${b.beneficiario_cobro === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+    </div>
+    <div class="campo"><label for="${p}-benef-cuenta">Cuenta / detalle de cobro</label>
+      <input id="${p}-benef-cuenta" maxlength="120" placeholder="Ej.: BROU caja de ahorro 001234567-00001" value="${esc(b.beneficiario_cuenta || '')}"></div>`;
+}
+
+function leerBeneficiario(raiz, p) {
+  const v = (s) => raiz.querySelector(`#${p}-${s}`).value.trim();
+  if (!v('benef')) throw errorLocal('Ingresá el nombre y apellido del beneficiario (obligatorio en las judiciales).');
+  return { beneficiario: v('benef'), beneficiario_doc: v('benef-doc'), beneficiario_cobro: v('benef-cobro'), beneficiario_cuenta: v('benef-cuenta') };
+}
+
+// "Ana Gómez · Doc. 12345678 · Depósito en cuenta bancaria (BROU …)"
+function detalleBeneficiario(r) {
+  const partes = [];
+  if (r.beneficiario_doc) partes.push(`Doc. ${esc(r.beneficiario_doc)}`);
+  if (r.beneficiario_cobro) partes.push(esc(r.beneficiario_cobro) + (r.beneficiario_cuenta ? ` (${esc(r.beneficiario_cuenta)})` : ''));
+  else if (r.beneficiario_cuenta) partes.push(esc(r.beneficiario_cuenta));
+  return partes.join(' · ');
+}
+
+function textoBeneficiario(r) {
+  if (!r.beneficiario) return '';
+  const falta = r.beneficiario === 'A completar';
+  return `<span class="sec">Beneficiario: ${falta ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(r.beneficiario)}${detalleBeneficiario(r) ? ` · ${detalleBeneficiario(r)}` : ''}</span>`;
+}
+
+function conectarEditarBeneficiario(raiz, filas, alTerminar) {
+  raiz.querySelectorAll('[data-benef]').forEach((b) => b.addEventListener('click', () => {
+    const r = filas.find((x) => String(x.id) === b.dataset.benef);
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dialogo';
+    dlg.innerHTML = `<form method="dialog" class="formulario" novalidate>
+      <h2>Datos del beneficiario</h2>
+      <p class="nota">${esc(r.colaborador)} · ${esc(r.entidad)}${r.repite ? '<br>Se aplica también a los meses que se repiten.' : ''}</p>
+      ${camposBeneficiario('eb', r)}
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton" id="eb-guardar">Guardar</button><button class="boton secundario" value="cancelar" formnovalidate>Cancelar</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    dlg.querySelector('#eb-guardar').addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      const zona = dlg.querySelector('.zona-mensaje');
+      try {
+        await api(`/api/retenciones/${r.id}/beneficiario`, { metodo: 'POST', cuerpo: leerBeneficiario(dlg, 'eb') });
+        dlg.close(); aviso('Beneficiario guardado.'); alTerminar();
+      } catch (e) { zona.innerHTML = `<div class="mensaje error">${esc(e.validacion || e.local ? e.message : MENSAJE_FALLA)}</div>`; }
+    });
+    dlg.addEventListener('close', () => dlg.remove());
+    dlg.showModal();
+    dlg.querySelector('#eb-benef').focus();
+  }));
+}
+
 // ── Retenciones recibidas ──
 
 const filtrosRet = { periodo: '', tipo: '', q: '' };
@@ -1912,8 +2020,10 @@ async function vistaRetenciones(_params, vigente) {
           </div>
           <div class="campo"><label for="r-concepto">Concepto</label><input id="r-concepto" maxlength="200" placeholder="Ej.: Pensión alimenticia, cuota crédito"></div>
           <div class="campo"><label for="r-exp">N° de expediente / Juzgado</label><input id="r-exp" maxlength="200"></div>
-          <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
-            <input id="r-benef" maxlength="200" placeholder="A quién se le abona"><span class="ayuda">Obligatorio en retenciones judiciales.</span></div>
+          <fieldset class="grupo-benef" id="campo-benef" hidden>
+            <legend>Beneficiario</legend>
+            ${camposBeneficiario('r')}
+          </fieldset>
           <div class="campo"><label for="r-cargo">Cargada por <span class="obligatorio">*</span></label>
             <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo') || usuarioSesion())}" required></div>
           <div class="zona-mensaje"></div>
@@ -1956,6 +2066,7 @@ async function vistaRetenciones(_params, vigente) {
     const filas = await api(`/api/retenciones?${qs}`);
     lista.innerHTML = tablaRetenciones(filas);
     conectarDefinirImporte(lista, recargar);
+    conectarEditarBeneficiario(lista, filas, recargar);
     lista.querySelectorAll('[data-baja]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('¿Dejar de repetir esta retención? Desde el mes que viene no se crea más. Lo ya cargado queda igual.')) return;
       try { await api(`/api/retenciones/${b.dataset.baja}/baja`, { metodo: 'POST', cuerpo: {} }); aviso('Listo: no se repite más desde el mes que viene.'); recargar(); }
@@ -1999,14 +2110,14 @@ async function vistaRetenciones(_params, vigente) {
         hasta: chkMensual.checked ? form.querySelector('#r-hasta').value : '',
         concepto: form.querySelector('#r-concepto').value,
         expediente: form.querySelector('#r-exp').value,
-        beneficiario: esJudicial() ? form.querySelector('#r-benef').value : null,
+        ...(esJudicial() ? leerBeneficiario(form, 'r') : { beneficiario: null }),
         cargado_por: form.querySelector('#r-cargo').value,
       } });
       recordar.guardar('cargo', form.querySelector('#r-cargo').value.trim());
     },
     alTerminar: async () => {
       aviso('Retención guardada.');
-      ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
+      ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-benef-doc', '#r-benef-cobro', '#r-benef-cuenta', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
       selCalculo.value = 'fijo'; mostrarCalculo();
       chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
       form.querySelector('#r-colab').focus();
@@ -2026,7 +2137,8 @@ function tablaRetenciones(filas) {
       <td>${esc(r.colaborador)}<span class="sec">CI ${esc(cedula(r.cedula))}</span></td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}${r.repite ? ' <span class="etiqueta-tipo mensual">Mensual</span>' : ''}</span></td>
       <td>${esc(r.concepto) || '—'}${r.expediente ? `<span class="sec">${esc(r.expediente)}</span>` : ''}</td>
-      <td>${r.tipo === 'judicial' ? esc(r.beneficiario) : '<span class="sec">—</span>'}</td>
+      <td>${r.tipo === 'judicial' ? `${r.beneficiario === 'A completar' ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(r.beneficiario)}${detalleBeneficiario(r) ? `<span class="sec">${detalleBeneficiario(r)}</span>` : ''}
+        <button class="enlace" type="button" data-benef="${r.id}">${r.beneficiario === 'A completar' ? 'Completar' : 'Editar'}</button>` : '<span class="sec">—</span>'}</td>
       <td class="num">${celdaTotal(r)}</td>
       <td class="num">${moneda(r.descontado)}</td>
       <td class="num">${celdaFalta(r)}</td>
@@ -2357,7 +2469,7 @@ function tablaPlanilla(filas) {
     <tbody>${filas.map((r) => `<tr>
       <td>${esc(mesCorto(r.periodo))}${r.arrastre ? '<span class="sec">saldo que pasa</span>' : ''}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
-      <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}</td>
+      <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}${detalleBeneficiario(r) ? `<span class="sec">${detalleBeneficiario(r)}</span>` : ''}</td>
       <td class="num">${celdaTotal(r)}</td><td class="num">${moneda(r.descontado)}</td>
       <td class="num">${celdaFalta(r)}</td>
       <td>${esc(r.empresas) || '<span class="sec">—</span>'}</td></tr>`).join('')}</tbody>
@@ -2372,7 +2484,7 @@ function tablaAbonar(rep) {
   return `<div class="tabla-contenedor"><table>
     <thead><tr><th>Colaborador</th><th>${porEntidad ? 'Beneficiario' : 'Entidad'}</th><th>Concepto</th><th>Expediente</th><th>Período</th><th class="num">A abonar</th></tr></thead>
     <tbody>${rep.grupos.map((g) => `
-      <tr class="grupo"><td colspan="6">${esc(g.grupo)} · ${esc(g.tipo.split(' / ').map((t) => tipoTxt[t] || t).join(' / '))}</td></tr>
+      <tr class="grupo"><td colspan="6">${esc(g.grupo)} · ${esc(g.tipo.split(' / ').map((t) => tipoTxt[t] || t).join(' / '))}${!porEntidad && detalleBeneficiario(g.detalle[0]) ? `<span class="sec">${detalleBeneficiario(g.detalle[0])}</span>` : ''}</td></tr>
       ${g.detalle.map((x) => `<tr>
         <td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td>
         <td>${esc(porEntidad ? (x.beneficiario || '—') : x.entidad)}</td>

@@ -228,3 +228,8 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
 .dialogo { border: none; border-radius: 14px; padding: 22px; width: min(420px, calc(100vw - 32px)); box-shadow: 0 20px 50px rgba(0,0,0,.25); background: var(--superficie, #fff); color: var(--texto); }
 .dialogo::backdrop { background: rgba(10, 40, 40, .45); }
 .dialogo h2 { margin-top: 0; }
+.grupo-benef { border: 1px solid var(--borde, #d8e4e2); border-radius: 10px; padding: 10px 14px 4px; margin: 0; display: grid; gap: 12px; }
+.grupo-benef[hidden] { display: none; }
+.grupo-benef legend { font-weight: 700; font-size: .87rem; color: var(--verde-profundo); padding: 0 6px; }
+td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
+[hidden] { display: none !important; }

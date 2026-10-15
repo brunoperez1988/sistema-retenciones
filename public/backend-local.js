@@ -452,6 +452,18 @@
     return `${String(porcentaje).replace('.', ',')}% ${base === 'nominal' ? 'Nominal' : 'Líquido'}`;
   }
 
+  const MEDIOS_COBRO = ['Depósito en cuenta bancaria', 'Abitab', 'RedPagos', 'Giro', 'Efectivo', 'Otro'];
+  // Documento, medio de cobro y cuenta del beneficiario (solo judiciales; todo opcional).
+  function datosBeneficiario(datos) {
+    const medio = texto(datos.beneficiario_cobro, 'medio de cobro', { obligatorio: false, max: 40 });
+    if (medio && !MEDIOS_COBRO.includes(medio)) throw new ErrorValidacion('Elegí un medio de cobro de la lista.');
+    return {
+      beneficiario_doc: texto(datos.beneficiario_doc, 'documento del beneficiario', { obligatorio: false, max: 20 }).replace(/[.\-\s]/g, ''),
+      beneficiario_cobro: medio,
+      beneficiario_cuenta: texto(datos.beneficiario_cuenta, 'cuenta / detalle de cobro', { obligatorio: false, max: 120 }),
+    };
+  }
+
   function entero(valor, campo) {
     const n = Number(valor);
     if (!Number.isInteger(n) || n <= 0) throw new ErrorValidacion(`Elegí ${campo}.`);
@@ -575,7 +587,7 @@
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
-    return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.expediente]);
+    return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.beneficiario_doc, x.expediente]);
   }
 
   function listarDescuentos(f = {}) {
@@ -670,6 +682,7 @@
       concepto: texto(datos.concepto, 'concepto', { obligatorio: false }),
       expediente: texto(datos.expediente, 'expediente / juzgado', { obligatorio: false }),
       beneficiario: entidad.tipo === 'judicial' ? texto(datos.beneficiario, 'beneficiario') : null,
+      ...(entidad.tipo === 'judicial' ? datosBeneficiario(datos) : {}),
       cargado_por: texto(datos.cargado_por, 'quién la cargó', { max: 80 }),
       creado_en: ahora(),
       ...datosMensual(datos),
@@ -710,6 +723,9 @@
           colaborador_id: t.colaborador_id, entidad_id: t.entidad_id, periodo: m, regla: t.regla || '',
           importe_total: esPorcentaje(t.regla) ? null : t.importe_total,
           concepto: t.concepto || '', expediente: t.expediente || '', beneficiario: t.beneficiario,
+          ...(t.beneficiario_doc ? { beneficiario_doc: t.beneficiario_doc } : {}),
+          ...(t.beneficiario_cobro ? { beneficiario_cobro: t.beneficiario_cobro } : {}),
+          ...(t.beneficiario_cuenta ? { beneficiario_cuenta: t.beneficiario_cuenta } : {}),
           cargado_por: 'Automática (se repite cada mes)', creado_en: ahora(), origen_id: t.id,
         });
       }
@@ -730,6 +746,23 @@
     if (!tId) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
     const desde = mesSiguiente(mesDeHoy());
     return modificar((e) => { e.retenciones.find((x) => x.id === tId).baja = desde; return { ok: true, desde }; });
+  }
+
+  // Cambia los datos del beneficiario de una retención judicial (y de sus copias mensuales).
+  function editarBeneficiario(id, datos) {
+    const n = Number(id);
+    const r = estado.retenciones.find((x) => x.id === n);
+    if (!r) throw new ErrorValidacion('La retención no existe.', 404);
+    if (estado.entidades.find((x) => x.id === r.entidad_id).tipo !== 'judicial') throw new ErrorValidacion('Solo las retenciones judiciales tienen beneficiario.');
+    const cambios = { beneficiario: texto(datos.beneficiario, 'nombre y apellido del beneficiario'), ...datosBeneficiario(datos) };
+    const familia = r.mensual ? r.id : r.origen_id;
+    return modificar((e) => {
+      let cuantas = 0;
+      for (const x of e.retenciones) {
+        if (x.id === n || (familia && (x.id === familia || x.origen_id === familia))) { Object.assign(x, cambios); cuantas += 1; }
+      }
+      return { ok: true, retenciones: cuantas };
+    });
   }
 
   // Define (o corrige) el importe total de una retención; nunca por debajo de lo ya descontado.
@@ -771,6 +804,7 @@
           concepto: texto(x.concepto, 'concepto', { obligatorio: false }),
           expediente: texto(x.expediente, 'expediente', { obligatorio: false }),
           beneficiario: ent.tipo === 'judicial' ? (texto(x.beneficiario, 'beneficiario', { obligatorio: false }) || 'A completar') : null,
+          ...(ent.tipo === 'judicial' ? datosBeneficiario(x) : {}),
           cargado_por: texto(x.cargado_por || 'Importación', 'quién la cargó', { max: 80 }),
           creado_en: ahora(),
           ...datosMensual(x),
@@ -1073,12 +1107,13 @@
     const columnas = [
       { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
       { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
+      { titulo: 'Doc. beneficiario', ancho: 14 }, { titulo: 'Medio de cobro', ancho: 22 }, { titulo: 'Cuenta / detalle', ancho: 24 },
       { titulo: 'Regla', ancho: 16 }, { titulo: '% a retener', ancho: 11 }, { titulo: 'Sobre', ancho: 10 }, { titulo: 'Total', tipo: 'moneda', ancho: 14 }, { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta descontar', tipo: 'moneda', ancho: 15 },
       { titulo: 'Empresas donde se retuvo', ancho: 28 }, { titulo: 'Cargado por', ancho: 16 },
     ];
-    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.regla || '', x.porcentaje == null ? '' : `${String(x.porcentaje).replace('.', ',')}%`, x.base === 'nominal' ? 'Nominal' : x.base === 'liquido' ? 'Líquido' : '', x.sin_tope ? 'Sin tope' : x.importe_total == null ? 'A definir' : x.importe_total, x.descontado, x.pendiente == null ? '' : x.pendiente, x.empresas, x.cargado_por]);
+    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.beneficiario_doc || '', x.beneficiario_cobro || '', x.beneficiario_cuenta || '', x.regla || '', x.porcentaje == null ? '' : `${String(x.porcentaje).replace('.', ',')}%`, x.base === 'nominal' ? 'Nominal' : x.base === 'liquido' ? 'Líquido' : '', x.sin_tope ? 'Sin tope' : x.importe_total == null ? 'A definir' : x.importe_total, x.descontado, x.pendiente == null ? '' : x.pendiente, x.empresas, x.cargado_por]);
     const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
-    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', '', '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
     return { columnas, filas: cuerpo, titulo: 'Planilla de retenciones', hoja: 'Planilla' };
   }
 
@@ -1088,14 +1123,15 @@
     const columnas = [
       { titulo: porEntidad ? 'Entidad' : 'Beneficiario', ancho: 28 }, { titulo: 'Tipo', ancho: 11 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 },
       { titulo: porEntidad ? 'Beneficiario' : 'Entidad', ancho: 26 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Período', ancho: 10 },
+      { titulo: 'Doc. beneficiario', ancho: 14 }, { titulo: 'Medio de cobro', ancho: 22 }, { titulo: 'Cuenta / detalle', ancho: 24 },
       { titulo: 'A abonar', tipo: 'moneda', ancho: 15 },
     ];
     const cuerpo = [];
     for (const g of rep.grupos) {
-      for (const x of g.detalle) cuerpo.push([g.grupo, TIPO_TXT[x.tipo], x.cedula, x.colaborador, porEntidad ? (x.beneficiario || '') : x.entidad, x.concepto, x.expediente, x.periodo, x.descontado]);
-      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.grupo}`, '', '', `${g.ordenes} ${g.ordenes === 1 ? 'orden' : 'órdenes'}`, '', '', '', '', g.abonar] });
+      for (const x of g.detalle) cuerpo.push([g.grupo, TIPO_TXT[x.tipo], x.cedula, x.colaborador, porEntidad ? (x.beneficiario || '') : x.entidad, x.concepto, x.expediente, x.periodo, x.beneficiario_doc || '', x.beneficiario_cobro || '', x.beneficiario_cuenta || '', x.descontado]);
+      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.grupo}`, '', '', `${g.ordenes} ${g.ordenes === 1 ? 'orden' : 'órdenes'}`, '', '', '', '', '', '', '', g.abonar] });
     }
-    cuerpo.push({ negrita: true, celdas: ['TOTAL A ABONAR', '', '', '', '', '', '', '', rep.total] });
+    cuerpo.push({ negrita: true, celdas: ['TOTAL A ABONAR', '', '', '', '', '', '', '', '', '', '', rep.total] });
     return { columnas, filas: cuerpo, titulo: `A abonar por ${porEntidad ? 'entidad' : 'beneficiario'}`, hoja: 'A abonar' };
   }
 
@@ -1129,6 +1165,7 @@
       if (ruta === '/api/importar') return importarRetenciones(cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) return definirImporte(m[1], cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return darDeBaja(m[1]);
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/beneficiario$/))) return editarBeneficiario(m[1], cuerpo || {});
     }
     if (metodo === 'DELETE') {
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) return eliminarRetencion(m[1]);
