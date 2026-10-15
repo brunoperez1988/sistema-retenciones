@@ -1428,6 +1428,7 @@ function pantallaAcceso(c) {
   const crear = !c.existe;
   $app.innerHTML = `
     <section class="acceso tarjeta">
+      <img class="acceso-logo" src="${esc(document.querySelector('.marca-img')?.src || '')}" alt="QGLH · Servicios Humanos Integrales">
       <h1>${crear ? 'Creá tu usuario' : 'Ingresar'}</h1>
       <p>${crear
         ? 'Elegí un usuario y una contraseña. Con la contraseña se cifran los datos guardados en esta computadora: sin ella nadie los puede leer. <strong>Anotala en un lugar seguro.</strong>'

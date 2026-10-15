@@ -15,6 +15,7 @@ let html = leer('index.html');
 html = html.replace('<link rel="stylesheet" href="/styles.css">', () => `<style>\n${leer('styles.css')}\n</style>`);
 html = html.replace('<script src="/app.js"></script>', () =>
   `<script>\n${seguro(leer('backend-local.js'))}\n</script>\n  <script>\n${seguro(leer('app.js'))}\n</script>`);
+html = html.replace('src="/logo.png"', () => `src="data:image/png;base64,${fs.readFileSync(path.join(pub, 'logo.png')).toString('base64')}"`);
 if (html.includes('href="/styles.css"') || html.includes('src="/app.js"')) throw new Error('No se pudo armar el archivo único');
 
 const destino = path.join(__dirname, '..', 'dist', 'Sistema-Retenciones.html');

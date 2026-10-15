@@ -1,9 +1,9 @@
 :root {
-  --verde: #2f8f86;
-  --verde-oscuro: #1f6f68;
-  --verde-profundo: #17524d;
-  --verde-claro: #e3f3f0;
-  --verde-suave: #c9e7e2;
+  --verde: #5f7d0b;
+  --verde-oscuro: #4b6409;
+  --verde-profundo: #2b2c2e;
+  --verde-claro: #f1f6e1;
+  --verde-suave: #dce9b4;
   --ambar: #f2a93b;
   --ambar-oscuro: #b8740f;
   --ambar-claro: #fdf1d8;
@@ -11,13 +11,17 @@
   --rojo-claro: #fbe9e7;
   --violeta: #6b5ca5;
   --violeta-claro: #eeebf8;
-  --fondo: #f4f7f6;
+  --fondo: #f5f6f3;
   --superficie: #ffffff;
-  --texto: #1d2b2a;
-  --texto-suave: #5b6b69;
-  --borde: #dde6e4;
-  --sombra: 0 1px 2px rgba(23, 82, 77, .06), 0 4px 14px rgba(23, 82, 77, .06);
+  --texto: #232426;
+  --texto-suave: #63666a;
+  --borde: #e1e4dc;
+  --sombra: 0 1px 2px rgba(40, 42, 45, .06), 0 4px 14px rgba(40, 42, 45, .07);
   --radio: 12px;
+  --lima: #9abb0d;
+  --lima-claro: #eef5d3;
+  --grafito: #2b2c2e;
+  --grafito-2: #46484c;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color: var(--texto);
 }
@@ -239,3 +243,28 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .detalle-cabecera h2 { margin: 0; }
 .tabla-detalle th { text-align: left; width: 38%; font-weight: 600; color: var(--texto-suave); background: none; text-transform: none; letter-spacing: 0; font-size: .9rem; }
 .dialogo h3 { margin: 18px 0 8px; font-size: 1rem; color: var(--verde-profundo); }
+
+/* ── Identidad QGLH: grafito y verde lima ── */
+.barra { background: #fff; border-bottom: 3px solid var(--lima); box-shadow: 0 2px 10px rgba(40, 42, 45, .08); }
+.marca { color: var(--grafito); gap: 12px; }
+.marca-img { height: 40px; width: auto; display: block; }
+.marca-texto { padding-left: 12px; border-left: 2px solid var(--lima); font-weight: 650; font-size: .98rem; color: var(--grafito-2); }
+.menu a { color: var(--grafito-2); }
+.menu a:hover { background: var(--lima-claro); color: var(--grafito); }
+.menu a.activo { background: var(--grafito); color: #fff; box-shadow: inset 0 -3px 0 var(--lima); }
+.menu-boton { background: var(--grafito); color: #fff; border-color: var(--grafito); }
+.estado-nube { color: var(--grafito-2); background: var(--lima-claro); border-color: #cfe08c; }
+.estado-nube[data-estado="error"] { background: var(--ambar-claro); color: var(--ambar-oscuro); border-color: var(--ambar); }
+.boton-salir { color: var(--grafito-2); border-color: #c9ccc4; }
+.boton-salir:hover { background: var(--lima-claro); }
+.panel-cabecera { background: linear-gradient(120deg, var(--grafito) 0%, var(--grafito-2) 70%, #5a5d61 100%); box-shadow: 0 6px 22px rgba(40, 42, 45, .25); }
+.panel-cabecera::after { background: rgba(154, 187, 13, .35); }
+.panel-cabecera p { color: #e3e5df; }
+.indicador.ordenes { --c: var(--grafito-2); --c-texto: var(--grafito); background: linear-gradient(180deg, #eceeea, #fff 70%); }
+.indicador.retenido { --c: var(--lima); background: linear-gradient(180deg, var(--lima-claro), #fff 70%); }
+.acceso { border-top-color: var(--lima); }
+.boton.ambar { background: var(--lima); color: var(--grafito); border-color: var(--lima); }
+.boton.ambar:hover { background: #8aa80b; }
+.acceso-logo { display: block; width: min(260px, 70%); height: auto; margin: 0 auto 18px; }
+@media (max-width: 600px) { .marca-texto { display: none; } .marca-img { height: 34px; } }
+.etiqueta-tipo.mensual { background: var(--lima-claro); color: #4b6409; }
