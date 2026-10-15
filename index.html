@@ -1459,12 +1459,8 @@ const mesCorto = (periodo) => {
   return new Date(a, m - 1, 1).toLocaleDateString('es-UY', { month: 'short', year: 'numeric' }).replace('.', '');
 };
 const fecha = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
-const cedula = (ci) => {
-  const s = String(ci || '');
-  if (s.length < 2) return s;
-  const cuerpo = s.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  return `${cuerpo}-${s.slice(-1)}`;
-};
+// Cédula solo con números, sin puntos ni guion (ej.: 44361220).
+const cedula = (ci) => String(ci || '').replace(/\D/g, '');
 const hoy = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -2458,7 +2454,7 @@ function vistaColaboradores(_p, vigente) {
   descripcion: 'Personas a las que se les aplican retenciones. La cédula no se puede repetir.',
   ruta: '/api/colaboradores',
   campos: [
-    { clave: 'cedula', nombre: 'cédula', html: '<div class="campo"><label for="a-ci">Cédula <span class="obligatorio">*</span></label><input id="a-ci" inputmode="numeric" maxlength="12" placeholder="1.234.567-2"><span class="ayuda">Con dígito verificador. Puntos y guion son opcionales.</span></div>', leer: (f) => f.querySelector('#a-ci').value.trim() },
+    { clave: 'cedula', nombre: 'cédula', html: '<div class="campo"><label for="a-ci">Cédula <span class="obligatorio">*</span></label><input id="a-ci" inputmode="numeric" maxlength="12" placeholder="12345672"><span class="ayuda">Solo números, con el dígito verificador al final.</span></div>', leer: (f) => f.querySelector('#a-ci').value.trim() },
     { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre completo <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
   ],
   columnas: [

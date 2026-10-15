@@ -87,7 +87,7 @@ Si el servidor o la base no responden, la pantalla muestra “No pudimos cargar 
 ## Datos de ejemplo
 
 - Entidades: Juzgado de Familia N° 2 (judicial), Electrohogar SA (comercial), ANDA (comercial).
-- Colaboradores: Juan Pérez (CI 1.111.111-1) y Ana Gómez (CI 2.222.222-2, cédula de ejemplo).
+- Colaboradores: Juan Pérez (CI 11111111) y Ana Gómez (CI 22222222, cédula de ejemplo).
 - Empresas: Operativa Central, Sucursal Norte, Sucursal Este.
 - Retenciones del mes actual y del anterior, con algunos descuentos (por ejemplo, $ 20 a Juan Pérez por ANDA en la Operativa Central).
 
