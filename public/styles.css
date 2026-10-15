@@ -337,3 +337,4 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 :root[data-tema="oscuro"] .logo-anim .logo-letras { animation-name: logo-letras-oscuro; }
 @keyframes logo-letras-oscuro { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @media (max-width: 600px) { .marca-img.logo-anim { height: 34px; } }
+.acceso-logo.logo-anim { display: block; margin-left: auto; margin-right: auto; }
