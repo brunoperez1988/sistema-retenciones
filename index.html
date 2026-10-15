@@ -1,0 +1,1863 @@
+<!doctype html>
+<html lang="es-UY">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control de Retenciones</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f8f86'/%3E%3Cpath d='M9 17l5 5 9-11' stroke='%23f5b041' stroke-width='3.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <style>
+:root {
+  --verde: #2f8f86;
+  --verde-oscuro: #1f6f68;
+  --verde-profundo: #17524d;
+  --verde-claro: #e3f3f0;
+  --verde-suave: #c9e7e2;
+  --ambar: #f2a93b;
+  --ambar-oscuro: #b8740f;
+  --ambar-claro: #fdf1d8;
+  --rojo: #b9443a;
+  --rojo-claro: #fbe9e7;
+  --violeta: #6b5ca5;
+  --violeta-claro: #eeebf8;
+  --fondo: #f4f7f6;
+  --superficie: #ffffff;
+  --texto: #1d2b2a;
+  --texto-suave: #5b6b69;
+  --borde: #dde6e4;
+  --sombra: 0 1px 2px rgba(23, 82, 77, .06), 0 4px 14px rgba(23, 82, 77, .06);
+  --radio: 12px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--texto);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--fondo); }
+body { margin: 0; min-height: 100vh; background: var(--fondo); font-size: 15px; line-height: 1.45; }
+a { color: var(--verde-oscuro); }
+h1, h2, h3 { margin: 0; line-height: 1.2; }
+h1 { font-size: 1.55rem; color: var(--verde-profundo); }
+h2 { font-size: 1.1rem; color: var(--verde-profundo); }
+.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+/* ── Menú superior ── */
+.barra {
+  position: sticky; top: 0; z-index: 10;
+  background: linear-gradient(100deg, var(--verde-profundo) 0%, var(--verde-oscuro) 35%, var(--verde) 75%, #3ba596 100%);
+  box-shadow: 0 2px 10px rgba(23, 82, 77, .25);
+  border-bottom: 3px solid var(--ambar);
+}
+.barra-interior { max-width: 1440px; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; gap: 24px; min-height: 60px; flex-wrap: wrap; }
+.marca { display: flex; align-items: center; gap: 10px; color: #fff; text-decoration: none; font-weight: 700; font-size: 1.05rem; white-space: nowrap; }
+.marca-logo { width: 32px; height: 32px; border-radius: 9px; background: var(--ambar); color: var(--verde-profundo); display: grid; place-items: center; }
+.marca-logo svg { width: 22px; height: 22px; }
+.menu { display: flex; gap: 4px; flex-wrap: wrap; }
+.menu a {
+  color: #e6f6f3; text-decoration: none; padding: 8px 12px; border-radius: 8px; font-weight: 500; font-size: .93rem;
+  transition: background .15s, color .15s;
+}
+.menu a:hover { background: rgba(255, 255, 255, .14); color: #fff; }
+.menu a.activo { background: var(--ambar); color: var(--verde-profundo); font-weight: 650; }
+.menu-boton { display: none; margin-left: auto; background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; }
+
+@media (max-width: 900px) {
+  .menu-boton { display: block; }
+  .menu { display: none; width: 100%; flex-direction: column; padding-bottom: 12px; }
+  .menu.abierto { display: flex; }
+}
+
+/* ── Contenido ── */
+.contenido { max-width: 1440px; margin: 0 auto; padding: 24px 20px 64px; outline: none; }
+.encabezado { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+.encabezado p { margin: 4px 0 0; color: var(--texto-suave); }
+.cargando { color: var(--texto-suave); padding: 40px 0; text-align: center; }
+
+.tarjeta { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio); box-shadow: var(--sombra); padding: 20px; margin-bottom: 20px; }
+.tarjeta > h2 { margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+.tarjeta > h2::before { content: ""; width: 6px; height: 18px; border-radius: 3px; background: var(--ambar); }
+.columnas { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.columnas > .tarjeta { margin-bottom: 0; }
+@media (max-width: 1000px) { .columnas { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── Formularios ── */
+.formulario { display: grid; gap: 14px; }
+.formulario .fila { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.campo { display: grid; gap: 5px; }
+.campo label, .etiqueta { font-weight: 600; font-size: .87rem; color: var(--verde-profundo); }
+.campo .ayuda { font-size: .82rem; color: var(--texto-suave); }
+.campo .ayuda strong { color: var(--ambar-oscuro); }
+input, select {
+  font: inherit; color: var(--texto); width: 100%;
+  padding: 9px 11px; border: 1px solid #c8d6d3; border-radius: 8px; background: #fff;
+}
+input:focus, select:focus { outline: 2px solid var(--verde-suave); border-color: var(--verde); }
+input[aria-invalid="true"] { border-color: var(--rojo); outline-color: var(--rojo-claro); }
+.error-campo { color: var(--rojo); font-size: .84rem; font-weight: 500; }
+.obligatorio { color: var(--ambar-oscuro); }
+
+.boton {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
+  padding: 9px 16px; border-radius: 8px; border: 1px solid transparent;
+  background: var(--verde); color: #fff; transition: background .15s;
+}
+.boton:hover { background: var(--verde-oscuro); }
+.boton:disabled { opacity: .55; cursor: not-allowed; }
+.boton.secundario { background: #fff; color: var(--verde-oscuro); border-color: var(--verde-suave); }
+.boton.secundario:hover { background: var(--verde-claro); }
+.boton.ambar { background: var(--ambar); color: var(--verde-profundo); }
+.boton.ambar:hover { background: #e39a2c; }
+.boton.chico { padding: 4px 10px; font-size: .84rem; }
+.boton.peligro { background: #fff; color: var(--rojo); border-color: #ecc5c1; }
+.boton.peligro:hover { background: var(--rojo-claro); }
+.acciones { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.mensaje { padding: 10px 14px; border-radius: 8px; font-weight: 500; }
+.mensaje.error { background: var(--rojo-claro); color: var(--rojo); border: 1px solid #f0cbc6; }
+.mensaje.ok { background: var(--verde-claro); color: var(--verde-profundo); border: 1px solid var(--verde-suave); }
+
+/* ── Filtros ── */
+.filtros { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 14px; }
+.filtros .campo { min-width: 150px; flex: 0 1 auto; }
+.filtros .campo.ancho { flex: 1 1 240px; }
+
+/* ── Tablas ── */
+.tabla-contenedor { overflow-x: auto; border: 1px solid var(--borde); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; background: #fff; font-size: .9rem; }
+th { text-align: left; background: var(--verde-claro); color: var(--verde-profundo); font-weight: 650; font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; padding: 10px 12px; white-space: nowrap; }
+td { padding: 9px 12px; border-top: 1px solid var(--borde); vertical-align: top; }
+tbody tr:hover td { background: #fafcfb; }
+tfoot td { background: var(--ambar-claro); font-weight: 700; border-top: 2px solid var(--ambar); }
+td .sec { display: block; color: var(--texto-suave); font-size: .82rem; }
+tr.grupo td { background: var(--verde-claro); font-weight: 650; color: var(--verde-profundo); }
+tr.subtotal td { background: #fbf8f0; font-weight: 650; }
+.vacio { text-align: center; color: var(--texto-suave); padding: 28px 12px; }
+
+/* ── Etiquetas ── */
+.etiqueta-tipo { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .75rem; font-weight: 650; white-space: nowrap; }
+.etiqueta-tipo.judicial { background: var(--violeta-claro); color: var(--violeta); }
+.etiqueta-tipo.comercial { background: var(--ambar-claro); color: var(--ambar-oscuro); }
+.etiqueta-tipo.completa { background: var(--verde); color: #fff; }
+.etiqueta-tipo.pendiente { background: #eef2f1; color: var(--texto-suave); }
+
+/* ── Panel ── */
+.panel-cabecera {
+  background: linear-gradient(120deg, var(--verde-oscuro), var(--verde) 60%, #48ad9f);
+  color: #fff; border-radius: 16px; padding: 22px 24px; margin-bottom: 20px;
+  display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+  box-shadow: 0 6px 22px rgba(31, 111, 104, .25); position: relative; overflow: hidden;
+}
+.panel-cabecera::after { content: ""; position: absolute; right: -60px; top: -60px; width: 200px; height: 200px; border-radius: 50%; background: rgba(242, 169, 59, .25); }
+.panel-cabecera h1 { color: #fff; }
+.panel-cabecera p { margin: 4px 0 0; color: #d9f1ed; }
+.panel-cabecera .campo { position: relative; z-index: 1; }
+.panel-cabecera label { color: #fff; }
+.panel-cabecera input { border: none; min-width: 190px; }
+
+.indicadores { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin-bottom: 22px; }
+@media (max-width: 900px) { .indicadores { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) {
+  .indicadores { grid-template-columns: minmax(0, 1fr); }
+  .contenido { padding: 18px 16px 48px; }
+  .barra-interior { padding: 0 16px; }
+  .formulario .fila { grid-template-columns: minmax(0, 1fr); }
+  .panel-cabecera input { min-width: 0; }
+}
+.indicador { border-radius: var(--radio); padding: 16px 18px; background: #fff; border: 1px solid var(--borde); box-shadow: var(--sombra); border-top: 4px solid var(--c); }
+.indicador .titulo { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; font-weight: 650; color: var(--texto-suave); }
+.indicador .valor { font-size: 1.55rem; font-weight: 750; margin-top: 6px; color: var(--c-texto, var(--texto)); font-variant-numeric: tabular-nums; }
+.indicador .detalle { font-size: .83rem; color: var(--texto-suave); margin-top: 2px; }
+.indicador.ordenes { --c: var(--violeta); --c-texto: var(--violeta); background: linear-gradient(180deg, var(--violeta-claro), #fff 70%); }
+.indicador.pactado { --c: var(--verde-oscuro); --c-texto: var(--verde-profundo); background: linear-gradient(180deg, var(--verde-claro), #fff 70%); }
+.indicador.retenido { --c: var(--verde); --c-texto: var(--verde-oscuro); background: linear-gradient(180deg, #e8f6f2, #fff 70%); }
+.indicador.disponible { --c: var(--ambar); --c-texto: var(--ambar-oscuro); background: linear-gradient(180deg, var(--ambar-claro), #fff 70%); }
+
+.avance-general { height: 10px; border-radius: 999px; background: var(--verde-claro); overflow: hidden; margin-top: 10px; }
+.avance-general span { display: block; height: 100%; background: linear-gradient(90deg, var(--verde), var(--ambar)); }
+
+.ordenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 14px; }
+.orden { background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); padding: 16px; box-shadow: var(--sombra); display: grid; gap: 10px; border-left: 4px solid var(--borde-orden, var(--verde-suave)); }
+.orden.judicial { --borde-orden: var(--violeta); }
+.orden.comercial { --borde-orden: var(--ambar); }
+.orden.es-completa { background: linear-gradient(180deg, #f1faf8, #fff); }
+.orden-cabecera { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.orden-persona { font-weight: 650; }
+.orden-persona .sec { display: block; font-weight: 400; color: var(--texto-suave); font-size: .84rem; }
+.orden-etiquetas { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.barra-avance { height: 12px; background: #edf2f1; border-radius: 999px; overflow: hidden; }
+.barra-avance span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--verde), #46b0a2); transition: width .4s; }
+.orden.es-completa .barra-avance span { background: linear-gradient(90deg, var(--verde-oscuro), var(--verde)); }
+.orden-cifras { display: flex; justify-content: space-between; font-size: .86rem; color: var(--texto-suave); gap: 8px; flex-wrap: wrap; }
+.orden-cifras strong { color: var(--texto); font-variant-numeric: tabular-nums; }
+.orden-cifras .falta strong { color: var(--ambar-oscuro); }
+
+/* ── Error de conexión ── */
+.falla { max-width: 520px; margin: 48px auto; text-align: center; background: #fff; border: 1px solid var(--borde); border-top: 4px solid var(--ambar); border-radius: 16px; padding: 32px 28px; box-shadow: var(--sombra); }
+.falla .icono { width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%; background: var(--ambar-claro); color: var(--ambar-oscuro); display: grid; place-items: center; font-size: 1.6rem; font-weight: 800; }
+.falla p { font-size: 1.05rem; margin: 0 0 18px; }
+.falla-en-linea { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: var(--ambar-claro); border: 1px solid #f3d9a6; color: #6d4a0c; padding: 10px 14px; border-radius: 8px; font-weight: 500; }
+
+/* ── Avisos flotantes ── */
+.aviso { position: fixed; bottom: 20px; right: 20px; background: var(--verde-profundo); color: #fff; padding: 12px 18px; border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,.2); font-weight: 500; border-left: 4px solid var(--ambar); max-width: 360px; z-index: 20; }
+
+.pestanas { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.pestanas button { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 999px; border: 1px solid var(--verde-suave); background: #fff; color: var(--verde-oscuro); cursor: pointer; }
+.pestanas button[aria-selected="true"] { background: var(--verde); color: #fff; border-color: var(--verde); }
+.nota { font-size: .84rem; color: var(--texto-suave); margin: 8px 0 0; }
+.radio-grupo { display: flex; gap: 14px; padding: 6px 0; }
+.radio-grupo label { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--texto); }
+.radio-grupo input { width: auto; }
+
+</style>
+</head>
+<body>
+  <header class="barra">
+    <div class="barra-interior">
+      <a class="marca" href="#/panel">
+        <span class="marca-logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M9 17l5 5 9-11" stroke="currentColor" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span>Control de Retenciones</span>
+      </a>
+      <button class="menu-boton" type="button" aria-expanded="false" aria-controls="menu">Menú</button>
+      <nav id="menu" class="menu" aria-label="Secciones">
+        <a href="#/panel" data-seccion="panel">Panel</a>
+        <a href="#/retenciones" data-seccion="retenciones">Retenciones recibidas</a>
+        <a href="#/descuentos" data-seccion="descuentos">Descuentos</a>
+        <a href="#/reportes" data-seccion="reportes">Reportes</a>
+        <a href="#/empresas" data-seccion="empresas">Empresas</a>
+        <a href="#/colaboradores" data-seccion="colaboradores">Colaboradores</a>
+        <a href="#/entidades" data-seccion="entidades">Entidades</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" class="contenido" tabindex="-1">
+    <p class="cargando">Cargando…</p>
+  </main>
+
+  <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+
+  <script>
+'use strict';
+
+/*
+ * Motor local para la versión de archivo único (sin servidor ni instalación).
+ * Atiende las mismas rutas /api/... que el servidor y guarda los datos en el
+ * navegador (IndexedDB). Las reglas que en la versión con servidor controla
+ * SQLite se controlan acá, antes de guardar cada cambio:
+ *   - nunca se descuenta más que el importe total de la retención;
+ *   - beneficiario obligatorio en judiciales; cédula única y válida; etc.
+ * Los importes se guardan en centésimos (enteros).
+ */
+(function () {
+  const TIPOS_DESCUENTO = ['1Q', '2Q', 'Egresos', 'Ajustes', 'Licencias'];
+  const NOMBRE_BD = 'sistema-retenciones';
+  const ALMACEN = 'datos';
+  const CLAVE = 'estado';
+  const VERSION_DATOS = 1;
+
+  class ErrorValidacion extends Error {
+    constructor(mensaje, status = 400) { super(mensaje); this.status = status; }
+  }
+
+  // ── Persistencia (IndexedDB) ──
+
+  function abrirBD() {
+    return new Promise((resolve, reject) => {
+      let pedido;
+      try { pedido = indexedDB.open(NOMBRE_BD, 1); } catch (e) { reject(e); return; }
+      pedido.onupgradeneeded = () => pedido.result.createObjectStore(ALMACEN);
+      pedido.onsuccess = () => resolve(pedido.result);
+      pedido.onerror = () => reject(pedido.error);
+      pedido.onblocked = () => reject(new Error('Base bloqueada'));
+    });
+  }
+
+  let bd = null;
+  async function conexion() {
+    if (!bd) {
+      bd = await abrirBD();
+      bd.onclose = () => { bd = null; };
+      bd.onversionchange = () => { bd.close(); bd = null; };
+    }
+    return bd;
+  }
+
+  async function leerEstado() {
+    const b = await conexion();
+    return new Promise((resolve, reject) => {
+      const tx = b.transaction(ALMACEN, 'readonly');
+      const p = tx.objectStore(ALMACEN).get(CLAVE);
+      p.onsuccess = () => resolve(p.result || null);
+      p.onerror = () => reject(p.error);
+    });
+  }
+
+  async function guardarEstado(valor) {
+    const b = await conexion();
+    return new Promise((resolve, reject) => {
+      const tx = b.transaction(ALMACEN, 'readwrite');
+      tx.objectStore(ALMACEN).put(valor, CLAVE);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('Escritura cancelada'));
+    });
+  }
+
+  // ── Estado en memoria ──
+
+  let estado = null;
+  let iniciando = null;
+
+  function estadoVacio() {
+    return { version: VERSION_DATOS, sig: 1, entidades: [], colaboradores: [], empresas: [], retenciones: [], descuentos: [], ultimoRespaldo: null, modificado: null };
+  }
+
+  async function iniciar() {
+    if (estado) return;
+    if (!iniciando) {
+      iniciando = (async () => {
+        let e = await leerEstado();
+        if (!e) {
+          e = estadoConEjemplos();
+          await guardarEstado(e);
+        }
+        estado = e;
+        try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch { /* opcional */ }
+      })().finally(() => { iniciando = null; });
+    }
+    await iniciando;
+  }
+
+  const ahora = () => {
+    const d = new Date();
+    const dos = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())} ${dos(d.getHours())}:${dos(d.getMinutes())}:${dos(d.getSeconds())}`;
+  };
+
+  // Aplica un cambio sobre una copia; solo si se guarda bien reemplaza el estado.
+  async function modificar(fn) {
+    const copia = structuredClone(estado);
+    const resultado = fn(copia);
+    copia.modificado = ahora();
+    await guardarEstado(copia);
+    estado = copia;
+    return resultado;
+  }
+
+  // ── Validaciones (las mismas que la versión con servidor) ──
+
+  function texto(valor, campo, { obligatorio = true, max = 200 } = {}) {
+    const v = String(valor ?? '').trim().replace(/\s+/g, ' ');
+    if (obligatorio && !v) throw new ErrorValidacion(`Falta completar: ${campo}.`);
+    if (v.length > max) throw new ErrorValidacion(`${campo}: máximo ${max} caracteres.`);
+    return v;
+  }
+  function entero(valor, campo) {
+    const n = Number(valor);
+    if (!Number.isInteger(n) || n <= 0) throw new ErrorValidacion(`Elegí ${campo}.`);
+    return n;
+  }
+  function importe(valor, campo = 'el importe') {
+    const n = Number(valor);
+    if (!Number.isInteger(n) || n <= 0) throw new ErrorValidacion(`Ingresá ${campo} mayor a cero.`);
+    if (n > 10000000000) throw new ErrorValidacion('El importe es demasiado alto.');
+    return n;
+  }
+  function periodo(valor) {
+    const v = String(valor ?? '').trim();
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(v)) throw new ErrorValidacion('Elegí un período (mes) válido.');
+    return v;
+  }
+  function fecha(valor) {
+    const v = String(valor ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v + 'T00:00:00'))) throw new ErrorValidacion('Ingresá una fecha válida.');
+    return v;
+  }
+  function cedula(valor) {
+    const v = String(valor ?? '').replace(/[.\-\s]/g, '');
+    if (!/^\d{6,8}$/.test(v)) throw new ErrorValidacion('La cédula debe tener entre 6 y 8 dígitos (con dígito verificador).');
+    const cuerpo = v.slice(0, -1).padStart(7, '0');
+    const pesos = [2, 9, 8, 7, 6, 3, 4];
+    const suma = pesos.reduce((acc, p, i) => acc + p * Number(cuerpo[i]), 0);
+    if ((10 - (suma % 10)) % 10 !== Number(v.at(-1))) throw new ErrorValidacion('La cédula no es válida: revisá el dígito verificador.');
+    return v;
+  }
+  const mismoNombre = (a, b) => a.localeCompare(b, 'es', { sensitivity: 'accent' }) === 0;
+  const porNombre = (a, b) => a.nombre.localeCompare(b.nombre, 'es');
+
+  // ── Consultas ──
+
+  const descontadoDe = (e, retId) => e.descuentos.reduce((a, d) => a + (d.retencion_id === retId ? d.importe : 0), 0);
+
+  function catalogos() {
+    return {
+      entidades: [...estado.entidades].sort(porNombre),
+      colaboradores: [...estado.colaboradores].sort(porNombre),
+      empresas: [...estado.empresas].sort(porNombre),
+      tiposDescuento: TIPOS_DESCUENTO,
+    };
+  }
+
+  function listarEntidades() {
+    return catalogos().entidades.map((x) => ({ ...x, retenciones: estado.retenciones.filter((r) => r.entidad_id === x.id).length }));
+  }
+  function listarColaboradores() {
+    return catalogos().colaboradores.map((c) => {
+      const rs = estado.retenciones.filter((r) => r.colaborador_id === c.id);
+      return { ...c, retenciones: rs.length, total: rs.reduce((a, r) => a + r.importe_total, 0), descontado: rs.reduce((a, r) => a + descontadoDe(estado, r.id), 0) };
+    });
+  }
+  function listarEmpresas() {
+    return catalogos().empresas.map((em) => {
+      const ds = estado.descuentos.filter((d) => d.empresa_id === em.id);
+      return { ...em, descuentos: ds.length, retenido: ds.reduce((a, d) => a + d.importe, 0) };
+    });
+  }
+
+  function normalizar(s) { return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+  function filtrarTexto(filas, q, campos) {
+    const termino = normalizar(q).trim();
+    if (!termino) return filas;
+    const partes = termino.split(/\s+/);
+    const termCi = termino.replace(/[.\-\s]/g, '');
+    return filas.filter((x) => {
+      const heno = normalizar(campos(x).join(' | '));
+      return partes.every((p) => heno.includes(p)) || (termCi && /^\d+$/.test(termCi) && heno.includes(termCi));
+    });
+  }
+
+  function listarRetenciones(f = {}) {
+    const ent = new Map(estado.entidades.map((x) => [x.id, x]));
+    const col = new Map(estado.colaboradores.map((x) => [x.id, x]));
+    const emp = new Map(estado.empresas.map((x) => [x.id, x]));
+    const per = f.periodo ? periodo(f.periodo) : null;
+    const tdesc = TIPOS_DESCUENTO.includes(f.tipo_descuento) ? f.tipo_descuento : null;
+    const empresaId = f.empresa_id ? Number(f.empresa_id) : null;
+    const filtraDescuentos = Boolean(tdesc || empresaId);
+
+    let filas = estado.retenciones
+      .filter((r) => !per || r.periodo === per)
+      .filter((r) => !(f.tipo === 'judicial' || f.tipo === 'comercial') || ent.get(r.entidad_id).tipo === f.tipo)
+      .filter((r) => !f.colaborador_id || r.colaborador_id === Number(f.colaborador_id))
+      .map((r) => {
+        const c = col.get(r.colaborador_id);
+        const e = ent.get(r.entidad_id);
+        const todos = estado.descuentos.filter((d) => d.retencion_id === r.id);
+        const fil = todos.filter((d) => (!tdesc || d.tipo === tdesc) && (!empresaId || d.empresa_id === empresaId));
+        const real = todos.reduce((a, d) => a + d.importe, 0);
+        const filtrado = fil.reduce((a, d) => a + d.importe, 0);
+        return {
+          ...r,
+          colaborador_id: c.id, cedula: c.cedula, colaborador: c.nombre,
+          entidad_id: e.id, entidad: e.nombre, tipo: e.tipo,
+          descontado_real: real, cantidad_descuentos: todos.length, descontado_filtrado: filtrado,
+          empresas: [...new Set(fil.map((d) => emp.get(d.empresa_id).nombre))].join(', '),
+          descontado: filtraDescuentos ? filtrado : real,
+          pendiente: r.importe_total - real,
+          completa: real >= r.importe_total,
+          _hayFiltrados: fil.length > 0,
+        };
+      })
+      .filter((x) => !filtraDescuentos || x._hayFiltrados)
+      .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
+    filas.forEach((x) => delete x._hayFiltrados);
+    return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.expediente]);
+  }
+
+  function listarDescuentos(f = {}) {
+    const rets = new Map(listarRetenciones().map((r) => [r.id, r]));
+    const emp = new Map(estado.empresas.map((x) => [x.id, x]));
+    const mes = f.mes ? periodo(f.mes) : null;
+    // Saldo luego de cada descuento (orden por fecha e id).
+    const acumulado = new Map();
+    const saldoDespues = new Map();
+    [...estado.descuentos].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id).forEach((d) => {
+      const suma = (acumulado.get(d.retencion_id) || 0) + d.importe;
+      acumulado.set(d.retencion_id, suma);
+      saldoDespues.set(d.id, rets.get(d.retencion_id).importe_total - suma);
+    });
+    const filas = estado.descuentos
+      .filter((d) => !mes || d.fecha.slice(0, 7) === mes)
+      .filter((d) => !TIPOS_DESCUENTO.includes(f.tipo_descuento) || d.tipo === f.tipo_descuento)
+      .filter((d) => !f.empresa_id || d.empresa_id === Number(f.empresa_id))
+      .filter((d) => !f.retencion_id || d.retencion_id === Number(f.retencion_id))
+      .map((d) => {
+        const r = rets.get(d.retencion_id);
+        return {
+          ...d, empresa: emp.get(d.empresa_id).nombre,
+          periodo: r.periodo, importe_total: r.importe_total, concepto: r.concepto, beneficiario: r.beneficiario,
+          cedula: r.cedula, colaborador: r.colaborador, entidad: r.entidad, tipo_entidad: r.tipo,
+          saldo_despues: saldoDespues.get(d.id), saldo_actual: r.pendiente,
+        };
+      })
+      .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id - a.id);
+    return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.empresa]);
+  }
+
+  function panel(mes) {
+    const filas = listarRetenciones({ periodo: periodo(mes) });
+    const pactado = filas.reduce((a, x) => a + x.importe_total, 0);
+    const retenido = filas.reduce((a, x) => a + x.descontado_real, 0);
+    return { periodo: mes, ordenes: filas.length, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - retenido, retenciones: filas };
+  }
+
+  function reporteAbonar(f) {
+    const agrupar = f.agrupar === 'entidad' ? 'entidad' : 'beneficiario';
+    const grupos = new Map();
+    for (const x of listarRetenciones(f).filter((r) => r.descontado > 0)) {
+      const clave = agrupar === 'entidad' ? x.entidad : (x.beneficiario || x.entidad);
+      if (!grupos.has(clave)) grupos.set(clave, { grupo: clave, tipos: new Set(), ordenes: 0, abonar: 0, pendiente: 0, detalle: [] });
+      const g = grupos.get(clave);
+      g.tipos.add(x.tipo); g.ordenes += 1; g.abonar += x.descontado; g.pendiente += x.pendiente; g.detalle.push(x);
+    }
+    const lista = [...grupos.values()].map(({ tipos, ...g }) => ({ ...g, tipo: [...tipos].join(' / ') })).sort((a, b) => a.grupo.localeCompare(b.grupo, 'es'));
+    return { agrupar, grupos: lista, total: lista.reduce((a, g) => a + g.abonar, 0) };
+  }
+
+  // ── Altas, bajas y la regla del tope ──
+
+  function crearEntidad(datos) {
+    const nombre = texto(datos.nombre, 'nombre de la entidad');
+    const tipo = String(datos.tipo || '');
+    if (!['judicial', 'comercial'].includes(tipo)) throw new ErrorValidacion('Indicá si la entidad es judicial o comercial.');
+    if (estado.entidades.some((x) => mismoNombre(x.nombre, nombre))) throw new ErrorValidacion('Ya existe una entidad con ese nombre.', 409);
+    return modificar((e) => { const id = e.sig++; e.entidades.push({ id, nombre, tipo }); return { id }; });
+  }
+
+  function crearColaborador(datos) {
+    const ci = cedula(datos.cedula);
+    const nombre = texto(datos.nombre, 'nombre del colaborador');
+    if (estado.colaboradores.some((x) => x.cedula === ci)) throw new ErrorValidacion('Ya existe un colaborador con esa cédula.', 409);
+    return modificar((e) => { const id = e.sig++; e.colaboradores.push({ id, cedula: ci, nombre }); return { id }; });
+  }
+
+  function crearEmpresa(datos) {
+    const nombre = texto(datos.nombre, 'nombre de la empresa');
+    if (estado.empresas.some((x) => mismoNombre(x.nombre, nombre))) throw new ErrorValidacion('Ya existe una empresa con ese nombre.', 409);
+    return modificar((e) => { const id = e.sig++; e.empresas.push({ id, nombre }); return { id }; });
+  }
+
+  function crearRetencion(datos) {
+    const colaborador_id = entero(datos.colaborador_id, 'el colaborador');
+    const entidad_id = entero(datos.entidad_id, 'la entidad');
+    if (!estado.colaboradores.some((c) => c.id === colaborador_id)) throw new ErrorValidacion('El colaborador elegido no existe.');
+    const entidad = estado.entidades.find((x) => x.id === entidad_id);
+    if (!entidad) throw new ErrorValidacion('La entidad elegida no existe.');
+    const fila = {
+      colaborador_id, entidad_id,
+      periodo: periodo(datos.periodo),
+      importe_total: importe(datos.importe_total, 'el importe total'),
+      concepto: texto(datos.concepto, 'concepto', { obligatorio: false }),
+      expediente: texto(datos.expediente, 'expediente / juzgado', { obligatorio: false }),
+      beneficiario: entidad.tipo === 'judicial' ? texto(datos.beneficiario, 'beneficiario') : null,
+      cargado_por: texto(datos.cargado_por, 'quién la cargó', { max: 80 }),
+      creado_en: ahora(),
+    };
+    return modificar((e) => { const id = e.sig++; e.retenciones.push({ id, ...fila }); return { id }; });
+  }
+
+  function eliminarRetencion(id) {
+    const n = Number(id);
+    if (!estado.retenciones.some((r) => r.id === n)) throw new ErrorValidacion('La retención no existe.', 404);
+    if (estado.descuentos.some((d) => d.retencion_id === n)) throw new ErrorValidacion('No se puede eliminar una retención que ya tiene descuentos.', 409);
+    return modificar((e) => { e.retenciones = e.retenciones.filter((r) => r.id !== n); return { ok: true }; });
+  }
+
+  function crearDescuento(datos) {
+    const fila = {
+      retencion_id: entero(datos.retencion_id, 'la retención'),
+      importe: importe(datos.importe),
+      tipo: String(datos.tipo || ''),
+      empresa_id: entero(datos.empresa_id, 'la empresa donde se retuvo'),
+      descontado_por: texto(datos.descontado_por, 'quién hizo el descuento', { max: 80 }),
+      fecha: fecha(datos.fecha),
+    };
+    if (!TIPOS_DESCUENTO.includes(fila.tipo)) throw new ErrorValidacion('Elegí el tipo de descuento.');
+    if (!estado.empresas.some((x) => x.id === fila.empresa_id)) throw new ErrorValidacion('La empresa elegida no existe.');
+    return modificar((e) => {
+      // Regla de oro, verificada sobre los datos que se van a guardar.
+      const ret = e.retenciones.find((r) => r.id === fila.retencion_id);
+      if (!ret) throw new ErrorValidacion('La retención elegida no existe.');
+      const pendiente = ret.importe_total - descontadoDe(e, ret.id);
+      if (fila.importe > pendiente) {
+        throw new ErrorValidacion(pendiente <= 0
+          ? 'Esta retención ya está completa: no queda nada por descontar.'
+          : 'El importe supera lo que falta descontar de esta retención. Nunca se puede descontar más que el importe total.', 409);
+      }
+      const id = e.sig++;
+      e.descuentos.push({ id, ...fila, creado_en: ahora() });
+      return { id };
+    });
+  }
+
+  function eliminarDescuento(id) {
+    const n = Number(id);
+    if (!estado.descuentos.some((d) => d.id === n)) throw new ErrorValidacion('El descuento no existe.', 404);
+    return modificar((e) => { e.descuentos = e.descuentos.filter((d) => d.id !== n); return { ok: true }; });
+  }
+
+  // Revisa un respaldo completo antes de aceptarlo (todas las reglas, incluido el tope).
+  function validarEstado(e) {
+    if (!e || typeof e !== 'object' || !Array.isArray(e.retenciones) || !Array.isArray(e.descuentos)
+      || !Array.isArray(e.entidades) || !Array.isArray(e.colaboradores) || !Array.isArray(e.empresas)) {
+      throw new ErrorValidacion('El archivo no es un respaldo del Sistema de Retenciones.');
+    }
+    const ids = new Set();
+    for (const lista of [e.entidades, e.colaboradores, e.empresas, e.retenciones, e.descuentos]) {
+      for (const x of lista) {
+        if (!Number.isInteger(x.id) || ids.has(x.id)) throw new ErrorValidacion('El respaldo tiene datos dañados (identificadores).');
+        ids.add(x.id);
+      }
+    }
+    const ent = new Map(e.entidades.map((x) => [x.id, x]));
+    const cols = new Set(e.colaboradores.map((x) => x.id));
+    const emps = new Set(e.empresas.map((x) => x.id));
+    for (const r of e.retenciones) {
+      if (!cols.has(r.colaborador_id) || !ent.has(r.entidad_id) || !(Number.isInteger(r.importe_total) && r.importe_total > 0)) throw new ErrorValidacion('El respaldo tiene una retención con datos dañados.');
+      if (ent.get(r.entidad_id).tipo === 'judicial' && !String(r.beneficiario || '').trim()) throw new ErrorValidacion('El respaldo tiene una retención judicial sin beneficiario.');
+    }
+    const rets = new Map(e.retenciones.map((r) => [r.id, r]));
+    for (const d of e.descuentos) {
+      if (!rets.has(d.retencion_id) || !emps.has(d.empresa_id) || !(Number.isInteger(d.importe) && d.importe > 0)) throw new ErrorValidacion('El respaldo tiene un descuento con datos dañados.');
+    }
+    for (const r of e.retenciones) {
+      if (descontadoDe(e, r.id) > r.importe_total) throw new ErrorValidacion('El respaldo tiene descuentos que superan el total de una retención.');
+    }
+    const maxId = Math.max(0, ...ids);
+    return { ...estadoVacio(), ...e, version: VERSION_DATOS, sig: Math.max(Number(e.sig) || 0, maxId + 1) };
+  }
+
+  // ── Respaldo ──
+
+  function infoDatos() {
+    return {
+      local: true,
+      modificado: estado.modificado,
+      ultimoRespaldo: estado.ultimoRespaldo,
+      cantidades: {
+        retenciones: estado.retenciones.length, descuentos: estado.descuentos.length,
+        colaboradores: estado.colaboradores.length, entidades: estado.entidades.length, empresas: estado.empresas.length,
+      },
+      ejemplos: Boolean(estado.ejemplos),
+    };
+  }
+
+  async function exportarRespaldo() {
+    const copia = { ...structuredClone(estado), sistema: 'Sistema de Retenciones', exportado: ahora() };
+    delete copia.ultimoRespaldo;
+    const blob = new Blob([JSON.stringify(copia, null, 1)], { type: 'application/json' });
+    await modificarSinMarca((e) => { e.ultimoRespaldo = ahora(); });
+    return blob;
+  }
+
+  async function modificarSinMarca(fn) {
+    const copia = structuredClone(estado);
+    fn(copia);
+    await guardarEstado(copia);
+    estado = copia;
+  }
+
+  async function importarRespaldo(textoArchivo) {
+    let datos;
+    try { datos = JSON.parse(textoArchivo); } catch { throw new ErrorValidacion('El archivo no es un respaldo válido.'); }
+    const nuevo = validarEstado(datos);
+    delete nuevo.sistema; delete nuevo.exportado;
+    nuevo.ultimoRespaldo = ahora();
+    nuevo.modificado = ahora();
+    await guardarEstado(nuevo);
+    estado = nuevo;
+    return infoDatos();
+  }
+
+  async function borrarTodo() {
+    const nuevo = estadoVacio();
+    nuevo.modificado = ahora();
+    await guardarEstado(nuevo);
+    estado = nuevo;
+    return infoDatos();
+  }
+
+  // ── Datos de ejemplo ──
+
+  function estadoConEjemplos() {
+    const e = estadoVacio();
+    e.ejemplos = true;
+    const mes = (desp) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + desp); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+    const actual = mes(0); const anterior = mes(-1);
+    const nuevoId = () => e.sig++;
+    const ent = (nombre, tipo) => { const id = nuevoId(); e.entidades.push({ id, nombre, tipo }); return id; };
+    const col = (ci, nombre) => { const id = nuevoId(); e.colaboradores.push({ id, cedula: ci, nombre }); return id; };
+    const emp = (nombre) => { const id = nuevoId(); e.empresas.push({ id, nombre }); return id; };
+    const juzgado = ent('Juzgado de Familia N° 2', 'judicial');
+    const electro = ent('Electrohogar SA', 'comercial');
+    const anda = ent('ANDA', 'comercial');
+    const juan = col('11111111', 'Juan Pérez');
+    const ana = col('22222222', 'Ana Gómez');
+    const central = emp('Operativa Central'); const norte = emp('Sucursal Norte'); emp('Sucursal Este');
+    const ret = (c, en, p, total, concepto, expediente, beneficiario) => {
+      const id = nuevoId();
+      e.retenciones.push({ id, colaborador_id: c, entidad_id: en, periodo: p, importe_total: total, concepto, expediente, beneficiario, cargado_por: 'Administración', creado_en: ahora() });
+      return id;
+    };
+    const desc = (r, imp, tipo, empresa, f) => e.descuentos.push({ id: nuevoId(), retencion_id: r, importe: imp, tipo, empresa_id: empresa, descontado_por: 'Liquidación', fecha: f, creado_en: ahora() });
+    const r1 = ret(juan, anda, actual, 200000, 'Préstamo ANDA', '', null);
+    const r2 = ret(ana, juzgado, actual, 850000, 'Pensión alimenticia', 'IUE 2-12345/2025', 'María Gómez');
+    const r3 = ret(juan, electro, actual, 450000, 'Cuota crédito', '', null);
+    const r4 = ret(ana, anda, anterior, 150000, 'Préstamo ANDA', '', null);
+    const r5 = ret(juan, juzgado, anterior, 600000, 'Pensión alimenticia', 'IUE 2-9876/2024', 'Lucía Pérez');
+    desc(r1, 2000, '1Q', central, `${actual}-15`);
+    desc(r2, 425000, '1Q', central, `${actual}-15`);
+    desc(r3, 150000, '1Q', norte, `${actual}-15`);
+    desc(r4, 75000, '1Q', central, `${anterior}-15`);
+    desc(r4, 75000, '2Q', central, `${anterior}-28`);
+    desc(r5, 300000, '1Q', central, `${anterior}-15`);
+    desc(r5, 300000, '2Q', norte, `${anterior}-28`);
+    e.modificado = ahora();
+    return e;
+  }
+
+  // ── Exportación (Excel sin compresión + CSV) ──
+
+  const TIPO_TXT = { judicial: 'Judicial', comercial: 'Comercial' };
+
+  function csv(columnas, filas) {
+    const celda = (v, col) => {
+      if (v == null) return '';
+      if (col.tipo === 'moneda' && typeof v === 'number') return (v / 100).toFixed(2).replace('.', ',');
+      const s = String(v);
+      return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lineas = [columnas.map((c) => celda(c.titulo, {})).join(';')];
+    for (const f of filas) {
+      const valores = Array.isArray(f) ? f : f.celdas;
+      lineas.push(columnas.map((c, i) => celda(valores[i], c)).join(';'));
+    }
+    return new Blob(['﻿' + lineas.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+  }
+
+  const TABLA_CRC = (() => {
+    const t = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+  })();
+  function crc32(buf) { let c = 0xffffffff; for (let i = 0; i < buf.length; i++) c = TABLA_CRC[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
+
+  function zip(archivos) {
+    const enc = new TextEncoder();
+    const partes = []; const centrales = []; let offset = 0;
+    for (const { nombre, texto: contenido } of archivos) {
+      const n = enc.encode(nombre); const datos = enc.encode(contenido); const crc = crc32(datos);
+      const local = new DataView(new ArrayBuffer(30));
+      local.setUint32(0, 0x04034b50, true); local.setUint16(4, 20, true); local.setUint16(6, 0x0800, true); local.setUint16(8, 0, true);
+      local.setUint16(12, 0x21, true); local.setUint32(14, crc, true); local.setUint32(18, datos.length, true); local.setUint32(22, datos.length, true); local.setUint16(26, n.length, true);
+      partes.push(local.buffer, n, datos);
+      const central = new DataView(new ArrayBuffer(46));
+      central.setUint32(0, 0x02014b50, true); central.setUint16(4, 20, true); central.setUint16(6, 20, true); central.setUint16(8, 0x0800, true);
+      central.setUint16(14, 0x21, true); central.setUint32(16, crc, true); central.setUint32(20, datos.length, true); central.setUint32(24, datos.length, true);
+      central.setUint16(28, n.length, true); central.setUint32(42, offset, true);
+      centrales.push(central.buffer, n);
+      offset += 30 + n.length + datos.length;
+    }
+    const tamDir = centrales.reduce((a, b) => a + b.byteLength, 0);
+    const fin = new DataView(new ArrayBuffer(22));
+    fin.setUint32(0, 0x06054b50, true); fin.setUint16(8, archivos.length, true); fin.setUint16(10, archivos.length, true);
+    fin.setUint32(12, tamDir, true); fin.setUint32(16, offset, true);
+    return new Blob([...partes, ...centrales, fin.buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  }
+
+  const xml = (s) => String(s).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const columna = (i) => { let s = ''; for (i += 1; i > 0; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + ((i - 1) % 26)) + s; return s; };
+
+  const ESTILOS = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot; #,##0.00"/></numFmts><fonts count="4"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><color rgb="FF1F6F68"/><name val="Calibri"/></font></fonts><fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2F8F86"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFDF1D8"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="164" fontId="2" fillId="3" borderId="0" xfId="0" applyNumberFormat="1" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+
+  function xlsx({ hoja, titulo, subtitulo, columnas, filas }) {
+    const filasXml = []; let nFila = 0;
+    const fila = (celdas) => { nFila += 1; filasXml.push(`<row r="${nFila}">${celdas.join('')}</row>`); };
+    const cT = (ref, v, s = 0) => `<c r="${ref}" t="inlineStr"${s ? ` s="${s}"` : ''}><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
+    const cN = (ref, v, s = 0) => `<c r="${ref}"${s ? ` s="${s}"` : ''}><v>${v}</v></c>`;
+    fila([cT('A1', titulo, 5)]); fila([cT('A2', subtitulo)]); fila([]);
+    const enc = nFila + 1;
+    fila(columnas.map((c, i) => cT(`${columna(i)}${enc}`, c.titulo, 1)));
+    for (const f of filas) {
+      const valores = Array.isArray(f) ? f : f.celdas; const negrita = !Array.isArray(f) && f.negrita; const r = nFila + 1;
+      fila(columnas.map((c, i) => {
+        const v = valores[i]; const ref = `${columna(i)}${r}`;
+        if (v == null || v === '') return negrita ? cT(ref, '', 3) : '';
+        if (c.tipo === 'moneda' && typeof v === 'number') return cN(ref, (v / 100).toFixed(2), negrita ? 4 : 2);
+        return cT(ref, v, negrita ? 3 : 0);
+      }).filter(Boolean));
+    }
+    const ult = columna(columnas.length - 1);
+    const nombreHoja = xml(hoja);
+    const hojaXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"><pane ySplit="${enc}" topLeftCell="A${enc + 1}" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols>${columnas.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${c.ancho || 16}" customWidth="1"/>`).join('')}</cols><sheetData>${filasXml.join('')}</sheetData><autoFilter ref="A${enc}:${ult}${Math.max(nFila, enc)}"/></worksheet>`;
+    return zip([
+      { nombre: '[Content_Types].xml', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { nombre: '_rels/.rels', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { nombre: 'xl/workbook.xml', texto: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${nombreHoja}" sheetId="1" r:id="rId1"/></sheets><definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'${nombreHoja}'!$A$${enc}:$${ult}$${Math.max(nFila, enc)}</definedName></definedNames></workbook>` },
+      { nombre: 'xl/_rels/workbook.xml.rels', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { nombre: 'xl/styles.xml', texto: ESTILOS },
+      { nombre: 'xl/worksheets/sheet1.xml', texto: hojaXml },
+    ]);
+  }
+
+  function textoFiltros(f) {
+    const p = [];
+    if (f.periodo) p.push(`Período ${f.periodo}`);
+    if (f.tipo) p.push(TIPO_TXT[f.tipo] || f.tipo);
+    if (f.tipo_descuento) p.push(`Tipo de descuento ${f.tipo_descuento}`);
+    if (f.empresa_id) p.push(`Retenido en ${(estado.empresas.find((e) => e.id === Number(f.empresa_id)) || {}).nombre || ''}`);
+    if (f.q) p.push(`Búsqueda "${f.q}"`);
+    return p.length ? `Filtros: ${p.join(' · ')}` : 'Sin filtros';
+  }
+
+  function armarPlanilla(f) {
+    const filas = listarRetenciones(f);
+    const columnas = [
+      { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
+      { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
+      { titulo: 'Total', tipo: 'moneda', ancho: 14 }, { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta descontar', tipo: 'moneda', ancho: 15 },
+      { titulo: 'Empresas donde se retuvo', ancho: 28 }, { titulo: 'Cargado por', ancho: 16 },
+    ];
+    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.importe_total, x.descontado, x.pendiente, x.empresas, x.cargado_por]);
+    const suma = (k) => filas.reduce((a, x) => a + x[k], 0);
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
+    return { columnas, filas: cuerpo, titulo: 'Planilla de retenciones', hoja: 'Planilla' };
+  }
+
+  function armarAbonar(f) {
+    const rep = reporteAbonar(f);
+    const porEntidad = rep.agrupar === 'entidad';
+    const columnas = [
+      { titulo: porEntidad ? 'Entidad' : 'Beneficiario', ancho: 28 }, { titulo: 'Tipo', ancho: 11 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 },
+      { titulo: porEntidad ? 'Beneficiario' : 'Entidad', ancho: 26 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Período', ancho: 10 },
+      { titulo: 'A abonar', tipo: 'moneda', ancho: 15 },
+    ];
+    const cuerpo = [];
+    for (const g of rep.grupos) {
+      for (const x of g.detalle) cuerpo.push([g.grupo, TIPO_TXT[x.tipo], x.cedula, x.colaborador, porEntidad ? (x.beneficiario || '') : x.entidad, x.concepto, x.expediente, x.periodo, x.descontado]);
+      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.grupo}`, '', '', `${g.ordenes} ${g.ordenes === 1 ? 'orden' : 'órdenes'}`, '', '', '', '', g.abonar] });
+    }
+    cuerpo.push({ negrita: true, celdas: ['TOTAL A ABONAR', '', '', '', '', '', '', '', rep.total] });
+    return { columnas, filas: cuerpo, titulo: `A abonar por ${porEntidad ? 'entidad' : 'beneficiario'}`, hoja: 'A abonar' };
+  }
+
+  // ── Enrutador: mismas rutas que el servidor ──
+
+  async function manejar(metodo, rutaCompleta, cuerpo) {
+    await iniciar();
+    const url = new URL(rutaCompleta, 'http://local');
+    const ruta = url.pathname.replace(/\/+$/, '');
+    const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
+    let m;
+    if (metodo === 'GET') {
+      if (ruta === '/api/catalogos') return catalogos();
+      if (ruta === '/api/entidades') return listarEntidades();
+      if (ruta === '/api/colaboradores') return listarColaboradores();
+      if (ruta === '/api/empresas') return listarEmpresas();
+      if (ruta === '/api/retenciones') return listarRetenciones(f);
+      if (ruta === '/api/descuentos') return listarDescuentos(f);
+      if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
+      if (ruta === '/api/reportes/planilla') return listarRetenciones(f);
+      if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
+      if (ruta === '/api/datos') return infoDatos();
+    }
+    if (metodo === 'POST') {
+      if (ruta === '/api/entidades') return crearEntidad(cuerpo || {});
+      if (ruta === '/api/colaboradores') return crearColaborador(cuerpo || {});
+      if (ruta === '/api/empresas') return crearEmpresa(cuerpo || {});
+      if (ruta === '/api/retenciones') return crearRetencion(cuerpo || {});
+      if (ruta === '/api/descuentos') return crearDescuento(cuerpo || {});
+    }
+    if (metodo === 'DELETE') {
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) return eliminarRetencion(m[1]);
+      if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) return eliminarDescuento(m[1]);
+    }
+    throw new ErrorValidacion('Ruta no encontrada.', 404);
+  }
+
+  async function descargar(rutaCompleta) {
+    await iniciar();
+    const url = new URL(rutaCompleta, 'http://local');
+    const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
+    const esPlanilla = url.pathname.endsWith('planilla');
+    const rep = esPlanilla ? armarPlanilla(f) : armarAbonar(f);
+    if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
+    return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });
+  }
+
+  window.backendLocal = {
+    ErrorValidacion,
+    manejar,
+    descargar,
+    exportarRespaldo: async () => { await iniciar(); return exportarRespaldo(); },
+    importarRespaldo: async (t) => { await iniciar(); return importarRespaldo(t); },
+    borrarTodo: async () => { await iniciar(); return borrarTodo(); },
+  };
+})();
+
+</script>
+  <script>
+'use strict';
+
+/* Sistema de Control de Retenciones · pantallas (sin frameworks) */
+
+const $app = document.getElementById('app');
+const MENSAJE_FALLA = 'No pudimos cargar la información. Tus datos están a salvo.';
+
+// ── Formatos es-UY ──
+
+const fmtMoneda = new Intl.NumberFormat('es-UY', { style: 'currency', currency: 'UYU' });
+const moneda = (centesimos) => fmtMoneda.format((centesimos || 0) / 100);
+const fmtNumero = new Intl.NumberFormat('es-UY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const numeroPlano = (centesimos) => fmtNumero.format((centesimos || 0) / 100);
+
+function nombreMes(periodo) {
+  if (!periodo) return '';
+  const [a, m] = periodo.split('-').map(Number);
+  const txt = new Date(a, m - 1, 1).toLocaleDateString('es-UY', { month: 'long', year: 'numeric' });
+  return txt.charAt(0).toUpperCase() + txt.slice(1);
+}
+const mesCorto = (periodo) => {
+  const [a, m] = periodo.split('-').map(Number);
+  return new Date(a, m - 1, 1).toLocaleDateString('es-UY', { month: 'short', year: 'numeric' }).replace('.', '');
+};
+const fecha = (iso) => (iso ? iso.slice(0, 10).split('-').reverse().join('/') : '');
+const cedula = (ci) => {
+  const s = String(ci || '');
+  if (s.length < 2) return s;
+  const cuerpo = s.slice(0, -1).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${cuerpo}-${s.slice(-1)}`;
+};
+const hoy = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const mesActual = () => hoy().slice(0, 7);
+
+// Acepta "2.000", "2000", "2.000,50", "2000,5", "2000.50". Devuelve centésimos o NaN.
+function leerImporte(texto) {
+  let s = String(texto || '').trim().replace(/\$|\s|UYU/gi, '');
+  if (!s) return NaN;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return NaN;
+  return Math.round(Number(s) * 100);
+}
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const tipoTxt = { judicial: 'Judicial', comercial: 'Comercial' };
+const etiquetaTipo = (tipo) => `<span class="etiqueta-tipo ${esc(tipo)}">${tipoTxt[tipo] || esc(tipo)}</span>`;
+
+// Recordar quién carga (solo comodidad local; si el navegador no deja, no pasa nada).
+const recordar = {
+  leer(clave) { try { return localStorage.getItem('ret.' + clave) || ''; } catch { return ''; } },
+  guardar(clave, valor) { try { localStorage.setItem('ret.' + clave, valor); } catch { /* sin almacenamiento */ } },
+};
+
+// ── Comunicación con el servidor ──
+
+class ErrorConexion extends Error { constructor() { super(MENSAJE_FALLA); } }
+
+// En la versión de archivo único no hay servidor: las mismas rutas las atiende el motor local.
+const LOCAL = Boolean(window.backendLocal);
+
+async function apiLocal(ruta, metodo, cuerpo) {
+  try {
+    return await window.backendLocal.manejar(metodo, ruta, cuerpo ? JSON.parse(JSON.stringify(cuerpo)) : undefined);
+  } catch (err) {
+    if (err instanceof window.backendLocal.ErrorValidacion) {
+      const e = new Error(err.message);
+      e.validacion = true;
+      throw e;
+    }
+    console.error(err);
+    throw new ErrorConexion();
+  }
+}
+
+async function api(ruta, { metodo = 'GET', cuerpo } = {}) {
+  if (LOCAL) return apiLocal(ruta, metodo, cuerpo);
+  let res;
+  try {
+    res = await fetch(ruta, {
+      method: metodo,
+      headers: cuerpo ? { 'Content-Type': 'application/json' } : {},
+      body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+      cache: 'no-store',
+    });
+  } catch {
+    throw new ErrorConexion();
+  }
+  let datos = null;
+  try { datos = await res.json(); } catch { /* respuesta no JSON */ }
+  if (res.status >= 500 || datos === null) throw new ErrorConexion();
+  if (!res.ok) {
+    const e = new Error(datos.error || 'No se pudo completar la operación.');
+    e.validacion = true;
+    throw e;
+  }
+  return datos;
+}
+
+async function descargarArchivo(url, nombre) {
+  let blob;
+  if (LOCAL) {
+    try { blob = await window.backendLocal.descargar(url); } catch (e) { console.error(e); throw new ErrorConexion(); }
+  } else {
+    let res;
+    try { res = await fetch(url, { cache: 'no-store' }); } catch { throw new ErrorConexion(); }
+    if (!res.ok) throw new ErrorConexion();
+    blob = await res.blob();
+  }
+  guardarBlob(blob, nombre);
+}
+
+function guardarBlob(blob, nombre) {
+  const enlace = document.createElement('a');
+  enlace.href = URL.createObjectURL(blob);
+  enlace.download = nombre;
+  document.body.appendChild(enlace);
+  enlace.click();
+  setTimeout(() => { URL.revokeObjectURL(enlace.href); enlace.remove(); }, 1000);
+}
+
+// ── Avisos y fallas ──
+
+let temporizadorAviso;
+function aviso(texto) {
+  const el = document.getElementById('aviso');
+  el.textContent = texto;
+  el.hidden = false;
+  clearTimeout(temporizadorAviso);
+  temporizadorAviso = setTimeout(() => { el.hidden = true; }, 3500);
+}
+
+function fallaPagina(reintentar) {
+  $app.innerHTML = `
+    <div class="falla" role="alert">
+      <div class="icono" aria-hidden="true">!</div>
+      <p>${MENSAJE_FALLA}</p>
+      <button class="boton" type="button" id="reintentar">Reintentar</button>
+    </div>`;
+  document.getElementById('reintentar').addEventListener('click', reintentar);
+}
+
+function fallaEnLinea(contenedor, reintentar) {
+  contenedor.innerHTML = `
+    <div class="falla-en-linea" role="alert">
+      <span>${MENSAJE_FALLA}</span>
+      <button class="boton chico ambar" type="button">Reintentar</button>
+    </div>`;
+  contenedor.querySelector('button').addEventListener('click', reintentar);
+}
+
+// Ejecuta una carga parcial (p. ej. una tabla) y, si falla, muestra el aviso con Reintentar en su lugar.
+async function cargarEn(contenedor, fn) {
+  try {
+    await fn();
+  } catch (e) {
+    if (e instanceof ErrorConexion || !e.validacion) fallaEnLinea(contenedor, () => cargarEn(contenedor, fn));
+    else contenedor.innerHTML = `<div class="mensaje error">${esc(e.message)}</div>`;
+  }
+}
+
+// Envío de formularios: valida, muestra errores claros y nunca pierde lo escrito.
+function manejarEnvio(form, { enviar, alTerminar }) {
+  const zona = form.querySelector('.zona-mensaje');
+  const boton = form.querySelector('button[type="submit"]');
+  const ejecutar = async () => {
+    zona.innerHTML = '';
+    boton.disabled = true;
+    try {
+      await enviar();
+      await alTerminar();
+    } catch (e) {
+      if (e.validacion || e.local) zona.innerHTML = `<div class="mensaje error" role="alert">${esc(e.message)}</div>`;
+      else fallaEnLinea(zona, ejecutar);
+    } finally {
+      boton.disabled = false;
+    }
+  };
+  form.addEventListener('submit', (ev) => { ev.preventDefault(); ejecutar(); });
+}
+
+function errorLocal(mensaje) { const e = new Error(mensaje); e.local = true; return e; }
+
+// ── Navegación ──
+
+const estado = { mes: mesActual() };
+
+const vistas = {
+  panel: vistaPanel,
+  retenciones: vistaRetenciones,
+  descuentos: vistaDescuentos,
+  reportes: vistaReportes,
+  empresas: vistaEmpresas,
+  colaboradores: vistaColaboradores,
+  entidades: vistaEntidades,
+  ...(LOCAL ? { respaldo: vistaRespaldo } : {}),
+};
+
+if (LOCAL) {
+  const enlace = document.createElement('a');
+  enlace.href = '#/respaldo';
+  enlace.dataset.seccion = 'respaldo';
+  enlace.textContent = 'Respaldo';
+  document.getElementById('menu').appendChild(enlace);
+}
+
+let navegacionActual = 0;
+async function navegar() {
+  const [ruta, consulta = ''] = location.hash.replace(/^#\/?/, '').split('?');
+  const seccion = vistas[ruta] ? ruta : 'panel';
+  document.querySelectorAll('.menu a').forEach((a) => a.classList.toggle('activo', a.dataset.seccion === seccion));
+  document.getElementById('menu').classList.remove('abierto');
+  const id = ++navegacionActual;
+  $app.innerHTML = '<p class="cargando">Cargando…</p>';
+  try {
+    await vistas[seccion](new URLSearchParams(consulta), () => id === navegacionActual);
+  } catch (e) {
+    if (id === navegacionActual) fallaPagina(navegar);
+    if (!(e instanceof ErrorConexion)) console.error(e);
+  }
+}
+
+window.addEventListener('hashchange', navegar);
+document.querySelector('.menu-boton').addEventListener('click', (ev) => {
+  const menu = document.getElementById('menu');
+  const abierto = menu.classList.toggle('abierto');
+  ev.currentTarget.setAttribute('aria-expanded', String(abierto));
+});
+
+// ── Panel ──
+
+async function vistaPanel(_params, vigente) {
+  const d = await api(`/api/panel?periodo=${estado.mes}`);
+  if (!vigente()) return;
+  const avance = d.pactado ? Math.round((d.retenido / d.pactado) * 100) : 0;
+  $app.innerHTML = `
+    <section class="panel-cabecera">
+      <div>
+        <h1>Panel de retenciones</h1>
+        <p>${esc(nombreMes(d.periodo))} · ${d.ordenes} ${d.ordenes === 1 ? 'orden' : 'órdenes'}, ${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}</p>
+      </div>
+      <div class="campo">
+        <label for="panel-mes">Mes</label>
+        <input type="month" id="panel-mes" value="${esc(d.periodo)}" required>
+      </div>
+    </section>
+
+    ${await avisoRespaldo()}
+    <section class="indicadores" aria-label="Resumen del mes">
+      <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}</div></div>
+      <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">Suma de las retenciones del mes</div></div>
+      <div class="indicador retenido"><div class="titulo">Total retenido</div><div class="valor">${moneda(d.retenido)}</div>
+        <div class="avance-general" title="${avance}% retenido"><span style="width:${Math.min(avance, 100)}%"></span></div></div>
+      <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar</div></div>
+    </section>
+
+    <div class="encabezado"><h2>Órdenes de ${esc(nombreMes(d.periodo).toLowerCase())}</h2>
+      <a class="boton secundario" href="#/retenciones">+ Cargar retención</a></div>
+    ${d.retenciones.length ? `<div class="ordenes">${d.retenciones.map(tarjetaOrden).join('')}</div>`
+      : `<div class="tarjeta vacio">No hay retenciones cargadas para este mes.</div>`}`;
+
+  document.getElementById('panel-mes').addEventListener('change', (ev) => {
+    if (!ev.target.value) return;
+    estado.mes = ev.target.value;
+    navegar();
+  });
+}
+
+function tarjetaOrden(r) {
+  const pct = Math.min(100, Math.round((r.descontado_real / r.importe_total) * 100));
+  return `
+    <article class="orden ${esc(r.tipo)} ${r.completa ? 'es-completa' : ''}">
+      <div class="orden-cabecera">
+        <div class="orden-persona">${esc(r.colaborador)}
+          <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
+          ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
+          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+        </div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
+      </div>
+      <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Avance ${pct}%"><span style="width:${pct}%"></span></div>
+      <div class="orden-cifras">
+        <span>Retenido <strong>${moneda(r.descontado_real)}</strong> de <strong>${moneda(r.importe_total)}</strong> (${pct}%)</span>
+        ${r.completa ? '' : `<span class="falta">Falta <strong>${moneda(r.pendiente)}</strong></span>`}
+      </div>
+      ${r.completa ? '' : `<div><a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a></div>`}
+    </article>`;
+}
+
+// ── Retenciones recibidas ──
+
+const filtrosRet = { periodo: '', tipo: '', q: '' };
+
+async function vistaRetenciones(_params, vigente) {
+  const cat = await api('/api/catalogos');
+  if (!vigente()) return;
+  $app.innerHTML = `
+    <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div></div>
+    <div class="columnas">
+      <section class="tarjeta">
+        <h2>Cargar retención</h2>
+        ${!cat.colaboradores.length || !cat.entidades.length
+          ? `<p class="mensaje error">Primero cargá ${!cat.colaboradores.length ? '<a href="#/colaboradores">colaboradores</a>' : ''}${!cat.colaboradores.length && !cat.entidades.length ? ' y ' : ''}${!cat.entidades.length ? '<a href="#/entidades">entidades</a>' : ''}.</p>` : ''}
+        <form class="formulario" id="form-ret" novalidate>
+          <div class="campo"><label for="r-colab">Colaborador <span class="obligatorio">*</span></label>
+            <select id="r-colab" required><option value="">Elegí…</option>
+              ${cat.colaboradores.map((c) => `<option value="${c.id}">${esc(c.nombre)} · CI ${esc(cedula(c.cedula))}</option>`).join('')}
+            </select></div>
+          <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
+            <select id="r-ent" required><option value="">Elegí…</option>
+              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}">${esc(e.nombre)} (${tipoTxt[e.tipo]})</option>`).join('')}
+            </select></div>
+          <div class="fila">
+            <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
+              <input type="month" id="r-periodo" value="${mesActual()}" required></div>
+            <div class="campo"><label for="r-importe">Importe total <span class="obligatorio">*</span></label>
+              <input id="r-importe" inputmode="decimal" placeholder="2.000,00" autocomplete="off" required></div>
+          </div>
+          <div class="campo"><label for="r-concepto">Concepto</label><input id="r-concepto" maxlength="200" placeholder="Ej.: Pensión alimenticia, cuota crédito"></div>
+          <div class="campo"><label for="r-exp">N° de expediente / Juzgado</label><input id="r-exp" maxlength="200"></div>
+          <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
+            <input id="r-benef" maxlength="200" placeholder="A quién se le abona"><span class="ayuda">Obligatorio en retenciones judiciales.</span></div>
+          <div class="campo"><label for="r-cargo">Cargada por <span class="obligatorio">*</span></label>
+            <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo'))}" required></div>
+          <div class="zona-mensaje"></div>
+          <div class="acciones"><button class="boton" type="submit">Guardar retención</button></div>
+        </form>
+      </section>
+
+      <section class="tarjeta">
+        <h2>Listado</h2>
+        <div class="filtros">
+          <div class="campo"><label for="f-periodo">Período</label><input type="month" id="f-periodo" value="${esc(filtrosRet.periodo)}"></div>
+          <div class="campo"><label for="f-tipo">Tipo</label><select id="f-tipo">
+            <option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>
+          <div class="campo ancho"><label for="f-q">Buscar</label><input id="f-q" type="search" placeholder="Nombre, CI, entidad, concepto, beneficiario" value="${esc(filtrosRet.q)}"></div>
+        </div>
+        <div id="lista-ret"><p class="cargando">Cargando…</p></div>
+      </section>
+    </div>`;
+
+  document.getElementById('f-tipo').value = filtrosRet.tipo;
+  const selEnt = document.getElementById('r-ent');
+  const campoBenef = document.getElementById('campo-benef');
+  const esJudicial = () => selEnt.selectedOptions[0]?.dataset.tipo === 'judicial';
+  selEnt.addEventListener('change', () => { campoBenef.hidden = !esJudicial(); });
+
+  const lista = document.getElementById('lista-ret');
+  const recargar = () => cargarEn(lista, async () => {
+    const qs = new URLSearchParams(Object.entries(filtrosRet).filter(([, v]) => v));
+    const filas = await api(`/api/retenciones?${qs}`);
+    lista.innerHTML = tablaRetenciones(filas);
+    lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar esta retención? No tiene descuentos aplicados.')) return;
+      try { await api(`/api/retenciones/${b.dataset.eliminar}`, { metodo: 'DELETE' }); aviso('Retención eliminada.'); recargar(); }
+      catch (e) { if (e.validacion) aviso(e.message); else fallaEnLinea(lista, recargar); }
+    }));
+  });
+  conectarFiltros({ periodo: 'f-periodo', tipo: 'f-tipo', q: 'f-q' }, filtrosRet, recargar);
+  recargar();
+
+  const form = document.getElementById('form-ret');
+  manejarEnvio(form, {
+    enviar: async () => {
+      const importe = leerImporte(form.querySelector('#r-importe').value);
+      if (!form.querySelector('#r-colab').value) throw errorLocal('Elegí el colaborador.');
+      if (!selEnt.value) throw errorLocal('Elegí la entidad acreedora.');
+      if (!form.querySelector('#r-periodo').value) throw errorLocal('Elegí el período.');
+      if (!(importe > 0)) throw errorLocal('Ingresá un importe total válido, por ejemplo 2.000 o 2.000,50.');
+      if (esJudicial() && !form.querySelector('#r-benef').value.trim()) throw errorLocal('El beneficiario es obligatorio en las retenciones judiciales.');
+      if (!form.querySelector('#r-cargo').value.trim()) throw errorLocal('Indicá quién carga la retención.');
+      await api('/api/retenciones', { metodo: 'POST', cuerpo: {
+        colaborador_id: Number(form.querySelector('#r-colab').value),
+        entidad_id: Number(selEnt.value),
+        periodo: form.querySelector('#r-periodo').value,
+        importe_total: importe,
+        concepto: form.querySelector('#r-concepto').value,
+        expediente: form.querySelector('#r-exp').value,
+        beneficiario: esJudicial() ? form.querySelector('#r-benef').value : null,
+        cargado_por: form.querySelector('#r-cargo').value,
+      } });
+      recordar.guardar('cargo', form.querySelector('#r-cargo').value.trim());
+    },
+    alTerminar: async () => {
+      aviso('Retención guardada.');
+      ['#r-importe', '#r-concepto', '#r-exp', '#r-benef'].forEach((s) => { form.querySelector(s).value = ''; });
+      form.querySelector('#r-colab').focus();
+      recargar();
+    },
+  });
+}
+
+function tablaRetenciones(filas) {
+  if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
+  const suma = (k) => filas.reduce((a, x) => a + x[k], 0);
+  return `<div class="tabla-contenedor"><table>
+    <thead><tr><th>Período</th><th>Colaborador</th><th>Entidad</th><th>Concepto / Expediente</th><th>Beneficiario</th>
+      <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Cargó</th><th></th></tr></thead>
+    <tbody>${filas.map((r) => `<tr>
+      <td>${esc(mesCorto(r.periodo))}</td>
+      <td>${esc(r.colaborador)}<span class="sec">CI ${esc(cedula(r.cedula))}</span></td>
+      <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
+      <td>${esc(r.concepto) || '—'}${r.expediente ? `<span class="sec">${esc(r.expediente)}</span>` : ''}</td>
+      <td>${r.tipo === 'judicial' ? esc(r.beneficiario) : '<span class="sec">—</span>'}</td>
+      <td class="num">${moneda(r.importe_total)}</td>
+      <td class="num">${moneda(r.descontado)}</td>
+      <td class="num">${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(r.pendiente)}</td>
+      <td>${esc(r.cargado_por)}<span class="sec">${fecha(r.creado_en)}</span></td>
+      <td>${r.cantidad_descuentos === 0 ? `<button class="boton chico peligro" type="button" data-eliminar="${r.id}">Eliminar</button>`
+        : (r.completa ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Descontar</a>`)}</td>
+    </tr>`).join('')}</tbody>
+    <tfoot><tr><td colspan="5">Total (${filas.length})</td><td class="num">${moneda(suma('importe_total'))}</td>
+      <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td colspan="2"></td></tr></tfoot>
+  </table></div>`;
+}
+
+// Vincula inputs de filtro a un objeto de estado y recarga con una pequeña espera al escribir.
+function conectarFiltros(mapa, destino, recargar) {
+  let espera;
+  for (const [clave, id] of Object.entries(mapa)) {
+    const el = document.getElementById(id);
+    const actualizar = () => { destino[clave] = el.value.trim(); clearTimeout(espera); espera = setTimeout(recargar, el.type === 'search' ? 250 : 0); };
+    el.addEventListener(el.type === 'search' ? 'input' : 'change', actualizar);
+  }
+}
+
+// ── Descuentos ──
+
+const filtrosDesc = { mes: '', tipo_descuento: '', empresa_id: '', q: '' };
+
+async function vistaDescuentos(params, vigente) {
+  const [cat, rets] = await Promise.all([api('/api/catalogos'), api('/api/retenciones')]);
+  if (!vigente()) return;
+  let retenciones = rets;
+  const preRet = retenciones.find((r) => String(r.id) === params.get('retencion'));
+
+  $app.innerHTML = `
+    <div class="encabezado"><div><h1>Descuentos</h1><p>Lo que efectivamente se le descontó a cada colaborador. Nunca puede superar el total de la retención.</p></div></div>
+    <div class="columnas">
+      <section class="tarjeta">
+        <h2>Registrar descuento</h2>
+        <form class="formulario" id="form-desc" novalidate>
+          <div class="campo"><label for="d-colab">Persona <span class="obligatorio">*</span></label>
+            <select id="d-colab" required><option value="">Elegí…</option></select></div>
+          <div class="campo"><label for="d-ret">Retención <span class="obligatorio">*</span></label>
+            <select id="d-ret" required disabled><option value="">Elegí primero la persona</option></select>
+            <span class="ayuda" id="d-ret-ayuda"></span></div>
+          <div class="fila">
+            <div class="campo"><label for="d-importe">Importe <span class="obligatorio">*</span></label>
+              <input id="d-importe" inputmode="decimal" placeholder="0,00" autocomplete="off" required>
+              <span class="error-campo" id="d-importe-error" hidden></span></div>
+            <div class="campo"><label for="d-tipo">Tipo <span class="obligatorio">*</span></label>
+              <select id="d-tipo" required><option value="">Elegí…</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
+          </div>
+          <div class="campo"><label for="d-empresa">Empresa donde se retuvo <span class="obligatorio">*</span></label>
+            <select id="d-empresa" required><option value="">Elegí…</option>
+              ${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
+          <div class="fila">
+            <div class="campo"><label for="d-quien">Descontado por <span class="obligatorio">*</span></label>
+              <input id="d-quien" maxlength="80" value="${esc(recordar.leer('quien'))}" required></div>
+            <div class="campo"><label for="d-fecha">Fecha <span class="obligatorio">*</span></label>
+              <input type="date" id="d-fecha" value="${hoy()}" required></div>
+          </div>
+          <div class="zona-mensaje"></div>
+          <div class="acciones"><button class="boton" type="submit">Registrar descuento</button></div>
+        </form>
+      </section>
+
+      <section class="tarjeta">
+        <h2>Histórico de descuentos</h2>
+        <div class="filtros">
+          <div class="campo"><label for="h-mes">Mes del descuento</label><input type="month" id="h-mes" value="${esc(filtrosDesc.mes)}"></div>
+          <div class="campo"><label for="h-tipo">Tipo</label><select id="h-tipo"><option value="">Todos</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
+          <div class="campo"><label for="h-empresa">Empresa</label><select id="h-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
+          <div class="campo ancho"><label for="h-q">Buscar</label><input id="h-q" type="search" placeholder="Nombre, CI, entidad, concepto" value="${esc(filtrosDesc.q)}"></div>
+        </div>
+        <div id="lista-desc"><p class="cargando">Cargando…</p></div>
+      </section>
+    </div>`;
+
+  document.getElementById('h-tipo').value = filtrosDesc.tipo_descuento;
+  document.getElementById('h-empresa').value = filtrosDesc.empresa_id;
+
+  const form = document.getElementById('form-desc');
+  const selColab = form.querySelector('#d-colab');
+  const selRet = form.querySelector('#d-ret');
+  const ayudaRet = form.querySelector('#d-ret-ayuda');
+  const inImporte = form.querySelector('#d-importe');
+  const errImporte = form.querySelector('#d-importe-error');
+  const botonGuardar = form.querySelector('button[type="submit"]');
+
+  const retElegida = () => retenciones.find((r) => String(r.id) === selRet.value);
+
+  function llenarPersonas() {
+    const actual = selColab.value;
+    const conPendientes = new Set(retenciones.filter((r) => r.pendiente > 0).map((r) => r.colaborador_id));
+    const personas = cat.colaboradores.filter((c) => conPendientes.has(c.id));
+    selColab.innerHTML = `<option value="">${personas.length ? 'Elegí…' : 'No hay retenciones pendientes'}</option>` +
+      personas.map((c) => `<option value="${c.id}">${esc(c.nombre)} · CI ${esc(cedula(c.cedula))}</option>`).join('');
+    if (personas.some((c) => String(c.id) === actual)) selColab.value = actual;
+  }
+
+  function llenarRetenciones(preferida) {
+    const propias = retenciones.filter((r) => String(r.colaborador_id) === selColab.value && r.pendiente > 0);
+    selRet.disabled = !propias.length;
+    selRet.innerHTML = propias.length
+      ? (propias.length > 1 ? '<option value="">Elegí…</option>' : '') + propias.map((r) =>
+        `<option value="${r.id}">${esc(r.entidad)} · ${esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — falta ${moneda(r.pendiente)}</option>`).join('')
+      : `<option value="">${selColab.value ? 'Sin retenciones pendientes' : 'Elegí primero la persona'}</option>`;
+    if (preferida && propias.some((r) => r.id === preferida)) selRet.value = String(preferida);
+    actualizarAyuda();
+  }
+
+  function actualizarAyuda() {
+    const r = retElegida();
+    ayudaRet.innerHTML = r
+      ? `Total ${moneda(r.importe_total)} · descontado ${moneda(r.descontado_real)} · <strong>máximo a descontar ${moneda(r.pendiente)}</strong>
+         <button type="button" class="boton chico secundario" id="usar-saldo" style="margin-left:6px">Usar saldo</button>`
+      : '';
+    const usar = document.getElementById('usar-saldo');
+    if (usar) usar.addEventListener('click', () => { inImporte.value = numeroPlano(r.pendiente); validarImporte(); });
+    validarImporte();
+  }
+
+  // Control en pantalla de la regla de tope (la base también lo controla).
+  function validarImporte() {
+    const r = retElegida();
+    const texto = inImporte.value.trim();
+    const valor = leerImporte(texto);
+    let msg = '';
+    if (texto && !(valor > 0)) msg = 'Importe no válido. Ej.: 1.500 o 1.500,50';
+    else if (r && valor > r.pendiente) msg = `Supera lo que falta descontar (${moneda(r.pendiente)}).`;
+    errImporte.textContent = msg;
+    errImporte.hidden = !msg;
+    inImporte.setAttribute('aria-invalid', msg ? 'true' : 'false');
+    botonGuardar.disabled = Boolean(msg);
+    return !msg;
+  }
+
+  selColab.addEventListener('change', () => llenarRetenciones());
+  selRet.addEventListener('change', actualizarAyuda);
+  inImporte.addEventListener('input', validarImporte);
+
+  llenarPersonas();
+  if (preRet && preRet.pendiente > 0) {
+    selColab.value = String(preRet.colaborador_id);
+    llenarRetenciones(preRet.id);
+    inImporte.focus();
+  } else llenarRetenciones();
+
+  const lista = document.getElementById('lista-desc');
+  const recargarLista = () => cargarEn(lista, async () => {
+    const qs = new URLSearchParams(Object.entries(filtrosDesc).filter(([, v]) => v));
+    const filas = await api(`/api/descuentos?${qs}`);
+    lista.innerHTML = tablaDescuentos(filas);
+    lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('¿Eliminar este descuento? El importe vuelve a quedar pendiente en la retención.')) return;
+      try {
+        await api(`/api/descuentos/${b.dataset.eliminar}`, { metodo: 'DELETE' });
+        aviso('Descuento eliminado.');
+        await refrescarRetenciones();
+        recargarLista();
+      } catch (e) { if (e.validacion) aviso(e.message); else fallaEnLinea(lista, recargarLista); }
+    }));
+  });
+
+  async function refrescarRetenciones() {
+    retenciones = await api('/api/retenciones');
+    const elegida = selRet.value ? Number(selRet.value) : null;
+    llenarPersonas();
+    llenarRetenciones(elegida);
+  }
+
+  conectarFiltros({ mes: 'h-mes', tipo_descuento: 'h-tipo', empresa_id: 'h-empresa', q: 'h-q' }, filtrosDesc, recargarLista);
+  recargarLista();
+
+  manejarEnvio(form, {
+    enviar: async () => {
+      const r = retElegida();
+      const importe = leerImporte(inImporte.value);
+      if (!r) throw errorLocal('Elegí la persona y la retención.');
+      if (!(importe > 0)) throw errorLocal('Ingresá un importe válido mayor a cero.');
+      if (importe > r.pendiente) throw errorLocal(`No se puede descontar más de lo que falta (${moneda(r.pendiente)}).`);
+      if (!form.querySelector('#d-tipo').value) throw errorLocal('Elegí el tipo de descuento.');
+      if (!form.querySelector('#d-empresa').value) throw errorLocal('Elegí la empresa donde se retuvo.');
+      if (!form.querySelector('#d-quien').value.trim()) throw errorLocal('Indicá quién hizo el descuento.');
+      if (!form.querySelector('#d-fecha').value) throw errorLocal('Indicá la fecha.');
+      await api('/api/descuentos', { metodo: 'POST', cuerpo: {
+        retencion_id: r.id,
+        importe,
+        tipo: form.querySelector('#d-tipo').value,
+        empresa_id: Number(form.querySelector('#d-empresa').value),
+        descontado_por: form.querySelector('#d-quien').value,
+        fecha: form.querySelector('#d-fecha').value,
+      } });
+      recordar.guardar('quien', form.querySelector('#d-quien').value.trim());
+    },
+    alTerminar: async () => {
+      aviso('Descuento registrado.');
+      inImporte.value = '';
+      await refrescarRetenciones().catch(() => {});
+      recargarLista();
+    },
+  });
+}
+
+function tablaDescuentos(filas) {
+  if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay descuentos con estos filtros.</p></div>';
+  const total = filas.reduce((a, x) => a + x.importe, 0);
+  return `<div class="tabla-contenedor"><table>
+    <thead><tr><th>Fecha</th><th>Colaborador</th><th>Retención</th><th>Tipo</th><th>Empresa</th>
+      <th class="num">Importe</th><th class="num">Saldo luego</th><th class="num">Saldo pendiente</th><th>Descontó</th><th></th></tr></thead>
+    <tbody>${filas.map((d) => `<tr>
+      <td>${fecha(d.fecha)}</td>
+      <td>${esc(d.colaborador)}<span class="sec">CI ${esc(cedula(d.cedula))}</span></td>
+      <td>${esc(d.entidad)} · ${esc(mesCorto(d.periodo))}<span class="sec">${esc(d.concepto)}${d.beneficiario ? ' · ' + esc(d.beneficiario) : ''}</span></td>
+      <td>${esc(d.tipo)}</td>
+      <td>${esc(d.empresa)}</td>
+      <td class="num">${moneda(d.importe)}</td>
+      <td class="num">${moneda(d.saldo_despues)}</td>
+      <td class="num">${d.saldo_actual <= 0 ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(d.saldo_actual)}</td>
+      <td>${esc(d.descontado_por)}</td>
+      <td><button class="boton chico peligro" type="button" data-eliminar="${d.id}" title="Eliminar descuento">Eliminar</button></td>
+    </tr>`).join('')}</tbody>
+    <tfoot><tr><td colspan="5">Total descontado (${filas.length})</td><td class="num">${moneda(total)}</td><td colspan="4"></td></tr></tfoot>
+  </table></div>`;
+}
+
+// ── Reportes ──
+
+const filtrosRep = { periodo: '', q: '', tipo: '', tipo_descuento: '', empresa_id: '', agrupar: 'beneficiario', pestana: 'planilla' };
+
+async function vistaReportes(_params, vigente) {
+  const cat = await api('/api/catalogos');
+  if (!vigente()) return;
+  $app.innerHTML = `
+    <div class="encabezado"><div><h1>Reportes</h1><p>Filtrá, revisá en pantalla y descargá en Excel o CSV.</p></div></div>
+    <section class="tarjeta">
+      <h2>Filtros</h2>
+      <div class="filtros">
+        <div class="campo"><label for="rp-periodo">Mes</label><input type="month" id="rp-periodo" value="${esc(filtrosRep.periodo)}"></div>
+        <div class="campo ancho"><label for="rp-q">Buscar</label><input type="search" id="rp-q" placeholder="Nombre, CI, entidad, concepto, beneficiario" value="${esc(filtrosRep.q)}"></div>
+        <div class="campo"><label for="rp-tipo">Judicial / Comercial</label><select id="rp-tipo"><option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>
+        <div class="campo"><label for="rp-tdesc">Tipo de descuento</label><select id="rp-tdesc"><option value="">Todos</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
+        <div class="campo"><label for="rp-empresa">Empresa donde se retuvo</label><select id="rp-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
+      </div>
+      <p class="nota">Si filtrás por tipo de descuento o empresa, “Descontado” y “A abonar” suman solo los descuentos que cumplen ese filtro.</p>
+    </section>
+
+    <div class="pestanas" role="tablist">
+      <button type="button" role="tab" data-pestana="planilla">Planilla de personas con retenciones</button>
+      <button type="button" role="tab" data-pestana="abonar">A abonar</button>
+    </div>
+
+    <section class="tarjeta">
+      <div class="encabezado" style="margin-bottom:12px">
+        <div id="rp-opciones"></div>
+        <div class="acciones">
+          <button class="boton ambar" type="button" id="rp-xlsx">Descargar Excel</button>
+          <button class="boton secundario" type="button" id="rp-csv">Descargar CSV</button>
+        </div>
+      </div>
+      <div id="rp-descarga"></div>
+      <div id="rp-resultado"><p class="cargando">Cargando…</p></div>
+    </section>`;
+
+  document.getElementById('rp-tipo').value = filtrosRep.tipo;
+  document.getElementById('rp-tdesc').value = filtrosRep.tipo_descuento;
+  document.getElementById('rp-empresa').value = filtrosRep.empresa_id;
+
+  const resultado = document.getElementById('rp-resultado');
+  const opciones = document.getElementById('rp-opciones');
+  const consulta = () => new URLSearchParams(Object.entries({
+    periodo: filtrosRep.periodo, q: filtrosRep.q, tipo: filtrosRep.tipo, tipo_descuento: filtrosRep.tipo_descuento,
+    empresa_id: filtrosRep.empresa_id, ...(filtrosRep.pestana === 'abonar' ? { agrupar: filtrosRep.agrupar } : {}),
+  }).filter(([, v]) => v));
+
+  const recargar = () => cargarEn(resultado, async () => {
+    document.querySelectorAll('.pestanas button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.pestana === filtrosRep.pestana)));
+    if (filtrosRep.pestana === 'planilla') {
+      opciones.innerHTML = '<h2>Planilla de personas con retenciones</h2>';
+      const filas = await api(`/api/reportes/planilla?${consulta()}`);
+      resultado.innerHTML = tablaPlanilla(filas);
+    } else {
+      opciones.innerHTML = `<div class="campo"><span class="etiqueta">Agrupar por</span><div class="radio-grupo">
+        <label><input type="radio" name="agrupar" value="beneficiario" ${filtrosRep.agrupar === 'beneficiario' ? 'checked' : ''}> Beneficiario</label>
+        <label><input type="radio" name="agrupar" value="entidad" ${filtrosRep.agrupar === 'entidad' ? 'checked' : ''}> Entidad</label></div></div>`;
+      opciones.querySelectorAll('input[name="agrupar"]').forEach((i) => i.addEventListener('change', () => { filtrosRep.agrupar = i.value; recargar(); }));
+      const rep = await api(`/api/reportes/abonar?${consulta()}`);
+      resultado.innerHTML = tablaAbonar(rep);
+    }
+  });
+
+  document.querySelectorAll('.pestanas button').forEach((b) => b.addEventListener('click', () => { filtrosRep.pestana = b.dataset.pestana; recargar(); }));
+  conectarFiltros({ periodo: 'rp-periodo', q: 'rp-q', tipo: 'rp-tipo', tipo_descuento: 'rp-tdesc', empresa_id: 'rp-empresa' }, filtrosRep, recargar);
+
+  const zonaDescarga = document.getElementById('rp-descarga');
+  const bajar = async (formato) => {
+    zonaDescarga.innerHTML = '';
+    const ruta = filtrosRep.pestana === 'planilla' ? 'planilla' : 'abonar';
+    const qs = consulta();
+    qs.set('formato', formato);
+    const nombre = `${ruta === 'planilla' ? 'planilla-retenciones' : 'a-abonar'}${filtrosRep.periodo ? '-' + filtrosRep.periodo : ''}.${formato}`;
+    try { await descargarArchivo(`/api/reportes/${ruta}?${qs}`, nombre); }
+    catch { fallaEnLinea(zonaDescarga, () => bajar(formato)); }
+  };
+  document.getElementById('rp-xlsx').addEventListener('click', () => bajar('xlsx'));
+  document.getElementById('rp-csv').addEventListener('click', () => bajar('csv'));
+  recargar();
+}
+
+function tablaPlanilla(filas) {
+  if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
+  const suma = (k) => filas.reduce((a, x) => a + x[k], 0);
+  return `<div class="tabla-contenedor"><table>
+    <thead><tr><th>Período</th><th>CI</th><th>Colaborador</th><th>Entidad</th><th>Concepto</th><th>Expediente</th><th>Beneficiario</th>
+      <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Retenido en</th></tr></thead>
+    <tbody>${filas.map((r) => `<tr>
+      <td>${esc(mesCorto(r.periodo))}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
+      <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
+      <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}</td>
+      <td class="num">${moneda(r.importe_total)}</td><td class="num">${moneda(r.descontado)}</td>
+      <td class="num">${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(r.pendiente)}</td>
+      <td>${esc(r.empresas) || '<span class="sec">—</span>'}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td colspan="7">Total (${filas.length} retenciones)</td><td class="num">${moneda(suma('importe_total'))}</td>
+      <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td></td></tr></tfoot>
+  </table></div>`;
+}
+
+function tablaAbonar(rep) {
+  if (!rep.grupos.length) return '<div class="tabla-contenedor"><p class="vacio">No hay importes retenidos para abonar con estos filtros.</p></div>';
+  const porEntidad = rep.agrupar === 'entidad';
+  return `<div class="tabla-contenedor"><table>
+    <thead><tr><th>Colaborador</th><th>${porEntidad ? 'Beneficiario' : 'Entidad'}</th><th>Concepto</th><th>Expediente</th><th>Período</th><th class="num">A abonar</th></tr></thead>
+    <tbody>${rep.grupos.map((g) => `
+      <tr class="grupo"><td colspan="6">${esc(g.grupo)} · ${esc(g.tipo.split(' / ').map((t) => tipoTxt[t] || t).join(' / '))}</td></tr>
+      ${g.detalle.map((x) => `<tr>
+        <td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td>
+        <td>${esc(porEntidad ? (x.beneficiario || '—') : x.entidad)}</td>
+        <td>${esc(x.concepto)}</td><td>${esc(x.expediente)}</td><td>${esc(mesCorto(x.periodo))}</td>
+        <td class="num">${moneda(x.descontado)}</td></tr>`).join('')}
+      <tr class="subtotal"><td colspan="5">Subtotal ${esc(g.grupo)} (${g.ordenes} ${g.ordenes === 1 ? 'orden' : 'órdenes'})</td><td class="num">${moneda(g.abonar)}</td></tr>`).join('')}
+    </tbody>
+    <tfoot><tr><td colspan="5">Total a abonar</td><td class="num">${moneda(rep.total)}</td></tr></tfoot>
+  </table></div>`;
+}
+
+// ── Altas simples: empresas, colaboradores y entidades ──
+
+async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, exito }, vigente) {
+  const filas = await api(ruta);
+  if (!vigente()) return;
+  $app.innerHTML = `
+    <div class="encabezado"><div><h1>${titulo}</h1><p>${descripcion}</p></div></div>
+    <div class="columnas">
+      <section class="tarjeta">
+        <h2>Nuevo registro</h2>
+        <form class="formulario" id="form-alta" novalidate>
+          ${campos.map((c) => c.html).join('')}
+          <div class="zona-mensaje"></div>
+          <div class="acciones"><button class="boton" type="submit">Guardar</button></div>
+        </form>
+      </section>
+      <section class="tarjeta"><h2>Listado</h2><div id="lista-alta"></div></section>
+    </div>`;
+
+  const lista = document.getElementById('lista-alta');
+  const pintar = (datos) => {
+    lista.innerHTML = datos.length
+      ? `<div class="tabla-contenedor"><table><thead><tr>${columnas.map((c) => `<th class="${c.num ? 'num' : ''}">${c.titulo}</th>`).join('')}</tr></thead>
+         <tbody>${datos.map((f) => `<tr>${columnas.map((c) => `<td class="${c.num ? 'num' : ''}">${c.valor(f)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+      : `<div class="tabla-contenedor"><p class="vacio">${vacio}</p></div>`;
+  };
+  pintar(filas);
+
+  const form = document.getElementById('form-alta');
+  manejarEnvio(form, {
+    enviar: async () => {
+      const cuerpo = {};
+      for (const c of campos) {
+        const v = c.leer(form);
+        if (!v) throw errorLocal(`Falta completar: ${c.nombre}.`);
+        cuerpo[c.clave] = v;
+      }
+      await api(ruta, { metodo: 'POST', cuerpo });
+    },
+    alTerminar: async () => {
+      aviso(exito);
+      form.reset();
+      form.querySelector('input, select').focus();
+      await cargarEn(lista, async () => pintar(await api(ruta)));
+    },
+  });
+}
+
+function vistaEmpresas(_p, vigente) {
+  return vistaAlta({
+  titulo: 'Empresas',
+  descripcion: 'Empresas del grupo donde se retiene a los colaboradores.',
+  ruta: '/api/empresas',
+  campos: [{ clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200" placeholder="Ej.: Sucursal Oeste"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() }],
+  columnas: [
+    { titulo: 'Empresa', valor: (f) => esc(f.nombre) },
+    { titulo: 'Descuentos', num: true, valor: (f) => f.descuentos },
+    { titulo: 'Total retenido', num: true, valor: (f) => moneda(f.retenido) },
+  ],
+  vacio: 'Todavía no hay empresas.',
+  exito: 'Empresa guardada.',
+}, vigente);
+}
+
+function vistaColaboradores(_p, vigente) {
+  return vistaAlta({
+  titulo: 'Colaboradores',
+  descripcion: 'Personas a las que se les aplican retenciones. La cédula no se puede repetir.',
+  ruta: '/api/colaboradores',
+  campos: [
+    { clave: 'cedula', nombre: 'cédula', html: '<div class="campo"><label for="a-ci">Cédula <span class="obligatorio">*</span></label><input id="a-ci" inputmode="numeric" maxlength="12" placeholder="1.234.567-2"><span class="ayuda">Con dígito verificador. Puntos y guion son opcionales.</span></div>', leer: (f) => f.querySelector('#a-ci').value.trim() },
+    { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre completo <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
+  ],
+  columnas: [
+    { titulo: 'Cédula', valor: (f) => esc(cedula(f.cedula)) },
+    { titulo: 'Nombre', valor: (f) => esc(f.nombre) },
+    { titulo: 'Retenciones', num: true, valor: (f) => f.retenciones },
+    { titulo: 'Total', num: true, valor: (f) => moneda(f.total) },
+    { titulo: 'Falta descontar', num: true, valor: (f) => moneda(f.total - f.descontado) },
+  ],
+  vacio: 'Todavía no hay colaboradores.',
+  exito: 'Colaborador guardado.',
+}, vigente);
+}
+
+function vistaEntidades(_p, vigente) {
+  return vistaAlta({
+  titulo: 'Entidades acreedoras',
+  descripcion: 'Quienes envían las retenciones: juzgados, cooperativas, comercios, etc.',
+  ruta: '/api/entidades',
+  campos: [
+    { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
+    { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>', leer: (f) => f.querySelector('#a-tipo').value },
+  ],
+  columnas: [
+    { titulo: 'Entidad', valor: (f) => esc(f.nombre) },
+    { titulo: 'Tipo', valor: (f) => etiquetaTipo(f.tipo) },
+    { titulo: 'Retenciones', num: true, valor: (f) => f.retenciones },
+  ],
+  vacio: 'Todavía no hay entidades.',
+  exito: 'Entidad guardada.',
+}, vigente);
+}
+
+// ── Respaldo (solo en la versión de archivo único) ──
+
+function diasDesde(fechaHora) {
+  if (!fechaHora) return null;
+  const t = Date.parse(fechaHora.replace(' ', 'T'));
+  return Number.isNaN(t) ? null : Math.floor((Date.now() - t) / 86400000);
+}
+
+async function avisoRespaldo() {
+  if (!LOCAL) return '';
+  let info;
+  try { info = await api('/api/datos'); } catch { return ''; }
+  const hayCambios = info.modificado && (!info.ultimoRespaldo || info.modificado > info.ultimoRespaldo);
+  const dias = diasDesde(info.ultimoRespaldo);
+  if (info.ejemplos && !info.ultimoRespaldo) {
+    return `<div class="falla-en-linea" style="margin-bottom:18px"><span>Estás viendo datos de ejemplo. Cuando quieras cargar los reales, entrá a <strong>Respaldo</strong> y tocá “Empezar de cero”.</span>
+      <a class="boton chico ambar" href="#/respaldo">Ir a Respaldo</a></div>`;
+  }
+  if (!hayCambios || (dias !== null && dias < 7)) return '';
+  return `<div class="falla-en-linea" style="margin-bottom:18px"><span>${dias === null ? 'Todavía no descargaste ningún respaldo.' : `Hace ${dias} días que no descargás un respaldo.`} Los datos viven solo en este navegador.</span>
+    <a class="boton chico ambar" href="#/respaldo">Descargar respaldo</a></div>`;
+}
+
+async function vistaRespaldo(_params, vigente) {
+  const info = await api('/api/datos');
+  if (!vigente()) return;
+  const c = info.cantidades;
+  const dias = diasDesde(info.ultimoRespaldo);
+  $app.innerHTML = `
+    <div class="encabezado"><div><h1>Respaldo de los datos</h1>
+      <p>Todo lo que cargás se guarda automáticamente en este navegador, en esta computadora.</p></div></div>
+    <div class="columnas">
+      <section class="tarjeta">
+        <h2>Descargar respaldo</h2>
+        <p>Guarda un archivo con <strong>todos</strong> los datos. Hacelo seguido (por ejemplo, al terminar cada quincena) y guardá el archivo en un pendrive, en la nube o en tu correo.</p>
+        <p class="nota">Último respaldo: <strong>${info.ultimoRespaldo ? `${fecha(info.ultimoRespaldo)}${dias ? ` (hace ${dias} ${dias === 1 ? 'día' : 'días'})` : ' (hoy)'}` : 'nunca'}</strong></p>
+        <div class="acciones" style="margin-top:12px"><button class="boton ambar" type="button" id="bajar-respaldo">Descargar respaldo</button></div>
+        <div id="zona-respaldo" style="margin-top:12px"></div>
+      </section>
+      <section class="tarjeta">
+        <h2>Lo que hay guardado</h2>
+        <div class="tabla-contenedor"><table><tbody>
+          <tr><td>Retenciones</td><td class="num">${c.retenciones}</td></tr>
+          <tr><td>Descuentos</td><td class="num">${c.descuentos}</td></tr>
+          <tr><td>Colaboradores</td><td class="num">${c.colaboradores}</td></tr>
+          <tr><td>Entidades</td><td class="num">${c.entidades}</td></tr>
+          <tr><td>Empresas</td><td class="num">${c.empresas}</td></tr>
+        </tbody></table></div>
+        <p class="nota">Importante: si borrás los datos de navegación (“cookies y datos de sitios”) o usás otra computadora u otro navegador, no vas a ver estos datos. Para eso está el respaldo.</p>
+      </section>
+    </div>
+    <div class="columnas" style="margin-top:20px">
+      <section class="tarjeta">
+        <h2>Recuperar un respaldo</h2>
+        <p>Elegí un archivo de respaldo descargado antes. <strong>Reemplaza</strong> todos los datos actuales por los del archivo. También sirve para pasar los datos a otra computadora.</p>
+        <div class="campo"><label for="archivo-respaldo">Archivo de respaldo (.json)</label><input type="file" id="archivo-respaldo" accept=".json,application/json"></div>
+        <div id="zona-recuperar" style="margin-top:12px"></div>
+      </section>
+      <section class="tarjeta">
+        <h2>Empezar de cero</h2>
+        <p>Borra <strong>todos</strong> los datos (incluidos los de ejemplo) para empezar a cargar los reales. ${info.ejemplos ? 'Ahora mismo estás viendo datos de ejemplo.' : 'Antes conviene descargar un respaldo.'}</p>
+        <div class="acciones"><button class="boton peligro" type="button" id="borrar-todo">Borrar todo y empezar de cero</button></div>
+      </section>
+    </div>`;
+
+  const zona = document.getElementById('zona-respaldo');
+  const bajar = async () => {
+    zona.innerHTML = '';
+    try {
+      const blob = await window.backendLocal.exportarRespaldo();
+      const d = new Date();
+      const dos = (n) => String(n).padStart(2, '0');
+      guardarBlob(blob, `respaldo-retenciones-${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}_${dos(d.getHours())}-${dos(d.getMinutes())}.json`);
+      aviso('Respaldo descargado. Buscalo en la carpeta Descargas.');
+      setTimeout(navegar, 800);
+    } catch (e) { console.error(e); fallaEnLinea(zona, bajar); }
+  };
+  document.getElementById('bajar-respaldo').addEventListener('click', bajar);
+
+  const zonaRec = document.getElementById('zona-recuperar');
+  document.getElementById('archivo-respaldo').addEventListener('change', async (ev) => {
+    const archivo = ev.target.files[0];
+    if (!archivo) return;
+    zonaRec.innerHTML = '';
+    if (!confirm(`¿Reemplazar todos los datos actuales por los del archivo “${archivo.name}”?`)) { ev.target.value = ''; return; }
+    try {
+      const info2 = await window.backendLocal.importarRespaldo(await archivo.text());
+      aviso(`Respaldo recuperado: ${info2.cantidades.retenciones} retenciones y ${info2.cantidades.descuentos} descuentos.`);
+      navegar();
+    } catch (e) {
+      ev.target.value = '';
+      if (e instanceof window.backendLocal.ErrorValidacion) zonaRec.innerHTML = `<div class="mensaje error">${esc(e.message)} No se cambió nada.</div>`;
+      else { console.error(e); zonaRec.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div>`; }
+    }
+  });
+
+  document.getElementById('borrar-todo').addEventListener('click', async () => {
+    if (!confirm('¿Borrar TODOS los datos? Esto no se puede deshacer (salvo que tengas un respaldo).')) return;
+    if (!info.ejemplos && !confirm('Confirmá de nuevo: se borran todas las retenciones, descuentos, colaboradores, entidades y empresas.')) return;
+    try { await window.backendLocal.borrarTodo(); aviso('Listo: el sistema quedó vacío.'); location.hash = '#/panel'; }
+    catch (e) { console.error(e); aviso(MENSAJE_FALLA); }
+  });
+}
+
+navegar();
+
+</script>
+</body>
+</html>

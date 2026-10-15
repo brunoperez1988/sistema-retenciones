@@ -1,0 +1,17 @@
+{
+  "name": "sistema-retenciones",
+  "version": "1.0.0",
+  "description": "Control de retenciones de sueldos (judiciales y comerciales) y de los descuentos aplicados.",
+  "private": true,
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning server.js",
+    "reiniciar": "node --no-warnings=ExperimentalWarning scripts/ejemplos.js --reiniciar",
+    "test": "node --no-warnings=ExperimentalWarning --test",
+    "respaldo": "node --no-warnings=ExperimentalWarning scripts/respaldo.js",
+    "archivo-unico": "node scripts/armar-archivo-unico.js"
+  }
+}

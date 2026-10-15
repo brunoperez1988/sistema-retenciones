@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es-UY">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Control de Retenciones</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f8f86'/%3E%3Cpath d='M9 17l5 5 9-11' stroke='%23f5b041' stroke-width='3.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="barra">
+    <div class="barra-interior">
+      <a class="marca" href="#/panel">
+        <span class="marca-logo" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M9 17l5 5 9-11" stroke="currentColor" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <span>Control de Retenciones</span>
+      </a>
+      <button class="menu-boton" type="button" aria-expanded="false" aria-controls="menu">Menú</button>
+      <nav id="menu" class="menu" aria-label="Secciones">
+        <a href="#/panel" data-seccion="panel">Panel</a>
+        <a href="#/retenciones" data-seccion="retenciones">Retenciones recibidas</a>
+        <a href="#/descuentos" data-seccion="descuentos">Descuentos</a>
+        <a href="#/reportes" data-seccion="reportes">Reportes</a>
+        <a href="#/empresas" data-seccion="empresas">Empresas</a>
+        <a href="#/colaboradores" data-seccion="colaboradores">Colaboradores</a>
+        <a href="#/entidades" data-seccion="entidades">Entidades</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" class="contenido" tabindex="-1">
+    <p class="cargando">Cargando…</p>
+  </main>
+
+  <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
