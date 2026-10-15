@@ -140,6 +140,7 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 .etiqueta-tipo.pendiente { background: #eef2f1; color: var(--texto-suave); }
 .etiqueta-tipo.a-definir { background: var(--ambar-claro); color: var(--ambar-oscuro); border: 1px dashed var(--ambar-oscuro); }
 .etiqueta-tipo.arrastre { background: #fde8e4; color: #a33a24; }
+.etiqueta-tipo.mensual { background: #e3f1f4; color: #1f6672; }
 
 /* ── Panel ── */
 .panel-cabecera {
@@ -226,6 +227,8 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
 .acceso p { color: var(--texto-suave); }
 .enlace { background: none; border: none; padding: 0; font: inherit; color: var(--verde-oscuro); text-decoration: underline; cursor: pointer; }
 @media (max-width: 900px) { .boton-salir { order: 2; } }
+.campo label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.campo label.check input { width: 18px; height: 18px; margin: 0; }
 
 </style>
 </head>
@@ -766,6 +769,11 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
     });
   }
 
+  function repiteActiva(r) {
+    const t = r.mensual ? r : r.origen_id ? estado.retenciones.find((x) => x.id === r.origen_id) : null;
+    return Boolean(t && !t.baja && (!t.hasta || t.hasta > mesDeHoy()));
+  }
+
   function listarRetenciones(f = {}) {
     const ent = new Map(estado.entidades.map((x) => [x.id, x]));
     const col = new Map(estado.colaboradores.map((x) => [x.id, x]));
@@ -799,6 +807,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
           pendiente: r.importe_total == null ? null : r.importe_total - real,
           completa: r.importe_total != null && real >= r.importe_total,
           arrastre: Boolean(per && r.periodo < per),
+          repite: repiteActiva(r),
           _hayFiltrados: fil.length > 0,
         };
       })
@@ -902,6 +911,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       beneficiario: entidad.tipo === 'judicial' ? texto(datos.beneficiario, 'beneficiario') : null,
       cargado_por: texto(datos.cargado_por, 'quién la cargó', { max: 80 }),
       creado_en: ahora(),
+      ...datosMensual(datos),
     };
     // Si la orden es un porcentaje (p. ej. "25% Nominal"), el importe puede quedar a definir.
     if (datos.importe_total == null || datos.importe_total === '') {
@@ -910,6 +920,55 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       fila.importe_total = importe(datos.importe_total, 'el importe total');
     }
     return modificar((e) => { const id = e.sig++; e.retenciones.push({ id, ...fila }); return { id }; });
+  }
+
+  // ── Retenciones que se repiten todos los meses ──
+  // La retención original ("plantilla") lleva mensual=true; cada mes siguiente se crea una copia con origen_id.
+
+  function datosMensual(datos) {
+    if (!datos.mensual) return {};
+    const hasta = datos.hasta ? periodo(datos.hasta) : null;
+    if (hasta && hasta < periodo(datos.periodo)) throw new ErrorValidacion('El mes de fin no puede ser anterior al período.');
+    return { mensual: true, hasta };
+  }
+
+  const mesDeHoy = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+  function mesSiguiente(m) { const [a, x] = m.split('-').map(Number); return x === 12 ? `${a + 1}-01` : `${a}-${String(x + 1).padStart(2, '0')}`; }
+  const esPorcentaje = (regla) => /%/.test(regla || '');
+
+  // Copias mensuales que faltan crear hasta el mes actual.
+  function mensualesFaltantes(e) {
+    const limite = mesDeHoy();
+    const hay = new Set(e.retenciones.filter((r) => r.origen_id).map((r) => `${r.origen_id}|${r.periodo}`));
+    const faltan = [];
+    for (const t of e.retenciones.filter((r) => r.mensual)) {
+      for (let m = mesSiguiente(t.periodo); m <= limite; m = mesSiguiente(m)) {
+        if ((t.hasta && m > t.hasta) || (t.baja && m >= t.baja)) break;
+        if (hay.has(`${t.id}|${m}`) || (t.omitidos || []).includes(m)) continue;
+        faltan.push({
+          colaborador_id: t.colaborador_id, entidad_id: t.entidad_id, periodo: m, regla: t.regla || '',
+          importe_total: esPorcentaje(t.regla) ? null : t.importe_total,
+          concepto: t.concepto || '', expediente: t.expediente || '', beneficiario: t.beneficiario,
+          cargado_por: 'Automática (se repite cada mes)', creado_en: ahora(), origen_id: t.id,
+        });
+      }
+    }
+    return faltan;
+  }
+
+  async function crearMensuales() {
+    if (!mensualesFaltantes(estado).length) return;
+    await modificar((e) => { for (const r of mensualesFaltantes(e)) e.retenciones.push({ id: e.sig++, ...r }); });
+  }
+
+  // Deja de repetir una retención mensual desde el mes que viene (lo ya creado queda).
+  function darDeBaja(id) {
+    const r = estado.retenciones.find((x) => x.id === Number(id));
+    if (!r) throw new ErrorValidacion('La retención no existe.', 404);
+    const tId = r.mensual ? r.id : r.origen_id;
+    if (!tId) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
+    const desde = mesSiguiente(mesDeHoy());
+    return modificar((e) => { e.retenciones.find((x) => x.id === tId).baja = desde; return { ok: true, desde }; });
   }
 
   // Define (o corrige) el importe total de una retención; nunca por debajo de lo ya descontado.
@@ -935,7 +994,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       const colPorCi = new Map(e.colaboradores.map((c) => [c.cedula, c]));
       const entPorNombre = new Map(e.entidades.map((x) => [normalizar(x.nombre), x]));
       const claveRet = (r) => [r.colaborador_id, r.entidad_id, r.periodo, r.importe_total ?? '', r.regla || '', r.concepto || ''].join('|');
-      const existentes = new Set(e.retenciones.map(claveRet));
+      const existentes = new Map(e.retenciones.map((r) => [claveRet(r), r]));
       for (const x of datos.retenciones) {
         const ci = String(x.cedula || '').replace(/\D/g, '');
         if (!/^\d{6,8}$/.test(ci)) throw new ErrorValidacion(`Cédula inválida en la importación: ${x.cedula}`);
@@ -953,11 +1012,19 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
           beneficiario: ent.tipo === 'judicial' ? (texto(x.beneficiario, 'beneficiario', { obligatorio: false }) || 'A completar') : null,
           cargado_por: texto(x.cargado_por || 'Importación', 'quién la cargó', { max: 80 }),
           creado_en: ahora(),
+          ...datosMensual(x),
         };
         if (r.importe_total == null && !r.regla) throw new ErrorValidacion(`Falta el importe o la regla de ${col.nombre}.`);
-        if (existentes.has(claveRet(r))) { res.repetidas += 1; continue; }
-        existentes.add(claveRet(r));
-        e.retenciones.push({ id: e.sig++, ...r });
+        const ya = existentes.get(claveRet(r));
+        if (ya) {
+          res.repetidas += 1;
+          // Si ya estaba cargada sin repetirse, el archivo puede marcarla como mensual.
+          if (r.mensual && !ya.mensual && !ya.origen_id) { ya.mensual = true; ya.hasta = r.hasta; res.mensualesNuevas = (res.mensualesNuevas || 0) + 1; }
+          continue;
+        }
+        const nueva = { id: e.sig++, ...r };
+        existentes.set(claveRet(r), nueva);
+        e.retenciones.push(nueva);
         res.retenciones += 1;
       }
       e.ejemplos = false;
@@ -969,7 +1036,16 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
     const n = Number(id);
     if (!estado.retenciones.some((r) => r.id === n)) throw new ErrorValidacion('La retención no existe.', 404);
     if (estado.descuentos.some((d) => d.retencion_id === n)) throw new ErrorValidacion('No se puede eliminar una retención que ya tiene descuentos.', 409);
-    return modificar((e) => { e.retenciones = e.retenciones.filter((r) => r.id !== n); return { ok: true }; });
+    return modificar((e) => {
+      const r = e.retenciones.find((x) => x.id === n);
+      // Si era una copia mensual, que no se vuelva a crear para ese mes.
+      const t = r.origen_id && e.retenciones.find((x) => x.id === r.origen_id);
+      if (t) t.omitidos = [...(t.omitidos || []), r.periodo];
+      // Si era la original, sus copias pasan a ser independientes.
+      if (r.mensual) e.retenciones.forEach((x) => { if (x.origen_id === n) delete x.origen_id; });
+      e.retenciones = e.retenciones.filter((x) => x.id !== n);
+      return { ok: true };
+    });
   }
 
   function crearDescuento(datos) {
@@ -1261,6 +1337,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
 
   async function manejar(metodo, rutaCompleta, cuerpo) {
     await iniciar();
+    await crearMensuales();
     const url = new URL(rutaCompleta, 'http://local');
     const ruta = url.pathname.replace(/\/+$/, '');
     const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
@@ -1285,6 +1362,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       if (ruta === '/api/descuentos') return crearDescuento(cuerpo || {});
       if (ruta === '/api/importar') return importarRetenciones(cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) return definirImporte(m[1], cuerpo || {});
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return darDeBaja(m[1]);
     }
     if (metodo === 'DELETE') {
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) return eliminarRetencion(m[1]);
@@ -1641,7 +1719,7 @@ function tarjetaOrden(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
       </div>
       <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Avance ${pct}%"><span style="width:${pct}%"></span></div>
       <div class="orden-cifras">
@@ -1662,7 +1740,7 @@ function tarjetaADefinir(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
       </div>
       <div class="orden-cifras"><span>Regla: <strong>${esc(r.regla)}</strong> · importe a definir</span></div>
       <div><button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button></div>
@@ -1715,6 +1793,11 @@ async function vistaRetenciones(_params, vigente) {
           </div>
           <div class="campo"><label for="r-regla">Regla (si todavía no sabés el importe)</label>
             <input id="r-regla" maxlength="60" placeholder="Ej.: 25% Nominal, 3 BPC"><span class="ayuda">Si ponés la regla, podés dejar el importe vacío y definirlo después.</span></div>
+          <div class="fila">
+            <div class="campo"><label class="check"><input type="checkbox" id="r-mensual"> Se repite todos los meses</label>
+              <span class="ayuda">Se crea sola cada mes hasta que le des de baja. Si es por porcentaje, cada mes queda “a definir”.</span></div>
+            <div class="campo" id="campo-hasta" hidden><label for="r-hasta">Hasta (opcional)</label><input type="month" id="r-hasta"></div>
+          </div>
           <div class="campo"><label for="r-concepto">Concepto</label><input id="r-concepto" maxlength="200" placeholder="Ej.: Pensión alimenticia, cuota crédito"></div>
           <div class="campo"><label for="r-exp">N° de expediente / Juzgado</label><input id="r-exp" maxlength="200"></div>
           <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
@@ -1743,6 +1826,8 @@ async function vistaRetenciones(_params, vigente) {
   const campoBenef = document.getElementById('campo-benef');
   const esJudicial = () => selEnt.selectedOptions[0]?.dataset.tipo === 'judicial';
   selEnt.addEventListener('change', () => { campoBenef.hidden = !esJudicial(); });
+  const chkMensual = document.getElementById('r-mensual');
+  chkMensual.addEventListener('change', () => { document.getElementById('campo-hasta').hidden = !chkMensual.checked; });
 
   const lista = document.getElementById('lista-ret');
   const recargar = () => cargarEn(lista, async () => {
@@ -1750,6 +1835,11 @@ async function vistaRetenciones(_params, vigente) {
     const filas = await api(`/api/retenciones?${qs}`);
     lista.innerHTML = tablaRetenciones(filas);
     conectarDefinirImporte(lista, recargar);
+    lista.querySelectorAll('[data-baja]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('¿Dejar de repetir esta retención? Desde el mes que viene no se crea más. Lo ya cargado queda igual.')) return;
+      try { await api(`/api/retenciones/${b.dataset.baja}/baja`, { metodo: 'POST', cuerpo: {} }); aviso('Listo: no se repite más desde el mes que viene.'); recargar(); }
+      catch (e) { if (e.validacion) aviso(e.message); else fallaEnLinea(lista, recargar); }
+    }));
     lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('¿Eliminar esta retención? No tiene descuentos aplicados.')) return;
       try { await api(`/api/retenciones/${b.dataset.eliminar}`, { metodo: 'DELETE' }); aviso('Retención eliminada.'); recargar(); }
@@ -1778,6 +1868,8 @@ async function vistaRetenciones(_params, vigente) {
         periodo: form.querySelector('#r-periodo').value,
         importe_total: importe,
         regla,
+        mensual: chkMensual.checked,
+        hasta: chkMensual.checked ? form.querySelector('#r-hasta').value : '',
         concepto: form.querySelector('#r-concepto').value,
         expediente: form.querySelector('#r-exp').value,
         beneficiario: esJudicial() ? form.querySelector('#r-benef').value : null,
@@ -1787,7 +1879,8 @@ async function vistaRetenciones(_params, vigente) {
     },
     alTerminar: async () => {
       aviso('Retención guardada.');
-      ['#r-importe', '#r-regla', '#r-concepto', '#r-exp', '#r-benef'].forEach((s) => { form.querySelector(s).value = ''; });
+      ['#r-importe', '#r-regla', '#r-concepto', '#r-exp', '#r-benef', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
+      chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
       form.querySelector('#r-colab').focus();
       recargar();
     },
@@ -1803,7 +1896,7 @@ function tablaRetenciones(filas) {
     <tbody>${filas.map((r) => `<tr>
       <td>${esc(mesCorto(r.periodo))}</td>
       <td>${esc(r.colaborador)}<span class="sec">CI ${esc(cedula(r.cedula))}</span></td>
-      <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
+      <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}${r.repite ? ' <span class="etiqueta-tipo mensual">Mensual</span>' : ''}</span></td>
       <td>${esc(r.concepto) || '—'}${r.expediente ? `<span class="sec">${esc(r.expediente)}</span>` : ''}</td>
       <td>${r.tipo === 'judicial' ? esc(r.beneficiario) : '<span class="sec">—</span>'}</td>
       <td class="num">${celdaTotal(r)}</td>
@@ -1812,7 +1905,8 @@ function tablaRetenciones(filas) {
       <td>${esc(r.cargado_por)}<span class="sec">${fecha(r.creado_en)}</span></td>
       <td>${r.cantidad_descuentos === 0 ? `<button class="boton chico peligro" type="button" data-eliminar="${r.id}">Eliminar</button>`
         : (r.completa || r.a_definir ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Descontar</a>`)}
-        ${r.a_definir ? `<button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button>` : ''}</td>
+        ${r.a_definir ? `<button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button>` : ''}
+        ${r.repite ? `<button class="boton chico secundario" type="button" data-baja="${r.id}" title="Dejar de repetir cada mes">Dar de baja</button>` : ''}</td>
     </tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="5">Total (${filas.length})</td><td class="num">${moneda(suma('importe_total'))}</td>
       <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td colspan="2"></td></tr></tfoot>
@@ -2383,7 +2477,7 @@ async function vistaRespaldo(_params, vigente) {
       let datos;
       try { datos = JSON.parse(await archivo.text()); } catch { throw new window.backendLocal.ErrorValidacion('El archivo no es una importación de retenciones.'); }
       const r = await api('/api/importar', { metodo: 'POST', cuerpo: datos });
-      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}.`);
+      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}${r.mensualesNuevas ? `; ${r.mensualesNuevas} quedaron como mensuales` : ''}.`);
       navegar();
     } catch (e) {
       ev.target.value = '';

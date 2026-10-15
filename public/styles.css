@@ -132,6 +132,7 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 .etiqueta-tipo.pendiente { background: #eef2f1; color: var(--texto-suave); }
 .etiqueta-tipo.a-definir { background: var(--ambar-claro); color: var(--ambar-oscuro); border: 1px dashed var(--ambar-oscuro); }
 .etiqueta-tipo.arrastre { background: #fde8e4; color: #a33a24; }
+.etiqueta-tipo.mensual { background: #e3f1f4; color: #1f6672; }
 
 /* ── Panel ── */
 .panel-cabecera {
@@ -218,3 +219,5 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
 .acceso p { color: var(--texto-suave); }
 .enlace { background: none; border: none; padding: 0; font: inherit; color: var(--verde-oscuro); text-decoration: underline; cursor: pointer; }
 @media (max-width: 900px) { .boton-salir { order: 2; } }
+.campo label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; }
+.campo label.check input { width: 18px; height: 18px; margin: 0; }

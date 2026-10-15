@@ -319,7 +319,7 @@ function tarjetaOrden(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
       </div>
       <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Avance ${pct}%"><span style="width:${pct}%"></span></div>
       <div class="orden-cifras">
@@ -340,7 +340,7 @@ function tarjetaADefinir(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
       </div>
       <div class="orden-cifras"><span>Regla: <strong>${esc(r.regla)}</strong> · importe a definir</span></div>
       <div><button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button></div>
@@ -393,6 +393,11 @@ async function vistaRetenciones(_params, vigente) {
           </div>
           <div class="campo"><label for="r-regla">Regla (si todavía no sabés el importe)</label>
             <input id="r-regla" maxlength="60" placeholder="Ej.: 25% Nominal, 3 BPC"><span class="ayuda">Si ponés la regla, podés dejar el importe vacío y definirlo después.</span></div>
+          <div class="fila">
+            <div class="campo"><label class="check"><input type="checkbox" id="r-mensual"> Se repite todos los meses</label>
+              <span class="ayuda">Se crea sola cada mes hasta que le des de baja. Si es por porcentaje, cada mes queda “a definir”.</span></div>
+            <div class="campo" id="campo-hasta" hidden><label for="r-hasta">Hasta (opcional)</label><input type="month" id="r-hasta"></div>
+          </div>
           <div class="campo"><label for="r-concepto">Concepto</label><input id="r-concepto" maxlength="200" placeholder="Ej.: Pensión alimenticia, cuota crédito"></div>
           <div class="campo"><label for="r-exp">N° de expediente / Juzgado</label><input id="r-exp" maxlength="200"></div>
           <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
@@ -421,6 +426,8 @@ async function vistaRetenciones(_params, vigente) {
   const campoBenef = document.getElementById('campo-benef');
   const esJudicial = () => selEnt.selectedOptions[0]?.dataset.tipo === 'judicial';
   selEnt.addEventListener('change', () => { campoBenef.hidden = !esJudicial(); });
+  const chkMensual = document.getElementById('r-mensual');
+  chkMensual.addEventListener('change', () => { document.getElementById('campo-hasta').hidden = !chkMensual.checked; });
 
   const lista = document.getElementById('lista-ret');
   const recargar = () => cargarEn(lista, async () => {
@@ -428,6 +435,11 @@ async function vistaRetenciones(_params, vigente) {
     const filas = await api(`/api/retenciones?${qs}`);
     lista.innerHTML = tablaRetenciones(filas);
     conectarDefinirImporte(lista, recargar);
+    lista.querySelectorAll('[data-baja]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm('¿Dejar de repetir esta retención? Desde el mes que viene no se crea más. Lo ya cargado queda igual.')) return;
+      try { await api(`/api/retenciones/${b.dataset.baja}/baja`, { metodo: 'POST', cuerpo: {} }); aviso('Listo: no se repite más desde el mes que viene.'); recargar(); }
+      catch (e) { if (e.validacion) aviso(e.message); else fallaEnLinea(lista, recargar); }
+    }));
     lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('¿Eliminar esta retención? No tiene descuentos aplicados.')) return;
       try { await api(`/api/retenciones/${b.dataset.eliminar}`, { metodo: 'DELETE' }); aviso('Retención eliminada.'); recargar(); }
@@ -456,6 +468,8 @@ async function vistaRetenciones(_params, vigente) {
         periodo: form.querySelector('#r-periodo').value,
         importe_total: importe,
         regla,
+        mensual: chkMensual.checked,
+        hasta: chkMensual.checked ? form.querySelector('#r-hasta').value : '',
         concepto: form.querySelector('#r-concepto').value,
         expediente: form.querySelector('#r-exp').value,
         beneficiario: esJudicial() ? form.querySelector('#r-benef').value : null,
@@ -465,7 +479,8 @@ async function vistaRetenciones(_params, vigente) {
     },
     alTerminar: async () => {
       aviso('Retención guardada.');
-      ['#r-importe', '#r-regla', '#r-concepto', '#r-exp', '#r-benef'].forEach((s) => { form.querySelector(s).value = ''; });
+      ['#r-importe', '#r-regla', '#r-concepto', '#r-exp', '#r-benef', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
+      chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
       form.querySelector('#r-colab').focus();
       recargar();
     },
@@ -481,7 +496,7 @@ function tablaRetenciones(filas) {
     <tbody>${filas.map((r) => `<tr>
       <td>${esc(mesCorto(r.periodo))}</td>
       <td>${esc(r.colaborador)}<span class="sec">CI ${esc(cedula(r.cedula))}</span></td>
-      <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
+      <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}${r.repite ? ' <span class="etiqueta-tipo mensual">Mensual</span>' : ''}</span></td>
       <td>${esc(r.concepto) || '—'}${r.expediente ? `<span class="sec">${esc(r.expediente)}</span>` : ''}</td>
       <td>${r.tipo === 'judicial' ? esc(r.beneficiario) : '<span class="sec">—</span>'}</td>
       <td class="num">${celdaTotal(r)}</td>
@@ -490,7 +505,8 @@ function tablaRetenciones(filas) {
       <td>${esc(r.cargado_por)}<span class="sec">${fecha(r.creado_en)}</span></td>
       <td>${r.cantidad_descuentos === 0 ? `<button class="boton chico peligro" type="button" data-eliminar="${r.id}">Eliminar</button>`
         : (r.completa || r.a_definir ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Descontar</a>`)}
-        ${r.a_definir ? `<button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button>` : ''}</td>
+        ${r.a_definir ? `<button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button>` : ''}
+        ${r.repite ? `<button class="boton chico secundario" type="button" data-baja="${r.id}" title="Dejar de repetir cada mes">Dar de baja</button>` : ''}</td>
     </tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="5">Total (${filas.length})</td><td class="num">${moneda(suma('importe_total'))}</td>
       <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td colspan="2"></td></tr></tfoot>
@@ -1061,7 +1077,7 @@ async function vistaRespaldo(_params, vigente) {
       let datos;
       try { datos = JSON.parse(await archivo.text()); } catch { throw new window.backendLocal.ErrorValidacion('El archivo no es una importación de retenciones.'); }
       const r = await api('/api/importar', { metodo: 'POST', cuerpo: datos });
-      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}.`);
+      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}${r.mensualesNuevas ? `; ${r.mensualesNuevas} quedaron como mensuales` : ''}.`);
       navegar();
     } catch (e) {
       ev.target.value = '';

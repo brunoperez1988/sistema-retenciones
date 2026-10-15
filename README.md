@@ -60,6 +60,8 @@ Variables opcionales: `PORT` (puerto), `DB_PATH` (ruta de la base), `HOST` (por 
 - **Panel:** elegís el mes y ves la cantidad de órdenes, el total pactado, el total retenido y lo disponible (lo que falta descontar). Cada orden tiene barra de avance, etiqueta Judicial/Comercial y la marca “Completa” al llegar al tope.
 - **Retenciones recibidas:** carga (colaborador, entidad, período, importe, concepto, expediente/juzgado, beneficiario y quién la cargó) y listado con total, descontado y falta descontar. El beneficiario aparece y es obligatorio solo en las judiciales.
 - **Órdenes por porcentaje o regla:** si todavía no se sabe el importe (por ejemplo “25% Nominal”), se carga la regla y la orden queda “A definir” hasta que se ingresa el importe con **Definir importe**. Mientras tanto no se le pueden hacer descuentos.
+- **Retenciones mensuales:** al cargar una retención podés marcar “Se repite todos los meses” (con un mes de fin opcional). El sistema la crea sola en cada mes nuevo hasta que le des **Dar de baja**. Si es por porcentaje, cada mes queda “A definir”.
+- **Saldo que pasa al mes siguiente:** lo que no se llegó a descontar de una retención aparece en los meses siguientes (“Viene de …”) hasta quedar en 0.
 - **Descuentos:** elegís la persona y una de sus retenciones pendientes; la pantalla muestra el máximo que se puede descontar y no deja guardar si se pasa. Histórico con el saldo que quedó luego de cada descuento y el saldo pendiente actual.
 - **Reportes:** filtros por mes, búsqueda (nombre, CI, entidad, concepto, beneficiario), judicial/comercial, tipo de descuento y empresa donde se retuvo.
   - *Planilla* de todas las personas con retenciones.
