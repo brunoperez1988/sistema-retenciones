@@ -834,6 +834,15 @@
     });
   }
 
+  // Una empresa con descuentos no se borra, para no perder el historial.
+  function eliminarEmpresa(id) {
+    const n = Number(id);
+    if (!estado.empresas.some((x) => x.id === n)) throw new ErrorValidacion('La empresa no existe.', 404);
+    const usos = estado.descuentos.filter((d) => d.empresa_id === n).length;
+    if (usos) throw new ErrorValidacion(`No se puede borrar: tiene ${usos} ${usos === 1 ? 'descuento registrado' : 'descuentos registrados'}.`, 409);
+    return modificar((e) => { e.empresas = e.empresas.filter((x) => x.id !== n); return { ok: true }; });
+  }
+
   function eliminarRetencion(id) {
     const n = Number(id);
     if (!estado.retenciones.some((r) => r.id === n)) throw new ErrorValidacion('La retención no existe.', 404);
@@ -1177,6 +1186,7 @@
     if (metodo === 'DELETE') {
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) return eliminarRetencion(m[1]);
       if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) return eliminarDescuento(m[1]);
+      if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return eliminarEmpresa(m[1]);
     }
     throw new ErrorValidacion('Ruta no encontrada.', 404);
   }

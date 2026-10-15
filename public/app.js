@@ -1074,7 +1074,7 @@ function tablaAbonar(rep) {
 
 // ── Altas simples: empresas, colaboradores y entidades ──
 
-async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, exito }, vigente) {
+async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, exito, borrable }, vigente) {
   const filas = await api(ruta);
   if (!vigente()) return;
   $app.innerHTML = `
@@ -1094,9 +1094,16 @@ async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, e
   const lista = document.getElementById('lista-alta');
   const pintar = (datos) => {
     lista.innerHTML = datos.length
-      ? `<div class="tabla-contenedor"><table><thead><tr>${columnas.map((c) => `<th class="${c.num ? 'num' : ''}">${c.titulo}</th>`).join('')}</tr></thead>
-         <tbody>${datos.map((f) => `<tr>${columnas.map((c) => `<td class="${c.num ? 'num' : ''}">${c.valor(f)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+      ? `<div class="tabla-contenedor"><table><thead><tr>${columnas.map((c) => `<th class="${c.num ? 'num' : ''}">${c.titulo}</th>`).join('')}${borrable ? '<th></th>' : ''}</tr></thead>
+         <tbody>${datos.map((f) => `<tr>${columnas.map((c) => `<td class="${c.num ? 'num' : ''}">${c.valor(f)}</td>`).join('')}${borrable ? `<td>${borrable(f)
+           ? `<button class="boton chico peligro" type="button" data-borrar="${f.id}" data-nombre="${esc(f.nombre)}">Eliminar</button>`
+           : '<span class="sec" title="Tiene descuentos registrados">No se puede borrar</span>'}</td>` : ''}</tr>`).join('')}</tbody></table></div>`
       : `<div class="tabla-contenedor"><p class="vacio">${vacio}</p></div>`;
+    lista.querySelectorAll('[data-borrar]').forEach((b) => b.addEventListener('click', async () => {
+      if (!confirm(`¿Eliminar “${b.dataset.nombre}”?`)) return;
+      try { await api(`${ruta}/${b.dataset.borrar}`, { metodo: 'DELETE' }); aviso('Eliminada.'); await cargarEn(lista, async () => pintar(await api(ruta))); }
+      catch (e) { if (e.validacion) aviso(e.message); else fallaEnLinea(lista, async () => pintar(await api(ruta))); }
+    }));
   };
   pintar(filas);
 
@@ -1125,6 +1132,7 @@ function vistaEmpresas(_p, vigente) {
   titulo: 'Empresas',
   descripcion: 'Empresas del grupo donde se retiene a los colaboradores.',
   ruta: '/api/empresas',
+  borrable: (f) => f.descuentos === 0,
   campos: [{ clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200" placeholder="Ej.: Sucursal Oeste"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() }],
   columnas: [
     { titulo: 'Empresa', valor: (f) => esc(f.nombre) },
