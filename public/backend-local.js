@@ -484,7 +484,7 @@
   function listarColaboradores() {
     return catalogos().colaboradores.map((c) => {
       const rs = estado.retenciones.filter((r) => r.colaborador_id === c.id);
-      return { ...c, retenciones: rs.length, total: rs.reduce((a, r) => a + r.importe_total, 0), descontado: rs.reduce((a, r) => a + descontadoDe(estado, r.id), 0) };
+      return { ...c, retenciones: rs.length, total: rs.reduce((a, r) => a + (r.importe_total || 0), 0), descontado: rs.reduce((a, r) => a + descontadoDe(estado, r.id), 0) };
     });
   }
   function listarEmpresas() {
@@ -533,8 +533,10 @@
           descontado_real: real, cantidad_descuentos: todos.length, descontado_filtrado: filtrado,
           empresas: [...new Set(fil.map((d) => emp.get(d.empresa_id).nombre))].join(', '),
           descontado: filtraDescuentos ? filtrado : real,
-          pendiente: r.importe_total - real,
-          completa: real >= r.importe_total,
+          regla: r.regla || '',
+          a_definir: r.importe_total == null,
+          pendiente: r.importe_total == null ? null : r.importe_total - real,
+          completa: r.importe_total != null && real >= r.importe_total,
           _hayFiltrados: fil.length > 0,
         };
       })
@@ -554,7 +556,7 @@
     [...estado.descuentos].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id).forEach((d) => {
       const suma = (acumulado.get(d.retencion_id) || 0) + d.importe;
       acumulado.set(d.retencion_id, suma);
-      saldoDespues.set(d.id, rets.get(d.retencion_id).importe_total - suma);
+      saldoDespues.set(d.id, (rets.get(d.retencion_id).importe_total || 0) - suma);
     });
     const filas = estado.descuentos
       .filter((d) => !mes || d.fecha.slice(0, 7) === mes)
@@ -576,9 +578,9 @@
 
   function panel(mes) {
     const filas = listarRetenciones({ periodo: periodo(mes) });
-    const pactado = filas.reduce((a, x) => a + x.importe_total, 0);
+    const pactado = filas.reduce((a, x) => a + (x.importe_total || 0), 0);
     const retenido = filas.reduce((a, x) => a + x.descontado_real, 0);
-    return { periodo: mes, ordenes: filas.length, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - retenido, retenciones: filas };
+    return { periodo: mes, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - retenido, retenciones: filas };
   }
 
   function reporteAbonar(f) {
@@ -626,14 +628,74 @@
     const fila = {
       colaborador_id, entidad_id,
       periodo: periodo(datos.periodo),
-      importe_total: importe(datos.importe_total, 'el importe total'),
+      regla: texto(datos.regla, 'regla', { obligatorio: false, max: 60 }),
+      importe_total: null,
       concepto: texto(datos.concepto, 'concepto', { obligatorio: false }),
       expediente: texto(datos.expediente, 'expediente / juzgado', { obligatorio: false }),
       beneficiario: entidad.tipo === 'judicial' ? texto(datos.beneficiario, 'beneficiario') : null,
       cargado_por: texto(datos.cargado_por, 'quién la cargó', { max: 80 }),
       creado_en: ahora(),
     };
+    // Si la orden es un porcentaje (p. ej. "25% Nominal"), el importe puede quedar a definir.
+    if (datos.importe_total == null || datos.importe_total === '') {
+      if (!fila.regla) throw new ErrorValidacion('Ingresá el importe total, o la regla (por ejemplo "25% Nominal") si todavía no se sabe el importe.');
+    } else {
+      fila.importe_total = importe(datos.importe_total, 'el importe total');
+    }
     return modificar((e) => { const id = e.sig++; e.retenciones.push({ id, ...fila }); return { id }; });
+  }
+
+  // Define (o corrige) el importe total de una retención; nunca por debajo de lo ya descontado.
+  function definirImporte(id, datos) {
+    const n = Number(id);
+    const ret = estado.retenciones.find((r) => r.id === n);
+    if (!ret) throw new ErrorValidacion('La retención no existe.', 404);
+    const total = importe(datos.importe_total, 'el importe total');
+    if (total < descontadoDe(estado, n)) throw new ErrorValidacion('El importe total no puede ser menor a lo que ya se descontó.', 409);
+    return modificar((e) => { e.retenciones.find((r) => r.id === n).importe_total = total; return { ok: true }; });
+  }
+
+  // Agrega retenciones desde un archivo de importación (no borra nada de lo que ya hay).
+  // Crea los colaboradores y entidades que falten; no repite una retención ya cargada.
+  function importarRetenciones(datos) {
+    if (!datos || datos.tipo !== 'importacion-retenciones' || !Array.isArray(datos.retenciones)) {
+      throw new ErrorValidacion('El archivo no es una importación de retenciones.');
+    }
+    return modificar((e) => {
+      const res = { retenciones: 0, colaboradores: 0, entidades: 0, repetidas: 0, ejemplosQuitados: Boolean(e.ejemplos) };
+      // Los datos de ejemplo no se mezclan con los reales.
+      if (e.ejemplos) { e.colaboradores = []; e.entidades = []; e.empresas = []; e.retenciones = []; e.descuentos = []; }
+      const colPorCi = new Map(e.colaboradores.map((c) => [c.cedula, c]));
+      const entPorNombre = new Map(e.entidades.map((x) => [normalizar(x.nombre), x]));
+      const claveRet = (r) => [r.colaborador_id, r.entidad_id, r.periodo, r.importe_total ?? '', r.regla || '', r.concepto || ''].join('|');
+      const existentes = new Set(e.retenciones.map(claveRet));
+      for (const x of datos.retenciones) {
+        const ci = String(x.cedula || '').replace(/\D/g, '');
+        if (!/^\d{6,8}$/.test(ci)) throw new ErrorValidacion(`Cédula inválida en la importación: ${x.cedula}`);
+        let col = colPorCi.get(ci);
+        if (!col) { col = { id: e.sig++, cedula: ci, nombre: texto(x.nombre, 'nombre') }; e.colaboradores.push(col); colPorCi.set(ci, col); res.colaboradores += 1; }
+        const tipo = x.tipo_entidad === 'judicial' ? 'judicial' : 'comercial';
+        let ent = entPorNombre.get(normalizar(x.entidad));
+        if (!ent) { ent = { id: e.sig++, nombre: texto(x.entidad, 'entidad'), tipo }; e.entidades.push(ent); entPorNombre.set(normalizar(ent.nombre), ent); res.entidades += 1; }
+        const r = {
+          colaborador_id: col.id, entidad_id: ent.id, periodo: periodo(x.periodo),
+          regla: texto(x.regla, 'regla', { obligatorio: false, max: 60 }),
+          importe_total: x.importe_total == null ? null : importe(x.importe_total, 'el importe total'),
+          concepto: texto(x.concepto, 'concepto', { obligatorio: false }),
+          expediente: texto(x.expediente, 'expediente', { obligatorio: false }),
+          beneficiario: ent.tipo === 'judicial' ? (texto(x.beneficiario, 'beneficiario', { obligatorio: false }) || 'A completar') : null,
+          cargado_por: texto(x.cargado_por || 'Importación', 'quién la cargó', { max: 80 }),
+          creado_en: ahora(),
+        };
+        if (r.importe_total == null && !r.regla) throw new ErrorValidacion(`Falta el importe o la regla de ${col.nombre}.`);
+        if (existentes.has(claveRet(r))) { res.repetidas += 1; continue; }
+        existentes.add(claveRet(r));
+        e.retenciones.push({ id: e.sig++, ...r });
+        res.retenciones += 1;
+      }
+      e.ejemplos = false;
+      return res;
+    });
   }
 
   function eliminarRetencion(id) {
@@ -658,6 +720,7 @@
       // Regla de oro, verificada sobre los datos que se van a guardar.
       const ret = e.retenciones.find((r) => r.id === fila.retencion_id);
       if (!ret) throw new ErrorValidacion('La retención elegida no existe.');
+      if (ret.importe_total == null) throw new ErrorValidacion(`Primero definí el importe total de esta retención (regla: ${ret.regla || 'sin regla'}).`, 409);
       const pendiente = ret.importe_total - descontadoDe(e, ret.id);
       if (fila.importe > pendiente) {
         throw new ErrorValidacion(pendiente <= 0
@@ -693,7 +756,7 @@
     const cols = new Set(e.colaboradores.map((x) => x.id));
     const emps = new Set(e.empresas.map((x) => x.id));
     for (const r of e.retenciones) {
-      if (!cols.has(r.colaborador_id) || !ent.has(r.entidad_id) || !(Number.isInteger(r.importe_total) && r.importe_total > 0)) throw new ErrorValidacion('El respaldo tiene una retención con datos dañados.');
+      if (!cols.has(r.colaborador_id) || !ent.has(r.entidad_id) || !(r.importe_total == null ? Boolean(r.regla) : Number.isInteger(r.importe_total) && r.importe_total > 0)) throw new ErrorValidacion('El respaldo tiene una retención con datos dañados.');
       if (ent.get(r.entidad_id).tipo === 'judicial' && !String(r.beneficiario || '').trim()) throw new ErrorValidacion('El respaldo tiene una retención judicial sin beneficiario.');
     }
     const rets = new Map(e.retenciones.map((r) => [r.id, r]));
@@ -701,7 +764,7 @@
       if (!rets.has(d.retencion_id) || !emps.has(d.empresa_id) || !(Number.isInteger(d.importe) && d.importe > 0)) throw new ErrorValidacion('El respaldo tiene un descuento con datos dañados.');
     }
     for (const r of e.retenciones) {
-      if (descontadoDe(e, r.id) > r.importe_total) throw new ErrorValidacion('El respaldo tiene descuentos que superan el total de una retención.');
+      if (descontadoDe(e, r.id) > (r.importe_total ?? 0)) throw new ErrorValidacion('El respaldo tiene descuentos que superan el total de una retención.');
     }
     const maxId = Math.max(0, ...ids);
     return { ...estadoVacio(), ...e, version: VERSION_DATOS, sig: Math.max(Number(e.sig) || 0, maxId + 1) };
@@ -901,12 +964,12 @@
     const columnas = [
       { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
       { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
-      { titulo: 'Total', tipo: 'moneda', ancho: 14 }, { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta descontar', tipo: 'moneda', ancho: 15 },
+      { titulo: 'Regla', ancho: 16 }, { titulo: 'Total', tipo: 'moneda', ancho: 14 }, { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta descontar', tipo: 'moneda', ancho: 15 },
       { titulo: 'Empresas donde se retuvo', ancho: 28 }, { titulo: 'Cargado por', ancho: 16 },
     ];
-    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.importe_total, x.descontado, x.pendiente, x.empresas, x.cargado_por]);
-    const suma = (k) => filas.reduce((a, x) => a + x[k], 0);
-    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
+    const cuerpo = filas.map((x) => [x.periodo, x.cedula, x.colaborador, x.entidad, TIPO_TXT[x.tipo], x.concepto, x.expediente, x.beneficiario || '', x.regla || '', x.importe_total == null ? 'A definir' : x.importe_total, x.descontado, x.pendiente == null ? '' : x.pendiente, x.empresas, x.cargado_por]);
+    const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', `${filas.length} retenciones`, '', '', '', '', '', '', suma('importe_total'), suma('descontado'), suma('pendiente'), '', ''] });
     return { columnas, filas: cuerpo, titulo: 'Planilla de retenciones', hoja: 'Planilla' };
   }
 
@@ -953,6 +1016,8 @@
       if (ruta === '/api/empresas') return crearEmpresa(cuerpo || {});
       if (ruta === '/api/retenciones') return crearRetencion(cuerpo || {});
       if (ruta === '/api/descuentos') return crearDescuento(cuerpo || {});
+      if (ruta === '/api/importar') return importarRetenciones(cuerpo || {});
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) return definirImporte(m[1], cuerpo || {});
     }
     if (metodo === 'DELETE') {
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) return eliminarRetencion(m[1]);

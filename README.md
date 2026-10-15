@@ -16,6 +16,7 @@ Si la computadora no deja instalar programas ni abrir archivos `.bat`, usá **Si
    - **Descargar respaldo**: baja un archivo con todos los datos. Hacelo seguido y guardalo en un pendrive, en la nube o en tu correo.
    - **Recuperar un respaldo**: vuelve a cargar los datos desde ese archivo (también sirve para pasarlos a otra computadora).
    - **Empezar de cero**: borra los datos de ejemplo para cargar los reales.
+   - **Importar retenciones**: agrega las retenciones de un archivo de importación (.json) sin borrar lo que ya hay; no repite las que ya estaban.
    - **Guardar en GitHub** (recomendado): conecta un repositorio **privado** de tu cuenta (por ejemplo `sistema-retenciones-datos`) con una clave de acceso de GitHub (*fine-grained token* con permiso *Contents: Read and write* solo sobre ese repositorio). Desde ahí cada cambio se sube solo al archivo `datos/retenciones.json`, cada subida queda como una versión en el historial, y desde otra computadora se conecta el mismo repositorio para ver los mismos datos. La app no deja usar un repositorio público.
 
 Ojo: si se borran los datos de navegación del navegador (“cookies y datos de sitios”), se borran también los datos del sistema. Por eso es importante el respaldo.
@@ -58,6 +59,7 @@ Variables opcionales: `PORT` (puerto), `DB_PATH` (ruta de la base), `HOST` (por 
 
 - **Panel:** elegís el mes y ves la cantidad de órdenes, el total pactado, el total retenido y lo disponible (lo que falta descontar). Cada orden tiene barra de avance, etiqueta Judicial/Comercial y la marca “Completa” al llegar al tope.
 - **Retenciones recibidas:** carga (colaborador, entidad, período, importe, concepto, expediente/juzgado, beneficiario y quién la cargó) y listado con total, descontado y falta descontar. El beneficiario aparece y es obligatorio solo en las judiciales.
+- **Órdenes por porcentaje o regla:** si todavía no se sabe el importe (por ejemplo “25% Nominal”), se carga la regla y la orden queda “A definir” hasta que se ingresa el importe con **Definir importe**. Mientras tanto no se le pueden hacer descuentos.
 - **Descuentos:** elegís la persona y una de sus retenciones pendientes; la pantalla muestra el máximo que se puede descontar y no deja guardar si se pasa. Histórico con el saldo que quedó luego de cada descuento y el saldo pendiente actual.
 - **Reportes:** filtros por mes, búsqueda (nombre, CI, entidad, concepto, beneficiario), judicial/comercial, tipo de descuento y empresa donde se retuvo.
   - *Planilla* de todas las personas con retenciones.

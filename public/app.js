@@ -288,7 +288,7 @@ async function vistaPanel(_params, vigente) {
 
     ${await avisoRespaldo()}
     <section class="indicadores" aria-label="Resumen del mes">
-      <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}</div></div>
+      <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}${d.aDefinir ? ` · ${d.aDefinir} a definir` : ''}</div></div>
       <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">Suma de las retenciones del mes</div></div>
       <div class="indicador retenido"><div class="titulo">Total retenido</div><div class="valor">${moneda(d.retenido)}</div>
         <div class="avance-general" title="${avance}% retenido"><span style="width:${Math.min(avance, 100)}%"></span></div></div>
@@ -300,6 +300,7 @@ async function vistaPanel(_params, vigente) {
     ${d.retenciones.length ? `<div class="ordenes">${d.retenciones.map(tarjetaOrden).join('')}</div>`
       : `<div class="tarjeta vacio">No hay retenciones cargadas para este mes.</div>`}`;
 
+  conectarDefinirImporte($app, navegar);
   document.getElementById('panel-mes').addEventListener('change', (ev) => {
     if (!ev.target.value) return;
     estado.mes = ev.target.value;
@@ -308,6 +309,7 @@ async function vistaPanel(_params, vigente) {
 }
 
 function tarjetaOrden(r) {
+  if (r.a_definir) return tarjetaADefinir(r);
   const pct = Math.min(100, Math.round((r.descontado_real / r.importe_total) * 100));
   return `
     <article class="orden ${esc(r.tipo)} ${r.completa ? 'es-completa' : ''}">
@@ -321,11 +323,43 @@ function tarjetaOrden(r) {
       </div>
       <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Avance ${pct}%"><span style="width:${pct}%"></span></div>
       <div class="orden-cifras">
-        <span>Retenido <strong>${moneda(r.descontado_real)}</strong> de <strong>${moneda(r.importe_total)}</strong> (${pct}%)</span>
+        <span>Retenido <strong>${moneda(r.descontado_real)}</strong> de <strong>${moneda(r.importe_total)}</strong> (${pct}%)${r.regla ? ` · ${esc(r.regla)}` : ''}</span>
         ${r.completa ? '' : `<span class="falta">Falta <strong>${moneda(r.pendiente)}</strong></span>`}
       </div>
       ${r.completa ? '' : `<div><a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a></div>`}
     </article>`;
+}
+
+// Orden por porcentaje (u otra regla) a la que todavía le falta el importe.
+function tarjetaADefinir(r) {
+  return `
+    <article class="orden ${esc(r.tipo)}">
+      <div class="orden-cabecera">
+        <div class="orden-persona">${esc(r.colaborador)}
+          <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
+          ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
+          ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
+        </div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}<span class="etiqueta-tipo a-definir">A definir</span></div>
+      </div>
+      <div class="orden-cifras"><span>Regla: <strong>${esc(r.regla)}</strong> · importe a definir</span></div>
+      <div><button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button></div>
+    </article>`;
+}
+
+// Pide el importe de una retención "a definir" y lo guarda.
+function conectarDefinirImporte(raiz, alTerminar) {
+  raiz.querySelectorAll('[data-definir]').forEach((b) => b.addEventListener('click', async () => {
+    const texto = prompt(`Importe total de esta retención (regla: ${b.dataset.regla}).\nEj.: 4.500 o 4.500,50`);
+    if (texto == null) return;
+    const importe = leerImporte(texto);
+    if (!(importe > 0)) { aviso('Importe no válido. Ej.: 4.500 o 4.500,50'); return; }
+    try {
+      await api(`/api/retenciones/${b.dataset.definir}/importe`, { metodo: 'POST', cuerpo: { importe_total: importe } });
+      aviso('Importe guardado.');
+      alTerminar();
+    } catch (e) { if (e.validacion) aviso(e.message); else aviso(MENSAJE_FALLA); }
+  }));
 }
 
 // ── Retenciones recibidas ──
@@ -355,8 +389,10 @@ async function vistaRetenciones(_params, vigente) {
             <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
               <input type="month" id="r-periodo" value="${mesActual()}" required></div>
             <div class="campo"><label for="r-importe">Importe total <span class="obligatorio">*</span></label>
-              <input id="r-importe" inputmode="decimal" placeholder="2.000,00" autocomplete="off" required></div>
+              <input id="r-importe" inputmode="decimal" placeholder="2.000,00" autocomplete="off"></div>
           </div>
+          <div class="campo"><label for="r-regla">Regla (si todavía no sabés el importe)</label>
+            <input id="r-regla" maxlength="60" placeholder="Ej.: 25% Nominal, 3 BPC"><span class="ayuda">Si ponés la regla, podés dejar el importe vacío y definirlo después.</span></div>
           <div class="campo"><label for="r-concepto">Concepto</label><input id="r-concepto" maxlength="200" placeholder="Ej.: Pensión alimenticia, cuota crédito"></div>
           <div class="campo"><label for="r-exp">N° de expediente / Juzgado</label><input id="r-exp" maxlength="200"></div>
           <div class="campo" id="campo-benef" hidden><label for="r-benef">Beneficiario <span class="obligatorio">*</span></label>
@@ -391,6 +427,7 @@ async function vistaRetenciones(_params, vigente) {
     const qs = new URLSearchParams(Object.entries(filtrosRet).filter(([, v]) => v));
     const filas = await api(`/api/retenciones?${qs}`);
     lista.innerHTML = tablaRetenciones(filas);
+    conectarDefinirImporte(lista, recargar);
     lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('¿Eliminar esta retención? No tiene descuentos aplicados.')) return;
       try { await api(`/api/retenciones/${b.dataset.eliminar}`, { metodo: 'DELETE' }); aviso('Retención eliminada.'); recargar(); }
@@ -403,11 +440,14 @@ async function vistaRetenciones(_params, vigente) {
   const form = document.getElementById('form-ret');
   manejarEnvio(form, {
     enviar: async () => {
-      const importe = leerImporte(form.querySelector('#r-importe').value);
+      const textoImporte = form.querySelector('#r-importe').value.trim();
+      const importe = textoImporte ? leerImporte(textoImporte) : null;
+      const regla = form.querySelector('#r-regla').value.trim();
       if (!form.querySelector('#r-colab').value) throw errorLocal('Elegí el colaborador.');
       if (!selEnt.value) throw errorLocal('Elegí la entidad acreedora.');
       if (!form.querySelector('#r-periodo').value) throw errorLocal('Elegí el período.');
-      if (!(importe > 0)) throw errorLocal('Ingresá un importe total válido, por ejemplo 2.000 o 2.000,50.');
+      if (importe == null && !regla) throw errorLocal('Ingresá el importe total, o la regla (por ejemplo "25% Nominal") si todavía no se sabe el importe.');
+      if (importe != null && !(importe > 0)) throw errorLocal('Ingresá un importe total válido, por ejemplo 2.000 o 2.000,50.');
       if (esJudicial() && !form.querySelector('#r-benef').value.trim()) throw errorLocal('El beneficiario es obligatorio en las retenciones judiciales.');
       if (!form.querySelector('#r-cargo').value.trim()) throw errorLocal('Indicá quién carga la retención.');
       await api('/api/retenciones', { metodo: 'POST', cuerpo: {
@@ -415,6 +455,7 @@ async function vistaRetenciones(_params, vigente) {
         entidad_id: Number(selEnt.value),
         periodo: form.querySelector('#r-periodo').value,
         importe_total: importe,
+        regla,
         concepto: form.querySelector('#r-concepto').value,
         expediente: form.querySelector('#r-exp').value,
         beneficiario: esJudicial() ? form.querySelector('#r-benef').value : null,
@@ -424,7 +465,7 @@ async function vistaRetenciones(_params, vigente) {
     },
     alTerminar: async () => {
       aviso('Retención guardada.');
-      ['#r-importe', '#r-concepto', '#r-exp', '#r-benef'].forEach((s) => { form.querySelector(s).value = ''; });
+      ['#r-importe', '#r-regla', '#r-concepto', '#r-exp', '#r-benef'].forEach((s) => { form.querySelector(s).value = ''; });
       form.querySelector('#r-colab').focus();
       recargar();
     },
@@ -433,7 +474,7 @@ async function vistaRetenciones(_params, vigente) {
 
 function tablaRetenciones(filas) {
   if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
-  const suma = (k) => filas.reduce((a, x) => a + x[k], 0);
+  const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
   return `<div class="tabla-contenedor"><table>
     <thead><tr><th>Período</th><th>Colaborador</th><th>Entidad</th><th>Concepto / Expediente</th><th>Beneficiario</th>
       <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Cargó</th><th></th></tr></thead>
@@ -443,16 +484,26 @@ function tablaRetenciones(filas) {
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
       <td>${esc(r.concepto) || '—'}${r.expediente ? `<span class="sec">${esc(r.expediente)}</span>` : ''}</td>
       <td>${r.tipo === 'judicial' ? esc(r.beneficiario) : '<span class="sec">—</span>'}</td>
-      <td class="num">${moneda(r.importe_total)}</td>
+      <td class="num">${celdaTotal(r)}</td>
       <td class="num">${moneda(r.descontado)}</td>
-      <td class="num">${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(r.pendiente)}</td>
+      <td class="num">${celdaFalta(r)}</td>
       <td>${esc(r.cargado_por)}<span class="sec">${fecha(r.creado_en)}</span></td>
       <td>${r.cantidad_descuentos === 0 ? `<button class="boton chico peligro" type="button" data-eliminar="${r.id}">Eliminar</button>`
-        : (r.completa ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Descontar</a>`)}</td>
+        : (r.completa || r.a_definir ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Descontar</a>`)}
+        ${r.a_definir ? `<button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button>` : ''}</td>
     </tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="5">Total (${filas.length})</td><td class="num">${moneda(suma('importe_total'))}</td>
       <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td colspan="2"></td></tr></tfoot>
   </table></div>`;
+}
+
+function celdaTotal(r) {
+  if (r.a_definir) return `<span class="etiqueta-tipo a-definir">A definir</span><span class="sec">${esc(r.regla)}</span>`;
+  return `${moneda(r.importe_total)}${r.regla ? `<span class="sec">${esc(r.regla)}</span>` : ''}`;
+}
+function celdaFalta(r) {
+  if (r.a_definir) return '<span class="sec">—</span>';
+  return r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(r.pendiente);
 }
 
 // Vincula inputs de filtro a un objeto de estado y recarga con una pequeña espera al escribir.
@@ -752,7 +803,7 @@ async function vistaReportes(_params, vigente) {
 
 function tablaPlanilla(filas) {
   if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
-  const suma = (k) => filas.reduce((a, x) => a + x[k], 0);
+  const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
   return `<div class="tabla-contenedor"><table>
     <thead><tr><th>Período</th><th>CI</th><th>Colaborador</th><th>Entidad</th><th>Concepto</th><th>Expediente</th><th>Beneficiario</th>
       <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Retenido en</th></tr></thead>
@@ -760,8 +811,8 @@ function tablaPlanilla(filas) {
       <td>${esc(mesCorto(r.periodo))}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
       <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}</td>
-      <td class="num">${moneda(r.importe_total)}</td><td class="num">${moneda(r.descontado)}</td>
-      <td class="num">${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(r.pendiente)}</td>
+      <td class="num">${celdaTotal(r)}</td><td class="num">${moneda(r.descontado)}</td>
+      <td class="num">${celdaFalta(r)}</td>
       <td>${esc(r.empresas) || '<span class="sec">—</span>'}</td></tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="7">Total (${filas.length} retenciones)</td><td class="num">${moneda(suma('importe_total'))}</td>
       <td class="num">${moneda(suma('descontado'))}</td><td class="num">${moneda(suma('pendiente'))}</td><td></td></tr></tfoot>
@@ -952,6 +1003,14 @@ async function vistaRespaldo(_params, vigente) {
         <div id="zona-recuperar" style="margin-top:12px"></div>
       </section>
       <section class="tarjeta">
+        <h2>Importar retenciones</h2>
+        <p>Agrega las retenciones de un archivo de importación (.json) preparado a partir de tu planilla. <strong>No borra nada</strong>: crea los colaboradores y entidades que falten, y si una retención ya estaba cargada no la repite.</p>
+        <div class="campo"><label for="archivo-importar">Archivo de importación (.json)</label><input type="file" id="archivo-importar" accept=".json,application/json"></div>
+        <div id="zona-importar" style="margin-top:12px"></div>
+      </section>
+    </div>
+    <div class="columnas" style="margin-top:20px">
+      <section class="tarjeta">
         <h2>Empezar de cero</h2>
         <p>Borra <strong>todos</strong> los datos (incluidos los de ejemplo) para empezar a cargar los reales. ${info.ejemplos ? 'Ahora mismo estás viendo datos de ejemplo.' : 'Antes conviene descargar un respaldo.'}</p>
         <div class="acciones"><button class="boton peligro" type="button" id="borrar-todo">Borrar todo y empezar de cero</button></div>
@@ -989,6 +1048,25 @@ async function vistaRespaldo(_params, vigente) {
       ev.target.value = '';
       if (e instanceof window.backendLocal.ErrorValidacion) zonaRec.innerHTML = `<div class="mensaje error">${esc(e.message)} No se cambió nada.</div>`;
       else { console.error(e); zonaRec.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div>`; }
+    }
+  });
+
+  const zonaImp = document.getElementById('zona-importar');
+  document.getElementById('archivo-importar').addEventListener('change', async (ev) => {
+    const archivo = ev.target.files[0];
+    if (!archivo) return;
+    if (info.ejemplos && !confirm('Ahora hay datos de ejemplo. Al importar se quitan y quedan solo los datos reales del archivo. ¿Continuar?')) { ev.target.value = ''; return; }
+    zonaImp.innerHTML = '<p class="nota">Importando…</p>';
+    try {
+      let datos;
+      try { datos = JSON.parse(await archivo.text()); } catch { throw new window.backendLocal.ErrorValidacion('El archivo no es una importación de retenciones.'); }
+      const r = await api('/api/importar', { metodo: 'POST', cuerpo: datos });
+      aviso(`Importación lista: ${r.retenciones} retenciones nuevas${r.repetidas ? ` (${r.repetidas} ya estaban cargadas)` : ''}.`);
+      navegar();
+    } catch (e) {
+      ev.target.value = '';
+      const msg = e instanceof window.backendLocal.ErrorValidacion || e.validacion ? e.message : MENSAJE_FALLA;
+      zonaImp.innerHTML = `<div class="mensaje error">${esc(msg)} No se cambió nada.</div>`;
     }
   });
 

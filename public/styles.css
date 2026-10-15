@@ -130,6 +130,7 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 .etiqueta-tipo.comercial { background: var(--ambar-claro); color: var(--ambar-oscuro); }
 .etiqueta-tipo.completa { background: var(--verde); color: #fff; }
 .etiqueta-tipo.pendiente { background: #eef2f1; color: var(--texto-suave); }
+.etiqueta-tipo.a-definir { background: var(--ambar-claro); color: var(--ambar-oscuro); border: 1px dashed var(--ambar-oscuro); }
 
 /* ── Panel ── */
 .panel-cabecera {
