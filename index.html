@@ -139,6 +139,7 @@ tr.subtotal td { background: #fbf8f0; font-weight: 650; }
 .etiqueta-tipo.completa { background: var(--verde); color: #fff; }
 .etiqueta-tipo.pendiente { background: #eef2f1; color: var(--texto-suave); }
 .etiqueta-tipo.a-definir { background: var(--ambar-claro); color: var(--ambar-oscuro); border: 1px dashed var(--ambar-oscuro); }
+.etiqueta-tipo.arrastre { background: #fde8e4; color: #a33a24; }
 
 /* ── Panel ── */
 .panel-cabecera {
@@ -775,7 +776,8 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
     const filtraDescuentos = Boolean(tdesc || empresaId);
 
     let filas = estado.retenciones
-      .filter((r) => !per || r.periodo === per)
+      // Con con_saldo, también entran las de meses anteriores que todavía tienen saldo (pasan al mes siguiente hasta quedar en 0).
+      .filter((r) => !per || r.periodo === per || (f.con_saldo && r.periodo < per))
       .filter((r) => !(f.tipo === 'judicial' || f.tipo === 'comercial') || ent.get(r.entidad_id).tipo === f.tipo)
       .filter((r) => !f.colaborador_id || r.colaborador_id === Number(f.colaborador_id))
       .map((r) => {
@@ -796,9 +798,11 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
           a_definir: r.importe_total == null,
           pendiente: r.importe_total == null ? null : r.importe_total - real,
           completa: r.importe_total != null && real >= r.importe_total,
+          arrastre: Boolean(per && r.periodo < per),
           _hayFiltrados: fil.length > 0,
         };
       })
+      .filter((x) => !x.arrastre || x.a_definir || x.pendiente > 0)
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
@@ -836,10 +840,14 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
   }
 
   function panel(mes) {
-    const filas = listarRetenciones({ periodo: periodo(mes) });
-    const pactado = filas.reduce((a, x) => a + (x.importe_total || 0), 0);
-    const retenido = filas.reduce((a, x) => a + x.descontado_real, 0);
-    return { periodo: mes, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - retenido, retenciones: filas };
+    const filas = listarRetenciones({ periodo: periodo(mes), con_saldo: true });
+    // De lo que viene de meses anteriores cuenta solo el saldo con que entró a este mes.
+    const antesDelMes = (x) => estado.descuentos.filter((d) => d.retencion_id === x.id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0);
+    const previo = new Map(filas.filter((x) => x.arrastre).map((x) => [x.id, antesDelMes(x)]));
+    const saldoAnterior = filas.filter((x) => x.arrastre).reduce((a, x) => a + (x.importe_total || 0) - previo.get(x.id), 0);
+    const pactado = filas.reduce((a, x) => a + (x.importe_total || 0) - (previo.get(x.id) || 0), 0);
+    const retenido = filas.reduce((a, x) => a + x.descontado_real - (previo.get(x.id) || 0), 0);
+    return { periodo: mes, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: filas.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - retenido, retenciones: filas };
   }
 
   function reporteAbonar(f) {
@@ -1219,7 +1227,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
   }
 
   function armarPlanilla(f) {
-    const filas = listarRetenciones(f);
+    const filas = listarRetenciones({ ...f, con_saldo: true });
     const columnas = [
       { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
       { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
@@ -1265,7 +1273,7 @@ body.bloqueado .menu, body.bloqueado .menu-boton, body.bloqueado .estado-nube, b
       if (ruta === '/api/retenciones') return listarRetenciones(f);
       if (ruta === '/api/descuentos') return listarDescuentos(f);
       if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
-      if (ruta === '/api/reportes/planilla') return listarRetenciones(f);
+      if (ruta === '/api/reportes/planilla') return listarRetenciones({ ...f, con_saldo: true });
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
       if (ruta === '/api/datos') return infoDatos();
     }
@@ -1603,7 +1611,7 @@ async function vistaPanel(_params, vigente) {
     ${await avisoRespaldo()}
     <section class="indicadores" aria-label="Resumen del mes">
       <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}${d.aDefinir ? ` · ${d.aDefinir} a definir` : ''}</div></div>
-      <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">Suma de las retenciones del mes</div></div>
+      <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">${d.arrastradas ? `Incluye ${moneda(d.saldoAnterior)} que vienen de meses anteriores` : 'Suma de las retenciones del mes'}</div></div>
       <div class="indicador retenido"><div class="titulo">Total retenido</div><div class="valor">${moneda(d.retenido)}</div>
         <div class="avance-general" title="${avance}% retenido"><span style="width:${Math.min(avance, 100)}%"></span></div></div>
       <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar</div></div>
@@ -1633,7 +1641,7 @@ function tarjetaOrden(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
       </div>
       <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Avance ${pct}%"><span style="width:${pct}%"></span></div>
       <div class="orden-cifras">
@@ -1654,7 +1662,7 @@ function tarjetaADefinir(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}<span class="etiqueta-tipo a-definir">A definir</span></div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
       </div>
       <div class="orden-cifras"><span>Regla: <strong>${esc(r.regla)}</strong> · importe a definir</span></div>
       <div><button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button></div>
@@ -2122,7 +2130,7 @@ function tablaPlanilla(filas) {
     <thead><tr><th>Período</th><th>CI</th><th>Colaborador</th><th>Entidad</th><th>Concepto</th><th>Expediente</th><th>Beneficiario</th>
       <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Retenido en</th></tr></thead>
     <tbody>${filas.map((r) => `<tr>
-      <td>${esc(mesCorto(r.periodo))}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
+      <td>${esc(mesCorto(r.periodo))}${r.arrastre ? '<span class="sec">saldo que pasa</span>' : ''}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
       <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}</td>
       <td class="num">${celdaTotal(r)}</td><td class="num">${moneda(r.descontado)}</td>

@@ -289,7 +289,7 @@ async function vistaPanel(_params, vigente) {
     ${await avisoRespaldo()}
     <section class="indicadores" aria-label="Resumen del mes">
       <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}${d.aDefinir ? ` · ${d.aDefinir} a definir` : ''}</div></div>
-      <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">Suma de las retenciones del mes</div></div>
+      <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">${d.arrastradas ? `Incluye ${moneda(d.saldoAnterior)} que vienen de meses anteriores` : 'Suma de las retenciones del mes'}</div></div>
       <div class="indicador retenido"><div class="titulo">Total retenido</div><div class="valor">${moneda(d.retenido)}</div>
         <div class="avance-general" title="${avance}% retenido"><span style="width:${Math.min(avance, 100)}%"></span></div></div>
       <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar</div></div>
@@ -319,7 +319,7 @@ function tarjetaOrden(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
       </div>
       <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Avance ${pct}%"><span style="width:${pct}%"></span></div>
       <div class="orden-cifras">
@@ -340,7 +340,7 @@ function tarjetaADefinir(r) {
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${r.beneficiario ? `<span class="sec">Beneficiario: ${esc(r.beneficiario)}</span>` : ''}
         </div>
-        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}<span class="etiqueta-tipo a-definir">A definir</span></div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
       </div>
       <div class="orden-cifras"><span>Regla: <strong>${esc(r.regla)}</strong> · importe a definir</span></div>
       <div><button class="boton chico ambar" type="button" data-definir="${r.id}" data-regla="${esc(r.regla)}">Definir importe</button></div>
@@ -808,7 +808,7 @@ function tablaPlanilla(filas) {
     <thead><tr><th>Período</th><th>CI</th><th>Colaborador</th><th>Entidad</th><th>Concepto</th><th>Expediente</th><th>Beneficiario</th>
       <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Retenido en</th></tr></thead>
     <tbody>${filas.map((r) => `<tr>
-      <td>${esc(mesCorto(r.periodo))}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
+      <td>${esc(mesCorto(r.periodo))}${r.arrastre ? '<span class="sec">saldo que pasa</span>' : ''}</td><td>${esc(cedula(r.cedula))}</td><td>${esc(r.colaborador)}</td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}</span></td>
       <td>${esc(r.concepto)}</td><td>${esc(r.expediente)}</td><td>${esc(r.beneficiario || '')}</td>
       <td class="num">${celdaTotal(r)}</td><td class="num">${moneda(r.descontado)}</td>

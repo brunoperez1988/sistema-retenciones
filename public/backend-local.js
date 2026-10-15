@@ -516,7 +516,8 @@
     const filtraDescuentos = Boolean(tdesc || empresaId);
 
     let filas = estado.retenciones
-      .filter((r) => !per || r.periodo === per)
+      // Con con_saldo, también entran las de meses anteriores que todavía tienen saldo (pasan al mes siguiente hasta quedar en 0).
+      .filter((r) => !per || r.periodo === per || (f.con_saldo && r.periodo < per))
       .filter((r) => !(f.tipo === 'judicial' || f.tipo === 'comercial') || ent.get(r.entidad_id).tipo === f.tipo)
       .filter((r) => !f.colaborador_id || r.colaborador_id === Number(f.colaborador_id))
       .map((r) => {
@@ -537,9 +538,11 @@
           a_definir: r.importe_total == null,
           pendiente: r.importe_total == null ? null : r.importe_total - real,
           completa: r.importe_total != null && real >= r.importe_total,
+          arrastre: Boolean(per && r.periodo < per),
           _hayFiltrados: fil.length > 0,
         };
       })
+      .filter((x) => !x.arrastre || x.a_definir || x.pendiente > 0)
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
@@ -577,10 +580,14 @@
   }
 
   function panel(mes) {
-    const filas = listarRetenciones({ periodo: periodo(mes) });
-    const pactado = filas.reduce((a, x) => a + (x.importe_total || 0), 0);
-    const retenido = filas.reduce((a, x) => a + x.descontado_real, 0);
-    return { periodo: mes, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - retenido, retenciones: filas };
+    const filas = listarRetenciones({ periodo: periodo(mes), con_saldo: true });
+    // De lo que viene de meses anteriores cuenta solo el saldo con que entró a este mes.
+    const antesDelMes = (x) => estado.descuentos.filter((d) => d.retencion_id === x.id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0);
+    const previo = new Map(filas.filter((x) => x.arrastre).map((x) => [x.id, antesDelMes(x)]));
+    const saldoAnterior = filas.filter((x) => x.arrastre).reduce((a, x) => a + (x.importe_total || 0) - previo.get(x.id), 0);
+    const pactado = filas.reduce((a, x) => a + (x.importe_total || 0) - (previo.get(x.id) || 0), 0);
+    const retenido = filas.reduce((a, x) => a + x.descontado_real - (previo.get(x.id) || 0), 0);
+    return { periodo: mes, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: filas.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - retenido, retenciones: filas };
   }
 
   function reporteAbonar(f) {
@@ -960,7 +967,7 @@
   }
 
   function armarPlanilla(f) {
-    const filas = listarRetenciones(f);
+    const filas = listarRetenciones({ ...f, con_saldo: true });
     const columnas = [
       { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
       { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
@@ -1006,7 +1013,7 @@
       if (ruta === '/api/retenciones') return listarRetenciones(f);
       if (ruta === '/api/descuentos') return listarDescuentos(f);
       if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
-      if (ruta === '/api/reportes/planilla') return listarRetenciones(f);
+      if (ruta === '/api/reportes/planilla') return listarRetenciones({ ...f, con_saldo: true });
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
       if (ruta === '/api/datos') return infoDatos();
     }
