@@ -793,7 +793,8 @@
   // Agrega retenciones desde un archivo de importación (no borra nada de lo que ya hay).
   // Crea los colaboradores y entidades que falten; no repite una retención ya cargada.
   function importarRetenciones(datos) {
-    if (!datos || datos.tipo !== 'importacion-retenciones' || !Array.isArray(datos.retenciones) || (datos.empresas && !Array.isArray(datos.empresas))) {
+    if (!datos || datos.tipo !== 'importacion-retenciones' || !Array.isArray(datos.retenciones || datos.colaboradores)
+      || (datos.retenciones && !Array.isArray(datos.retenciones)) || (datos.empresas && !Array.isArray(datos.empresas)) || (datos.colaboradores && !Array.isArray(datos.colaboradores))) {
       throw new ErrorValidacion('El archivo no es una importación de retenciones.');
     }
     return modificar((e) => {
@@ -809,10 +810,18 @@
         res.empresas += 1;
       }
       const colPorCi = new Map(e.colaboradores.map((c) => [c.cedula, c]));
+      // Colaboradores sueltos (listado de funcionarios): se agregan los que falten; los ya cargados no se tocan.
+      for (const x of datos.colaboradores || []) {
+        const ci = String(x.cedula || '').replace(/\D/g, '');
+        if (!/^\d{6,8}$/.test(ci)) throw new ErrorValidacion(`Cédula inválida en la importación: ${x.cedula}`);
+        if (colPorCi.has(ci)) { res.colaboradoresYa = (res.colaboradoresYa || 0) + 1; continue; }
+        const col = { id: e.sig++, cedula: ci, nombre: texto(x.nombre, 'nombre') };
+        e.colaboradores.push(col); colPorCi.set(ci, col); res.colaboradores += 1;
+      }
       const entPorNombre = new Map(e.entidades.map((x) => [normalizar(x.nombre), x]));
       const claveRet = (r) => [r.colaborador_id, r.entidad_id, r.periodo, r.importe_total ?? '', reglaCanonica(r.regla, { exigirBase: false }), r.concepto || ''].join('|');
       const existentes = new Map(e.retenciones.map((r) => [claveRet(r), r]));
-      for (const x of datos.retenciones) {
+      for (const x of datos.retenciones || []) {
         const ci = String(x.cedula || '').replace(/\D/g, '');
         if (!/^\d{6,8}$/.test(ci)) throw new ErrorValidacion(`Cédula inválida en la importación: ${x.cedula}`);
         let col = colPorCi.get(ci);
