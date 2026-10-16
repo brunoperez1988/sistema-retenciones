@@ -369,7 +369,7 @@
     if (!info.private) throw new ErrorValidacion('Ese repositorio es PÚBLICO: cualquiera vería las cédulas y los juicios. Usá un repositorio privado.');
     if (info.permissions && info.permissions.push === false) throw new ErrorValidacion('La clave no tiene permiso para escribir en ese repositorio.');
     const remoto = await leerNube(c).catch((e) => { throw new ErrorValidacion(e.message); });
-    if (remoto && modo === undefined) return { pregunta: true, retenciones: (remoto.datos.retenciones || []).length, descuentos: (remoto.datos.descuentos || []).length, modificado: remoto.datos.modificado || '' };
+    if (remoto && modo === undefined) return { pregunta: true, empresas: (remoto.datos.empresas || []).length, retenciones: (remoto.datos.retenciones || []).length, descuentos: (remoto.datos.descuentos || []).length, modificado: remoto.datos.modificado || '' };
     await guardarConfigNube(c);
     shaNube = remoto ? remoto.sha : null;
     if (remoto && modo === 'traer') {

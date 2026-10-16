@@ -1423,10 +1423,13 @@ function conectarSeccionGithub(n) {
       const r = await window.backendLocal.conectarNube(form.querySelector('#nube-repo').value, form.querySelector('#nube-token').value, modo);
       if (r.pregunta) {
         zona.innerHTML = `<div class="falla-en-linea" style="display:block">
-          <p style="margin:0 0 10px">En ese repositorio ya hay datos guardados (${r.retenciones} retenciones y ${r.descuentos} descuentos${r.modificado ? `, último cambio ${fecha(r.modificado)}` : ''}). ¿Cuáles querés usar?</p>
+          <p style="margin:0 0 10px">En ese repositorio ya hay datos guardados (${r.empresas} empresas, ${r.retenciones} retenciones y ${r.descuentos} descuentos${r.modificado ? `, último cambio ${fecha(r.modificado)}` : ''}). ¿Cuáles querés usar?</p>
           <div class="acciones"><button class="boton" type="button" data-modo="traer">Usar los de GitHub</button>
             <button class="boton secundario" type="button" data-modo="subir">Reemplazarlos por los de este navegador</button></div></div>`;
-        zona.querySelectorAll('[data-modo]').forEach((b) => b.addEventListener('click', () => conectar(b.dataset.modo)));
+        zona.querySelectorAll('[data-modo]').forEach((b) => b.addEventListener('click', () => {
+          if (b.dataset.modo === 'subir' && !confirm('Esto BORRA los datos que hay en GitHub y los reemplaza por los de este navegador. ¿Seguro?')) return;
+          conectar(b.dataset.modo);
+        }));
         return;
       }
       aviso('Listo: los datos se guardan en GitHub.');
@@ -1461,6 +1464,9 @@ function pantallaAcceso(c) {
         <div class="campo"><label for="ac-usuario">Usuario</label><input id="ac-usuario" autocomplete="username" value="${esc(c.usuario)}" autocapitalize="off" spellcheck="false"></div>
         <div class="campo"><label for="ac-clave">Contraseña</label><input id="ac-clave" type="password" autocomplete="${crear ? 'new-password' : 'current-password'}"></div>
         ${crear ? '<div class="campo"><label for="ac-clave2">Repetí la contraseña</label><input id="ac-clave2" type="password" autocomplete="new-password"><span class="ayuda">Mínimo 8 caracteres.</span></div>' : ''}
+        ${crear ? `<details class="traer-github"${c.usuario ? '' : ' open'}><summary>¿Ya usás el sistema en otra computadora? Traé tus datos de GitHub</summary>
+          <div class="campo"><label for="ac-token">Clave de GitHub (token)</label><input id="ac-token" type="password" autocomplete="off" placeholder="github_pat_…"><span class="ayuda">Es la misma clave que pegaste en Respaldo → Guardar en GitHub. Si no la tenés, en <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">GitHub</a> tocá la clave “Retenciones” y luego <strong>Regenerate token</strong>. Dejalo vacío si empezás de cero.</span></div>
+        </details>` : ''}
         <div class="zona-mensaje"></div>
         <div class="acciones"><button class="boton" type="submit">${crear ? 'Crear usuario y entrar' : 'Ingresar'}</button></div>
       </form>
@@ -1477,8 +1483,19 @@ function pantallaAcceso(c) {
     try {
       const u = form.querySelector('#ac-usuario').value;
       const k = form.querySelector('#ac-clave').value;
-      if (crear) await window.backendLocal.crearCuenta(u, k, form.querySelector('#ac-clave2').value);
-      else await window.backendLocal.ingresar(u, k);
+      if (crear) {
+        const token = form.querySelector('#ac-token').value.trim();
+        await window.backendLocal.crearCuenta(u, k, form.querySelector('#ac-clave2').value);
+        if (token) {
+          zona.innerHTML = '<p class="nota">Trayendo tus datos de GitHub…</p>';
+          try {
+            await window.backendLocal.conectarNube('brunoperez1988/sistema-retenciones-datos', token, 'traer');
+            aviso('Listo: se trajeron tus datos de GitHub y se siguen guardando ahí.');
+          } catch (e2) {
+            aviso(`El usuario se creó, pero no se pudieron traer los datos de GitHub: ${String(e2.message || 'revisá la clave').replace(/\.$/, '')}. Probá de nuevo en Respaldo → Guardar en GitHub.`);
+          }
+        }
+      } else await window.backendLocal.ingresar(u, k);
       navegar();
     } catch (e) {
       zona.innerHTML = `<div class="mensaje error" role="alert">${esc(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA)}</div>`;
