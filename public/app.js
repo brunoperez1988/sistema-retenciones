@@ -578,6 +578,49 @@ function conectarDetalle(raiz, filas, alTerminar) {
 
 const filtrosRet = { periodo: '', tipo: '', q: '' };
 
+// Buscador de colaboradores: se escribe la cédula o parte del nombre y se elige de la lista.
+const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores) {
+  const todos = colaboradores.map((c) => ({ ...c, clave: `${sinAcentos(c.nombre)} ${cedula(c.cedula)}` }));
+  let opciones = [];
+  let activa = -1;
+  const cerrar = () => { lista.hidden = true; entrada.setAttribute('aria-expanded', 'false'); activa = -1; };
+  const elegir = (c) => { oculto.value = c.id; entrada.value = `${c.nombre} · CI ${cedula(c.cedula)}`; cerrar(); };
+  const marcar = () => lista.querySelectorAll('li[data-i]').forEach((li) => {
+    const si = Number(li.dataset.i) === activa;
+    li.classList.toggle('activa', si); li.setAttribute('aria-selected', si);
+    if (si) li.scrollIntoView({ block: 'nearest' });
+  });
+  const mostrar = () => {
+    const partes = sinAcentos(entrada.value).replace(/[.\-]/g, '').split(/\s+/).filter(Boolean);
+    if (!partes.length) { cerrar(); return; }
+    const hallados = todos.filter((c) => partes.every((p) => c.clave.includes(p)));
+    opciones = hallados.slice(0, 30);
+    activa = opciones.length === 1 ? 0 : -1;
+    lista.innerHTML = opciones.length
+      ? opciones.map((c, i) => `<li role="option" data-i="${i}">${esc(c.nombre)}<span class="sec">CI ${esc(cedula(c.cedula))}</span></li>`).join('')
+        + (hallados.length > opciones.length ? `<li class="sin-resultado">Hay ${hallados.length - opciones.length} más: escribí un poco más.</li>` : '')
+      : '<li class="sin-resultado">No encontré ningún colaborador con eso. Si es nuevo, cargalo en <a href="#/colaboradores">Colaboradores</a>.</li>';
+    lista.hidden = false; entrada.setAttribute('aria-expanded', 'true'); marcar();
+  };
+  entrada.addEventListener('input', () => { oculto.value = ''; mostrar(); });
+  entrada.addEventListener('focus', () => { if (!oculto.value && entrada.value) mostrar(); });
+  entrada.addEventListener('keydown', (ev) => {
+    if (lista.hidden) { if (ev.key === 'ArrowDown') mostrar(); return; }
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); activa = Math.min(activa + 1, opciones.length - 1); marcar(); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); activa = Math.max(activa - 1, 0); marcar(); }
+    else if (ev.key === 'Enter') { if (opciones[activa]) { ev.preventDefault(); elegir(opciones[activa]); } }
+    else if (ev.key === 'Escape') cerrar();
+  });
+  // mousedown para que elija antes de que el campo pierda el foco
+  lista.addEventListener('mousedown', (ev) => {
+    const li = ev.target.closest('li[data-i]');
+    if (li) { ev.preventDefault(); elegir(opciones[Number(li.dataset.i)]); }
+  });
+  entrada.addEventListener('blur', () => setTimeout(cerrar, 150));
+  return { limpiar: () => { oculto.value = ''; entrada.value = ''; cerrar(); } };
+}
+
 async function vistaRetenciones(_params, vigente) {
   const cat = await api('/api/catalogos');
   if (!vigente()) return;
@@ -589,10 +632,10 @@ async function vistaRetenciones(_params, vigente) {
         ${!cat.colaboradores.length || !cat.entidades.length
           ? `<p class="mensaje error">Primero cargá ${!cat.colaboradores.length ? '<a href="#/colaboradores">colaboradores</a>' : ''}${!cat.colaboradores.length && !cat.entidades.length ? ' y ' : ''}${!cat.entidades.length ? '<a href="#/entidades">entidades</a>' : ''}.</p>` : ''}
         <form class="formulario form-ancho" id="form-ret" novalidate>
-          <div class="campo"><label for="r-colab">Colaborador <span class="obligatorio">*</span></label>
-            <select id="r-colab" required><option value="">Elegí…</option>
-              ${cat.colaboradores.map((c) => `<option value="${c.id}">${esc(c.nombre)} · CI ${esc(cedula(c.cedula))}</option>`).join('')}
-            </select></div>
+          <div class="campo buscador"><label for="r-colab-q">Colaborador <span class="obligatorio">*</span></label>
+            <input id="r-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="r-colab-lista">
+            <input type="hidden" id="r-colab">
+            <ul class="sugerencias" id="r-colab-lista" role="listbox" hidden></ul></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
               ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)}${normalizarTxt(e.nombre) === normalizarTxt(tipoTxt[e.tipo]) ? '' : ` (${tipoTxt[e.tipo]})`}</option>`).join('')}
@@ -646,6 +689,7 @@ async function vistaRetenciones(_params, vigente) {
     </div>`;
 
   document.getElementById('f-tipo').value = filtrosRet.tipo;
+  const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores);
   const selEnt = document.getElementById('r-ent');
   const chkMensual = document.getElementById('r-mensual');
   const campoBenef = document.getElementById('campo-benef');
@@ -705,7 +749,7 @@ async function vistaRetenciones(_params, vigente) {
       if (calculo === 'porcentaje' && !base) throw errorLocal('Indicá si el porcentaje es sobre el sueldo nominal o el líquido.');
       const regla = calculo === 'porcentaje' ? `${String(pct).replace('.', ',')}% ${base}` : calculo === 'otra' ? form.querySelector('#r-regla').value.trim() : '';
       if (calculo === 'otra' && !regla) throw errorLocal('Escribí la regla, por ejemplo "1,5 BPC".');
-      if (!form.querySelector('#r-colab').value) throw errorLocal('Elegí el colaborador.');
+      if (!form.querySelector('#r-colab').value) throw errorLocal('Buscá el colaborador por cédula o nombre y elegilo de la lista.');
       if (!selEnt.value) throw errorLocal('Elegí la entidad acreedora.');
       if (!form.querySelector('#r-periodo').value) throw errorLocal('Elegí el período.');
       if (importe == null && !regla) throw errorLocal('Ingresá el importe total.');
@@ -732,7 +776,8 @@ async function vistaRetenciones(_params, vigente) {
       ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-benef-doc', '#r-benef-cobro', '#r-benef-cuenta', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
       selCalculo.value = 'fijo'; mostrarCalculo();
       chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
-      form.querySelector('#r-colab').focus();
+      buscadorColab.limpiar();
+      form.querySelector('#r-colab-q').focus();
       recargar();
     },
   });
