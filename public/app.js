@@ -594,7 +594,7 @@ async function vistaRetenciones(_params, vigente) {
             </select></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
-              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}">${esc(e.nombre)} (${tipoTxt[e.tipo]})</option>`).join('')}
+              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)} (${tipoTxt[e.tipo]})</option>`).join('')}
             </select></div>
           <div class="fila">
             <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
@@ -613,7 +613,8 @@ async function vistaRetenciones(_params, vigente) {
           <div class="campo"><label for="r-importe">Importe total <span class="obligatorio" id="importe-obligatorio">*</span></label>
             <input id="r-importe" inputmode="decimal" placeholder="2.000,00" autocomplete="off">
             <span class="ayuda" id="importe-ayuda" hidden>Si todavía no sabés el importe, dejalo vacío: la retención queda “a definir”.</span></div>
-          <div class="fila">
+          <p class="nota" id="nota-mes" hidden></p>
+          <div class="fila" id="fila-mensual" hidden>
             <div class="campo"><label class="check"><input type="checkbox" id="r-mensual"> Se repite todos los meses</label>
               <span class="ayuda">Se crea sola cada mes hasta que le des de baja. Si es por porcentaje, se crea cada mes con el mismo porcentaje.</span></div>
             <div class="campo" id="campo-hasta" hidden><label for="r-hasta">Hasta (opcional)</label><input type="month" id="r-hasta"></div>
@@ -645,9 +646,20 @@ async function vistaRetenciones(_params, vigente) {
 
   document.getElementById('f-tipo').value = filtrosRet.tipo;
   const selEnt = document.getElementById('r-ent');
+  const chkMensual = document.getElementById('r-mensual');
   const campoBenef = document.getElementById('campo-benef');
   const esJudicial = () => selEnt.selectedOptions[0]?.dataset.tipo === 'judicial';
-  selEnt.addEventListener('change', () => { campoBenef.hidden = !esJudicial(); });
+  selEnt.addEventListener('change', () => {
+    const op = selEnt.selectedOptions[0];
+    campoBenef.hidden = !esJudicial();
+    document.getElementById('fila-mensual').hidden = !esJudicial();
+    if (!esJudicial()) { chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true; }
+    const nota = document.getElementById('nota-mes');
+    nota.hidden = !op?.value || esJudicial();
+    nota.textContent = op?.dataset.pasa === '1'
+      ? 'Lo que no se llegue a descontar este mes pasa solo al mes siguiente, hasta quedar en 0.'
+      : 'Las retenciones comerciales se cargan cada mes: no se repiten ni pasan el saldo al mes siguiente.';
+  });
   const selCalculo = document.getElementById('r-calculo');
   const mostrarCalculo = () => {
     const c = selCalculo.value;
@@ -657,7 +669,6 @@ async function vistaRetenciones(_params, vigente) {
     document.getElementById('importe-ayuda').hidden = c === 'fijo';
   };
   selCalculo.addEventListener('change', mostrarCalculo);
-  const chkMensual = document.getElementById('r-mensual');
   chkMensual.addEventListener('change', () => { document.getElementById('campo-hasta').hidden = !chkMensual.checked; });
 
   const lista = document.getElementById('lista-ret');

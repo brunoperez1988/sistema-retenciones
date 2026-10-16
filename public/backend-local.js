@@ -503,7 +503,7 @@
 
   function catalogos() {
     return {
-      entidades: [...estado.entidades].sort(porNombre),
+      entidades: [...estado.entidades].sort(porNombre).map((x) => ({ ...x, pasa_saldo: pasaSaldo(x) })),
       colaboradores: [...estado.colaboradores].sort(porNombre),
       empresas: [...estado.empresas].sort(porNombre),
       tiposDescuento: TIPOS_DESCUENTO,
@@ -538,8 +538,16 @@
     });
   }
 
+  // Qué pasa con cada entidad de un mes al otro:
+  // - judiciales: se pueden repetir todos los meses y el saldo pendiente pasa al mes siguiente;
+  // - "Otros descuentos" (o una entidad con pasa_saldo): no se repite, pero lo que falta pasa al mes siguiente hasta quedar en 0;
+  // - el resto de las comerciales: se cargan cada mes, sin repetir ni pasar saldo.
+  const sePuedeRepetir = (ent) => Boolean(ent && ent.tipo === 'judicial');
+  const pasaSaldo = (ent) => Boolean(ent && (ent.tipo === 'judicial' || (ent.pasa_saldo ?? normalizar(ent.nombre) === 'otros descuentos')));
+
   function repiteActiva(r) {
     const t = r.mensual ? r : r.origen_id ? estado.retenciones.find((x) => x.id === r.origen_id) : null;
+    if (!sePuedeRepetir(estado.entidades.find((x) => x.id === r.entidad_id))) return false;
     return Boolean(t && !t.baja && (!t.hasta || t.hasta > mesDeHoy()));
   }
 
@@ -579,11 +587,12 @@
           pendiente: r.importe_total == null ? null : r.importe_total - real,
           completa: r.importe_total != null && real >= r.importe_total,
           arrastre: Boolean(per && r.periodo < per),
+          pasa_saldo: pasaSaldo(e),
           repite: repiteActiva(r),
           _hayFiltrados: fil.length > 0,
         };
       })
-      .filter((x) => !x.arrastre || x.a_definir || x.pendiente > 0)
+      .filter((x) => !x.arrastre || (x.pasa_saldo && (x.a_definir || x.pendiente > 0)))
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
@@ -685,7 +694,7 @@
       ...(entidad.tipo === 'judicial' ? datosBeneficiario(datos) : {}),
       cargado_por: texto(datos.cargado_por, 'quién la cargó', { max: 80 }),
       creado_en: ahora(),
-      ...datosMensual(datos),
+      ...(sePuedeRepetir(entidad) ? datosMensual(datos) : {}),
     };
     // Si la orden es un porcentaje (p. ej. "25% Nominal"), el importe puede quedar a definir.
     if (datos.importe_total == null || datos.importe_total === '') {
@@ -715,7 +724,8 @@
     const limite = mesDeHoy();
     const hay = new Set(e.retenciones.filter((r) => r.origen_id).map((r) => `${r.origen_id}|${r.periodo}`));
     const faltan = [];
-    for (const t of e.retenciones.filter((r) => r.mensual)) {
+    const ent = new Map(e.entidades.map((x) => [x.id, x]));
+    for (const t of e.retenciones.filter((r) => r.mensual && sePuedeRepetir(ent.get(r.entidad_id)))) {
       for (let m = mesSiguiente(t.periodo); m <= limite; m = mesSiguiente(m)) {
         if ((t.hasta && m > t.hasta) || (t.baja && m >= t.baja)) break;
         if (hay.has(`${t.id}|${m}`) || (t.omitidos || []).includes(m)) continue;
@@ -743,7 +753,7 @@
     const r = estado.retenciones.find((x) => x.id === Number(id));
     if (!r) throw new ErrorValidacion('La retención no existe.', 404);
     const tId = r.mensual ? r.id : r.origen_id;
-    if (!tId) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
+    if (!tId || !repiteActiva(r)) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
     const desde = mesSiguiente(mesDeHoy());
     return modificar((e) => { e.retenciones.find((x) => x.id === tId).baja = desde; return { ok: true, desde }; });
   }
@@ -815,7 +825,7 @@
           ...(ent.tipo === 'judicial' ? datosBeneficiario(x) : {}),
           cargado_por: texto(x.cargado_por || 'Importación', 'quién la cargó', { max: 80 }),
           creado_en: ahora(),
-          ...datosMensual(x),
+          ...(sePuedeRepetir(ent) ? datosMensual(x) : {}),
         };
         if (r.importe_total == null && !r.regla) throw new ErrorValidacion(`Falta el importe o la regla de ${col.nombre}.`);
         const ya = existentes.get(claveRet(r));

@@ -883,7 +883,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 
   function catalogos() {
     return {
-      entidades: [...estado.entidades].sort(porNombre),
+      entidades: [...estado.entidades].sort(porNombre).map((x) => ({ ...x, pasa_saldo: pasaSaldo(x) })),
       colaboradores: [...estado.colaboradores].sort(porNombre),
       empresas: [...estado.empresas].sort(porNombre),
       tiposDescuento: TIPOS_DESCUENTO,
@@ -918,8 +918,16 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     });
   }
 
+  // Qué pasa con cada entidad de un mes al otro:
+  // - judiciales: se pueden repetir todos los meses y el saldo pendiente pasa al mes siguiente;
+  // - "Otros descuentos" (o una entidad con pasa_saldo): no se repite, pero lo que falta pasa al mes siguiente hasta quedar en 0;
+  // - el resto de las comerciales: se cargan cada mes, sin repetir ni pasar saldo.
+  const sePuedeRepetir = (ent) => Boolean(ent && ent.tipo === 'judicial');
+  const pasaSaldo = (ent) => Boolean(ent && (ent.tipo === 'judicial' || (ent.pasa_saldo ?? normalizar(ent.nombre) === 'otros descuentos')));
+
   function repiteActiva(r) {
     const t = r.mensual ? r : r.origen_id ? estado.retenciones.find((x) => x.id === r.origen_id) : null;
+    if (!sePuedeRepetir(estado.entidades.find((x) => x.id === r.entidad_id))) return false;
     return Boolean(t && !t.baja && (!t.hasta || t.hasta > mesDeHoy()));
   }
 
@@ -959,11 +967,12 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
           pendiente: r.importe_total == null ? null : r.importe_total - real,
           completa: r.importe_total != null && real >= r.importe_total,
           arrastre: Boolean(per && r.periodo < per),
+          pasa_saldo: pasaSaldo(e),
           repite: repiteActiva(r),
           _hayFiltrados: fil.length > 0,
         };
       })
-      .filter((x) => !x.arrastre || x.a_definir || x.pendiente > 0)
+      .filter((x) => !x.arrastre || (x.pasa_saldo && (x.a_definir || x.pendiente > 0)))
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
@@ -1065,7 +1074,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
       ...(entidad.tipo === 'judicial' ? datosBeneficiario(datos) : {}),
       cargado_por: texto(datos.cargado_por, 'quién la cargó', { max: 80 }),
       creado_en: ahora(),
-      ...datosMensual(datos),
+      ...(sePuedeRepetir(entidad) ? datosMensual(datos) : {}),
     };
     // Si la orden es un porcentaje (p. ej. "25% Nominal"), el importe puede quedar a definir.
     if (datos.importe_total == null || datos.importe_total === '') {
@@ -1095,7 +1104,8 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     const limite = mesDeHoy();
     const hay = new Set(e.retenciones.filter((r) => r.origen_id).map((r) => `${r.origen_id}|${r.periodo}`));
     const faltan = [];
-    for (const t of e.retenciones.filter((r) => r.mensual)) {
+    const ent = new Map(e.entidades.map((x) => [x.id, x]));
+    for (const t of e.retenciones.filter((r) => r.mensual && sePuedeRepetir(ent.get(r.entidad_id)))) {
       for (let m = mesSiguiente(t.periodo); m <= limite; m = mesSiguiente(m)) {
         if ((t.hasta && m > t.hasta) || (t.baja && m >= t.baja)) break;
         if (hay.has(`${t.id}|${m}`) || (t.omitidos || []).includes(m)) continue;
@@ -1123,7 +1133,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     const r = estado.retenciones.find((x) => x.id === Number(id));
     if (!r) throw new ErrorValidacion('La retención no existe.', 404);
     const tId = r.mensual ? r.id : r.origen_id;
-    if (!tId) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
+    if (!tId || !repiteActiva(r)) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
     const desde = mesSiguiente(mesDeHoy());
     return modificar((e) => { e.retenciones.find((x) => x.id === tId).baja = desde; return { ok: true, desde }; });
   }
@@ -1195,7 +1205,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
           ...(ent.tipo === 'judicial' ? datosBeneficiario(x) : {}),
           cargado_por: texto(x.cargado_por || 'Importación', 'quién la cargó', { max: 80 }),
           creado_en: ahora(),
-          ...datosMensual(x),
+          ...(sePuedeRepetir(ent) ? datosMensual(x) : {}),
         };
         if (r.importe_total == null && !r.regla) throw new ErrorValidacion(`Falta el importe o la regla de ${col.nombre}.`);
         const ya = existentes.get(claveRet(r));
@@ -2241,7 +2251,7 @@ async function vistaRetenciones(_params, vigente) {
             </select></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
-              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}">${esc(e.nombre)} (${tipoTxt[e.tipo]})</option>`).join('')}
+              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)} (${tipoTxt[e.tipo]})</option>`).join('')}
             </select></div>
           <div class="fila">
             <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
@@ -2260,7 +2270,8 @@ async function vistaRetenciones(_params, vigente) {
           <div class="campo"><label for="r-importe">Importe total <span class="obligatorio" id="importe-obligatorio">*</span></label>
             <input id="r-importe" inputmode="decimal" placeholder="2.000,00" autocomplete="off">
             <span class="ayuda" id="importe-ayuda" hidden>Si todavía no sabés el importe, dejalo vacío: la retención queda “a definir”.</span></div>
-          <div class="fila">
+          <p class="nota" id="nota-mes" hidden></p>
+          <div class="fila" id="fila-mensual" hidden>
             <div class="campo"><label class="check"><input type="checkbox" id="r-mensual"> Se repite todos los meses</label>
               <span class="ayuda">Se crea sola cada mes hasta que le des de baja. Si es por porcentaje, se crea cada mes con el mismo porcentaje.</span></div>
             <div class="campo" id="campo-hasta" hidden><label for="r-hasta">Hasta (opcional)</label><input type="month" id="r-hasta"></div>
@@ -2292,9 +2303,20 @@ async function vistaRetenciones(_params, vigente) {
 
   document.getElementById('f-tipo').value = filtrosRet.tipo;
   const selEnt = document.getElementById('r-ent');
+  const chkMensual = document.getElementById('r-mensual');
   const campoBenef = document.getElementById('campo-benef');
   const esJudicial = () => selEnt.selectedOptions[0]?.dataset.tipo === 'judicial';
-  selEnt.addEventListener('change', () => { campoBenef.hidden = !esJudicial(); });
+  selEnt.addEventListener('change', () => {
+    const op = selEnt.selectedOptions[0];
+    campoBenef.hidden = !esJudicial();
+    document.getElementById('fila-mensual').hidden = !esJudicial();
+    if (!esJudicial()) { chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true; }
+    const nota = document.getElementById('nota-mes');
+    nota.hidden = !op?.value || esJudicial();
+    nota.textContent = op?.dataset.pasa === '1'
+      ? 'Lo que no se llegue a descontar este mes pasa solo al mes siguiente, hasta quedar en 0.'
+      : 'Las retenciones comerciales se cargan cada mes: no se repiten ni pasan el saldo al mes siguiente.';
+  });
   const selCalculo = document.getElementById('r-calculo');
   const mostrarCalculo = () => {
     const c = selCalculo.value;
@@ -2304,7 +2326,6 @@ async function vistaRetenciones(_params, vigente) {
     document.getElementById('importe-ayuda').hidden = c === 'fijo';
   };
   selCalculo.addEventListener('change', mostrarCalculo);
-  const chkMensual = document.getElementById('r-mensual');
   chkMensual.addEventListener('change', () => { document.getElementById('campo-hasta').hidden = !chkMensual.checked; });
 
   const lista = document.getElementById('lista-ret');
