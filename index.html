@@ -351,6 +351,16 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .traer-github summary { cursor: pointer; color: var(--grafito); font-weight: 600; margin-bottom: 8px; }
 .etiqueta-tipo.otros { background: #e3edf6; color: #2a5f88; }
 :root[data-tema="oscuro"] .etiqueta-tipo.otros { background: #1f2f3d; color: #9cc8ee; }
+/* Retenciones recibidas: formulario arriba a lo ancho y listado debajo, con todo el ancho de la pantalla. */
+.apilado > .tarjeta { margin-bottom: 20px; }
+@media (min-width: 1000px) {
+  .form-ancho { grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 16px; align-items: start; }
+  .form-ancho > .fila { grid-column: span 2; }
+  .form-ancho > .grupo-benef, .form-ancho > .zona-mensaje, .form-ancho > .acciones, .form-ancho > .nota, .form-ancho > .mensaje { grid-column: 1 / -1; }
+}
+.tabla-ret th, .tabla-ret td { padding-left: 8px; padding-right: 8px; }
+.tabla-ret td:last-child .boton { margin: 2px 0; }
+.tabla-ret th { white-space: normal; vertical-align: bottom; }
 
 </style>
 </head>
@@ -2257,12 +2267,12 @@ async function vistaRetenciones(_params, vigente) {
   if (!vigente()) return;
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div></div>
-    <div class="columnas">
+    <div class="apilado">
       <section class="tarjeta">
         <h2>Cargar retención</h2>
         ${!cat.colaboradores.length || !cat.entidades.length
           ? `<p class="mensaje error">Primero cargá ${!cat.colaboradores.length ? '<a href="#/colaboradores">colaboradores</a>' : ''}${!cat.colaboradores.length && !cat.entidades.length ? ' y ' : ''}${!cat.entidades.length ? '<a href="#/entidades">entidades</a>' : ''}.</p>` : ''}
-        <form class="formulario" id="form-ret" novalidate>
+        <form class="formulario form-ancho" id="form-ret" novalidate>
           <div class="campo"><label for="r-colab">Colaborador <span class="obligatorio">*</span></label>
             <select id="r-colab" required><option value="">Elegí…</option>
               ${cat.colaboradores.map((c) => `<option value="${c.id}">${esc(c.nombre)} · CI ${esc(cedula(c.cedula))}</option>`).join('')}
@@ -2415,7 +2425,7 @@ async function vistaRetenciones(_params, vigente) {
 function tablaRetenciones(filas) {
   if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
   const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
-  return `<div class="tabla-contenedor"><table>
+  return `<div class="tabla-contenedor"><table class="tabla-ret">
     <thead><tr><th>Período</th><th>Colaborador</th><th>Entidad</th><th>Concepto / Expediente</th><th>Beneficiario</th>
       <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Cargó</th><th></th></tr></thead>
     <tbody>${filas.map((r) => `<tr>

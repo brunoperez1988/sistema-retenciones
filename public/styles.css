@@ -343,3 +343,13 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .traer-github summary { cursor: pointer; color: var(--grafito); font-weight: 600; margin-bottom: 8px; }
 .etiqueta-tipo.otros { background: #e3edf6; color: #2a5f88; }
 :root[data-tema="oscuro"] .etiqueta-tipo.otros { background: #1f2f3d; color: #9cc8ee; }
+/* Retenciones recibidas: formulario arriba a lo ancho y listado debajo, con todo el ancho de la pantalla. */
+.apilado > .tarjeta { margin-bottom: 20px; }
+@media (min-width: 1000px) {
+  .form-ancho { grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 16px; align-items: start; }
+  .form-ancho > .fila { grid-column: span 2; }
+  .form-ancho > .grupo-benef, .form-ancho > .zona-mensaje, .form-ancho > .acciones, .form-ancho > .nota, .form-ancho > .mensaje { grid-column: 1 / -1; }
+}
+.tabla-ret th, .tabla-ret td { padding-left: 8px; padding-right: 8px; }
+.tabla-ret td:last-child .boton { margin: 2px 0; }
+.tabla-ret th { white-space: normal; vertical-align: bottom; }

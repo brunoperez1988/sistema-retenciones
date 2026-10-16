@@ -583,12 +583,12 @@ async function vistaRetenciones(_params, vigente) {
   if (!vigente()) return;
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div></div>
-    <div class="columnas">
+    <div class="apilado">
       <section class="tarjeta">
         <h2>Cargar retención</h2>
         ${!cat.colaboradores.length || !cat.entidades.length
           ? `<p class="mensaje error">Primero cargá ${!cat.colaboradores.length ? '<a href="#/colaboradores">colaboradores</a>' : ''}${!cat.colaboradores.length && !cat.entidades.length ? ' y ' : ''}${!cat.entidades.length ? '<a href="#/entidades">entidades</a>' : ''}.</p>` : ''}
-        <form class="formulario" id="form-ret" novalidate>
+        <form class="formulario form-ancho" id="form-ret" novalidate>
           <div class="campo"><label for="r-colab">Colaborador <span class="obligatorio">*</span></label>
             <select id="r-colab" required><option value="">Elegí…</option>
               ${cat.colaboradores.map((c) => `<option value="${c.id}">${esc(c.nombre)} · CI ${esc(cedula(c.cedula))}</option>`).join('')}
@@ -741,7 +741,7 @@ async function vistaRetenciones(_params, vigente) {
 function tablaRetenciones(filas) {
   if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
   const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
-  return `<div class="tabla-contenedor"><table>
+  return `<div class="tabla-contenedor"><table class="tabla-ret">
     <thead><tr><th>Período</th><th>Colaborador</th><th>Entidad</th><th>Concepto / Expediente</th><th>Beneficiario</th>
       <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Cargó</th><th></th></tr></thead>
     <tbody>${filas.map((r) => `<tr>
