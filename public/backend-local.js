@@ -540,10 +540,11 @@
 
   // Qué pasa con cada entidad de un mes al otro:
   // - judiciales: se pueden repetir todos los meses y el saldo pendiente pasa al mes siguiente;
-  // - "Otros descuentos" (o una entidad con pasa_saldo): no se repite, pero lo que falta pasa al mes siguiente hasta quedar en 0;
+  // - "Otros descuentos" (adelantos o ajustes de sueldo pagados de más): no se repite, pero lo que falta pasa al mes siguiente hasta quedar en 0;
   // - el resto de las comerciales: se cargan cada mes, sin repetir ni pasar saldo.
+  const TIPOS_ENTIDAD = ['judicial', 'comercial', 'otros'];
   const sePuedeRepetir = (ent) => Boolean(ent && ent.tipo === 'judicial');
-  const pasaSaldo = (ent) => Boolean(ent && (ent.tipo === 'judicial' || (ent.pasa_saldo ?? normalizar(ent.nombre) === 'otros descuentos')));
+  const pasaSaldo = (ent) => Boolean(ent && (ent.tipo === 'judicial' || ent.tipo === 'otros'));
 
   function repiteActiva(r) {
     const t = r.mensual ? r : r.origen_id ? estado.retenciones.find((x) => x.id === r.origen_id) : null;
@@ -563,7 +564,7 @@
     let filas = estado.retenciones
       // Con con_saldo, también entran las de meses anteriores que todavía tienen saldo (pasan al mes siguiente hasta quedar en 0).
       .filter((r) => !per || r.periodo === per || (f.con_saldo && r.periodo < per))
-      .filter((r) => !(f.tipo === 'judicial' || f.tipo === 'comercial') || ent.get(r.entidad_id).tipo === f.tipo)
+      .filter((r) => !TIPOS_ENTIDAD.includes(f.tipo) || ent.get(r.entidad_id).tipo === f.tipo)
       .filter((r) => !f.colaborador_id || r.colaborador_id === Number(f.colaborador_id))
       .map((r) => {
         const c = col.get(r.colaborador_id);
@@ -659,7 +660,7 @@
   function crearEntidad(datos) {
     const nombre = texto(datos.nombre, 'nombre de la entidad');
     const tipo = String(datos.tipo || '');
-    if (!['judicial', 'comercial'].includes(tipo)) throw new ErrorValidacion('Indicá si la entidad es judicial o comercial.');
+    if (!TIPOS_ENTIDAD.includes(tipo)) throw new ErrorValidacion('Indicá si la entidad es judicial, comercial u otros descuentos.');
     if (estado.entidades.some((x) => mismoNombre(x.nombre, nombre))) throw new ErrorValidacion('Ya existe una entidad con ese nombre.', 409);
     return modificar((e) => { const id = e.sig++; e.entidades.push({ id, nombre, tipo }); return { id }; });
   }
@@ -743,7 +744,11 @@
     return faltan;
   }
 
+  // La entidad "Otros descuentos" se cargó como comercial: pasa a su propio tipo.
+  const otrosComoComercial = (e) => e.entidades.filter((x) => x.tipo === 'comercial' && normalizar(x.nombre) === 'otros descuentos');
+
   async function crearMensuales() {
+    if (otrosComoComercial(estado).length) await modificar((e) => { otrosComoComercial(e).forEach((x) => { x.tipo = 'otros'; delete x.pasa_saldo; }); });
     if (!mensualesFaltantes(estado).length) return;
     await modificar((e) => { for (const r of mensualesFaltantes(e)) e.retenciones.push({ id: e.sig++, ...r }); });
   }
@@ -812,7 +817,7 @@
         if (!/^\d{6,8}$/.test(ci)) throw new ErrorValidacion(`Cédula inválida en la importación: ${x.cedula}`);
         let col = colPorCi.get(ci);
         if (!col) { col = { id: e.sig++, cedula: ci, nombre: texto(x.nombre, 'nombre') }; e.colaboradores.push(col); colPorCi.set(ci, col); res.colaboradores += 1; }
-        const tipo = x.tipo_entidad === 'judicial' ? 'judicial' : 'comercial';
+        const tipo = TIPOS_ENTIDAD.includes(x.tipo_entidad) ? x.tipo_entidad : 'comercial';
         let ent = entPorNombre.get(normalizar(x.entidad));
         if (!ent) { ent = { id: e.sig++, nombre: texto(x.entidad, 'entidad'), tipo }; e.entidades.push(ent); entPorNombre.set(normalizar(ent.nombre), ent); res.entidades += 1; }
         const r = {
@@ -1044,7 +1049,7 @@
 
   // ── Exportación (Excel sin compresión + CSV) ──
 
-  const TIPO_TXT = { judicial: 'Judicial', comercial: 'Comercial' };
+  const TIPO_TXT = { judicial: 'Judicial', comercial: 'Comercial', otros: 'Otros descuentos' };
 
   function csv(columnas, filas) {
     const celda = (v, col) => {

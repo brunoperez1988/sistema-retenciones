@@ -42,7 +42,8 @@ function leerImporte(texto) {
 }
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const tipoTxt = { judicial: 'Judicial', comercial: 'Comercial' };
+const normalizarTxt = (t) => String(t || '').trim().toLowerCase();
+const tipoTxt = { judicial: 'Judicial', comercial: 'Comercial', otros: 'Otros descuentos' };
 const etiquetaTipo = (tipo) => `<span class="etiqueta-tipo ${esc(tipo)}">${tipoTxt[tipo] || esc(tipo)}</span>`;
 
 // Recordar quién carga (solo comodidad local; si el navegador no deja, no pasa nada).
@@ -594,7 +595,7 @@ async function vistaRetenciones(_params, vigente) {
             </select></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
-              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)} (${tipoTxt[e.tipo]})</option>`).join('')}
+              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)}${normalizarTxt(e.nombre) === normalizarTxt(tipoTxt[e.tipo]) ? '' : ` (${tipoTxt[e.tipo]})`}</option>`).join('')}
             </select></div>
           <div class="fila">
             <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
@@ -637,7 +638,7 @@ async function vistaRetenciones(_params, vigente) {
         <div class="filtros">
           <div class="campo"><label for="f-periodo">Período</label><input type="month" id="f-periodo" value="${esc(filtrosRet.periodo)}"></div>
           <div class="campo"><label for="f-tipo">Tipo</label><select id="f-tipo">
-            <option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>
+            <option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>
           <div class="campo ancho"><label for="f-q">Buscar</label><input id="f-q" type="search" placeholder="Nombre, CI, entidad, concepto, beneficiario" value="${esc(filtrosRet.q)}"></div>
         </div>
         <div id="lista-ret"><p class="cargando">Cargando…</p></div>
@@ -1002,7 +1003,7 @@ async function vistaReportes(_params, vigente) {
       <div class="filtros">
         <div class="campo"><label for="rp-periodo">Mes</label><input type="month" id="rp-periodo" value="${esc(filtrosRep.periodo)}"></div>
         <div class="campo ancho"><label for="rp-q">Buscar</label><input type="search" id="rp-q" placeholder="Nombre, CI, entidad, concepto, beneficiario" value="${esc(filtrosRep.q)}"></div>
-        <div class="campo"><label for="rp-tipo">Judicial / Comercial</label><select id="rp-tipo"><option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>
+        <div class="campo"><label for="rp-tipo">Tipo</label><select id="rp-tipo"><option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>
         <div class="campo"><label for="rp-tdesc">Tipo de descuento</label><select id="rp-tdesc"><option value="">Todos</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
         <div class="campo"><label for="rp-empresa">Empresa donde se retuvo</label><select id="rp-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
       </div>
@@ -1231,7 +1232,7 @@ function vistaEntidades(_p, vigente) {
   ruta: '/api/entidades',
   campos: [
     { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
-    { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>', leer: (f) => f.querySelector('#a-tipo').value },
+    { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>', leer: (f) => f.querySelector('#a-tipo').value },
   ],
   columnas: [
     { titulo: 'Entidad', valor: (f) => esc(f.nombre) },

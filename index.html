@@ -191,6 +191,7 @@ tr.subtotal td { background: var(--subtotal); font-weight: 650; }
 .orden { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio); padding: 16px; box-shadow: var(--sombra); display: grid; gap: 10px; border-left: 4px solid var(--borde-orden, var(--verde-suave)); }
 .orden.judicial { --borde-orden: var(--violeta); }
 .orden.comercial { --borde-orden: var(--ambar); }
+.orden.otros { --borde-orden: #3f7fae; }
 .orden.es-completa { background: linear-gradient(180deg, var(--verde-claro), var(--superficie)); }
 .orden-cabecera { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .orden-persona { font-weight: 650; }
@@ -348,6 +349,8 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .acceso-logo.logo-anim { display: block; margin-left: auto; margin-right: auto; }
 .traer-github { margin: 4px 0 12px; }
 .traer-github summary { cursor: pointer; color: var(--grafito); font-weight: 600; margin-bottom: 8px; }
+.etiqueta-tipo.otros { background: #e3edf6; color: #2a5f88; }
+:root[data-tema="oscuro"] .etiqueta-tipo.otros { background: #1f2f3d; color: #9cc8ee; }
 
 </style>
 </head>
@@ -920,10 +923,11 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 
   // Qué pasa con cada entidad de un mes al otro:
   // - judiciales: se pueden repetir todos los meses y el saldo pendiente pasa al mes siguiente;
-  // - "Otros descuentos" (o una entidad con pasa_saldo): no se repite, pero lo que falta pasa al mes siguiente hasta quedar en 0;
+  // - "Otros descuentos" (adelantos o ajustes de sueldo pagados de más): no se repite, pero lo que falta pasa al mes siguiente hasta quedar en 0;
   // - el resto de las comerciales: se cargan cada mes, sin repetir ni pasar saldo.
+  const TIPOS_ENTIDAD = ['judicial', 'comercial', 'otros'];
   const sePuedeRepetir = (ent) => Boolean(ent && ent.tipo === 'judicial');
-  const pasaSaldo = (ent) => Boolean(ent && (ent.tipo === 'judicial' || (ent.pasa_saldo ?? normalizar(ent.nombre) === 'otros descuentos')));
+  const pasaSaldo = (ent) => Boolean(ent && (ent.tipo === 'judicial' || ent.tipo === 'otros'));
 
   function repiteActiva(r) {
     const t = r.mensual ? r : r.origen_id ? estado.retenciones.find((x) => x.id === r.origen_id) : null;
@@ -943,7 +947,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     let filas = estado.retenciones
       // Con con_saldo, también entran las de meses anteriores que todavía tienen saldo (pasan al mes siguiente hasta quedar en 0).
       .filter((r) => !per || r.periodo === per || (f.con_saldo && r.periodo < per))
-      .filter((r) => !(f.tipo === 'judicial' || f.tipo === 'comercial') || ent.get(r.entidad_id).tipo === f.tipo)
+      .filter((r) => !TIPOS_ENTIDAD.includes(f.tipo) || ent.get(r.entidad_id).tipo === f.tipo)
       .filter((r) => !f.colaborador_id || r.colaborador_id === Number(f.colaborador_id))
       .map((r) => {
         const c = col.get(r.colaborador_id);
@@ -1039,7 +1043,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
   function crearEntidad(datos) {
     const nombre = texto(datos.nombre, 'nombre de la entidad');
     const tipo = String(datos.tipo || '');
-    if (!['judicial', 'comercial'].includes(tipo)) throw new ErrorValidacion('Indicá si la entidad es judicial o comercial.');
+    if (!TIPOS_ENTIDAD.includes(tipo)) throw new ErrorValidacion('Indicá si la entidad es judicial, comercial u otros descuentos.');
     if (estado.entidades.some((x) => mismoNombre(x.nombre, nombre))) throw new ErrorValidacion('Ya existe una entidad con ese nombre.', 409);
     return modificar((e) => { const id = e.sig++; e.entidades.push({ id, nombre, tipo }); return { id }; });
   }
@@ -1123,7 +1127,11 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     return faltan;
   }
 
+  // La entidad "Otros descuentos" se cargó como comercial: pasa a su propio tipo.
+  const otrosComoComercial = (e) => e.entidades.filter((x) => x.tipo === 'comercial' && normalizar(x.nombre) === 'otros descuentos');
+
   async function crearMensuales() {
+    if (otrosComoComercial(estado).length) await modificar((e) => { otrosComoComercial(e).forEach((x) => { x.tipo = 'otros'; delete x.pasa_saldo; }); });
     if (!mensualesFaltantes(estado).length) return;
     await modificar((e) => { for (const r of mensualesFaltantes(e)) e.retenciones.push({ id: e.sig++, ...r }); });
   }
@@ -1192,7 +1200,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
         if (!/^\d{6,8}$/.test(ci)) throw new ErrorValidacion(`Cédula inválida en la importación: ${x.cedula}`);
         let col = colPorCi.get(ci);
         if (!col) { col = { id: e.sig++, cedula: ci, nombre: texto(x.nombre, 'nombre') }; e.colaboradores.push(col); colPorCi.set(ci, col); res.colaboradores += 1; }
-        const tipo = x.tipo_entidad === 'judicial' ? 'judicial' : 'comercial';
+        const tipo = TIPOS_ENTIDAD.includes(x.tipo_entidad) ? x.tipo_entidad : 'comercial';
         let ent = entPorNombre.get(normalizar(x.entidad));
         if (!ent) { ent = { id: e.sig++, nombre: texto(x.entidad, 'entidad'), tipo }; e.entidades.push(ent); entPorNombre.set(normalizar(ent.nombre), ent); res.entidades += 1; }
         const r = {
@@ -1424,7 +1432,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 
   // ── Exportación (Excel sin compresión + CSV) ──
 
-  const TIPO_TXT = { judicial: 'Judicial', comercial: 'Comercial' };
+  const TIPO_TXT = { judicial: 'Judicial', comercial: 'Comercial', otros: 'Otros descuentos' };
 
   function csv(columnas, filas) {
     const celda = (v, col) => {
@@ -1699,7 +1707,8 @@ function leerImporte(texto) {
 }
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const tipoTxt = { judicial: 'Judicial', comercial: 'Comercial' };
+const normalizarTxt = (t) => String(t || '').trim().toLowerCase();
+const tipoTxt = { judicial: 'Judicial', comercial: 'Comercial', otros: 'Otros descuentos' };
 const etiquetaTipo = (tipo) => `<span class="etiqueta-tipo ${esc(tipo)}">${tipoTxt[tipo] || esc(tipo)}</span>`;
 
 // Recordar quién carga (solo comodidad local; si el navegador no deja, no pasa nada).
@@ -2251,7 +2260,7 @@ async function vistaRetenciones(_params, vigente) {
             </select></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
-              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)} (${tipoTxt[e.tipo]})</option>`).join('')}
+              ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)}${normalizarTxt(e.nombre) === normalizarTxt(tipoTxt[e.tipo]) ? '' : ` (${tipoTxt[e.tipo]})`}</option>`).join('')}
             </select></div>
           <div class="fila">
             <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
@@ -2294,7 +2303,7 @@ async function vistaRetenciones(_params, vigente) {
         <div class="filtros">
           <div class="campo"><label for="f-periodo">Período</label><input type="month" id="f-periodo" value="${esc(filtrosRet.periodo)}"></div>
           <div class="campo"><label for="f-tipo">Tipo</label><select id="f-tipo">
-            <option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>
+            <option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>
           <div class="campo ancho"><label for="f-q">Buscar</label><input id="f-q" type="search" placeholder="Nombre, CI, entidad, concepto, beneficiario" value="${esc(filtrosRet.q)}"></div>
         </div>
         <div id="lista-ret"><p class="cargando">Cargando…</p></div>
@@ -2659,7 +2668,7 @@ async function vistaReportes(_params, vigente) {
       <div class="filtros">
         <div class="campo"><label for="rp-periodo">Mes</label><input type="month" id="rp-periodo" value="${esc(filtrosRep.periodo)}"></div>
         <div class="campo ancho"><label for="rp-q">Buscar</label><input type="search" id="rp-q" placeholder="Nombre, CI, entidad, concepto, beneficiario" value="${esc(filtrosRep.q)}"></div>
-        <div class="campo"><label for="rp-tipo">Judicial / Comercial</label><select id="rp-tipo"><option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>
+        <div class="campo"><label for="rp-tipo">Tipo</label><select id="rp-tipo"><option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>
         <div class="campo"><label for="rp-tdesc">Tipo de descuento</label><select id="rp-tdesc"><option value="">Todos</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
         <div class="campo"><label for="rp-empresa">Empresa donde se retuvo</label><select id="rp-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
       </div>
@@ -2888,7 +2897,7 @@ function vistaEntidades(_p, vigente) {
   ruta: '/api/entidades',
   campos: [
     { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
-    { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option></select></div>', leer: (f) => f.querySelector('#a-tipo').value },
+    { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>', leer: (f) => f.querySelector('#a-tipo').value },
   ],
   columnas: [
     { titulo: 'Entidad', valor: (f) => esc(f.nombre) },

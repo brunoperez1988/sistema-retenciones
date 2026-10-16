@@ -183,6 +183,7 @@ tr.subtotal td { background: var(--subtotal); font-weight: 650; }
 .orden { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio); padding: 16px; box-shadow: var(--sombra); display: grid; gap: 10px; border-left: 4px solid var(--borde-orden, var(--verde-suave)); }
 .orden.judicial { --borde-orden: var(--violeta); }
 .orden.comercial { --borde-orden: var(--ambar); }
+.orden.otros { --borde-orden: #3f7fae; }
 .orden.es-completa { background: linear-gradient(180deg, var(--verde-claro), var(--superficie)); }
 .orden-cabecera { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
 .orden-persona { font-weight: 650; }
@@ -340,3 +341,5 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .acceso-logo.logo-anim { display: block; margin-left: auto; margin-right: auto; }
 .traer-github { margin: 4px 0 12px; }
 .traer-github summary { cursor: pointer; color: var(--grafito); font-weight: 600; margin-bottom: 8px; }
+.etiqueta-tipo.otros { background: #e3edf6; color: #2a5f88; }
+:root[data-tema="oscuro"] .etiqueta-tipo.otros { background: #1f2f3d; color: #9cc8ee; }
