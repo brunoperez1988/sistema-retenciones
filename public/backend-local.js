@@ -1166,6 +1166,14 @@
   }
 
   // Por entidad acreedora: cada funcionario con lo que tenía para descontar y lo descontado.
+  // Banco y número de cuenta del beneficiario. En los depósitos el banco viene al principio de la cuenta ("BROU 0012…").
+  function cobroBeneficiario(x) {
+    const cuenta = String(x.beneficiario_cuenta || '').trim();
+    const medio = x.beneficiario_cobro || '';
+    const m = /^dep[oó]sito/i.test(medio) && cuenta.match(/^([A-Za-zÁÉÍÓÚáéíóúÑñ][\wÁÉÍÓÚáéíóúÑñ.-]*)\s+(.+)$/);
+    return m ? { banco: m[1], cuenta: m[2] } : { banco: medio, cuenta };
+  }
+
   function reportePorEntidad(f) {
     const mes = f.periodo ? periodo(f.periodo) : null;
     const antes = (id) => (mes ? estado.descuentos.filter((d) => d.retencion_id === id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0) : 0);
@@ -1177,7 +1185,8 @@
       const para = x.importe_total == null ? null : x.importe_total - previo;
       const desc = (f.tipo_descuento || f.empresa_id ? x.descontado : x.descontado_real) - (f.tipo_descuento || f.empresa_id ? 0 : previo);
       g.filas.push({ id: x.id, cedula: x.cedula, colaborador: x.colaborador, periodo: x.periodo, arrastre: x.arrastre, regla: x.regla, porcentaje: x.porcentaje, base: x.base,
-        sin_tope: x.sin_tope, a_definir: x.a_definir, para_descontar: para, descontado: desc, falta: x.pendiente });
+        sin_tope: x.sin_tope, a_definir: x.a_definir, para_descontar: para, descontado: desc, falta: x.pendiente,
+        beneficiario: x.beneficiario || '', beneficiario_doc: x.beneficiario_doc || '', ...(x.beneficiario ? cobroBeneficiario(x) : { banco: '', cuenta: '' }) });
       g.para_descontar += para || 0; g.descontado += desc; g.falta += x.pendiente || 0;
     }
     const lista = [...grupos.values()].sort((a, b) => a.entidad.localeCompare(b.entidad, 'es'));
@@ -1191,16 +1200,18 @@
       { titulo: 'Entidad acreedora', ancho: 26 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Nombre y apellido', ancho: 30 },
       { titulo: 'Período', ancho: 10 }, { titulo: 'Para descontar', tipo: 'moneda', ancho: 15 }, { titulo: 'Regla', ancho: 16 },
       { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta', tipo: 'moneda', ancho: 14 },
+      { titulo: 'Beneficiario', ancho: 28 }, { titulo: 'Doc. beneficiario', ancho: 14 }, { titulo: 'Banco / medio de cobro', ancho: 20 }, { titulo: 'N° de cuenta', ancho: 20 },
     ];
     const cuerpo = [];
     for (const g of rep.grupos) {
       for (const x of g.filas) {
         cuerpo.push([g.entidad, x.cedula, x.colaborador, x.periodo + (x.arrastre ? ' (saldo)' : ''),
-          x.para_descontar == null ? (x.regla || 'A definir') : x.para_descontar, x.regla || '', x.descontado, x.falta == null ? '' : x.falta]);
+          x.para_descontar == null ? (x.regla || 'A definir') : x.para_descontar, x.regla || '', x.descontado, x.falta == null ? '' : x.falta,
+          x.beneficiario, x.beneficiario_doc, x.banco, x.cuenta]);
       }
-      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.entidad}`, '', `${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'}`, '', g.para_descontar, '', g.descontado, g.falta] });
+      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.entidad}`, '', `${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'}`, '', g.para_descontar, '', g.descontado, g.falta, '', '', '', ''] });
     }
-    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', '', '', rep.para_descontar, '', rep.descontado, rep.falta] });
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', '', '', rep.para_descontar, '', rep.descontado, rep.falta, '', '', '', ''] });
     return { columnas, filas: cuerpo, titulo: 'Retenciones por entidad acreedora', hoja: 'Por entidad' };
   }
 

@@ -1559,6 +1559,14 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
   }
 
   // Por entidad acreedora: cada funcionario con lo que tenía para descontar y lo descontado.
+  // Banco y número de cuenta del beneficiario. En los depósitos el banco viene al principio de la cuenta ("BROU 0012…").
+  function cobroBeneficiario(x) {
+    const cuenta = String(x.beneficiario_cuenta || '').trim();
+    const medio = x.beneficiario_cobro || '';
+    const m = /^dep[oó]sito/i.test(medio) && cuenta.match(/^([A-Za-zÁÉÍÓÚáéíóúÑñ][\wÁÉÍÓÚáéíóúÑñ.-]*)\s+(.+)$/);
+    return m ? { banco: m[1], cuenta: m[2] } : { banco: medio, cuenta };
+  }
+
   function reportePorEntidad(f) {
     const mes = f.periodo ? periodo(f.periodo) : null;
     const antes = (id) => (mes ? estado.descuentos.filter((d) => d.retencion_id === id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0) : 0);
@@ -1570,7 +1578,8 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
       const para = x.importe_total == null ? null : x.importe_total - previo;
       const desc = (f.tipo_descuento || f.empresa_id ? x.descontado : x.descontado_real) - (f.tipo_descuento || f.empresa_id ? 0 : previo);
       g.filas.push({ id: x.id, cedula: x.cedula, colaborador: x.colaborador, periodo: x.periodo, arrastre: x.arrastre, regla: x.regla, porcentaje: x.porcentaje, base: x.base,
-        sin_tope: x.sin_tope, a_definir: x.a_definir, para_descontar: para, descontado: desc, falta: x.pendiente });
+        sin_tope: x.sin_tope, a_definir: x.a_definir, para_descontar: para, descontado: desc, falta: x.pendiente,
+        beneficiario: x.beneficiario || '', beneficiario_doc: x.beneficiario_doc || '', ...(x.beneficiario ? cobroBeneficiario(x) : { banco: '', cuenta: '' }) });
       g.para_descontar += para || 0; g.descontado += desc; g.falta += x.pendiente || 0;
     }
     const lista = [...grupos.values()].sort((a, b) => a.entidad.localeCompare(b.entidad, 'es'));
@@ -1584,16 +1593,18 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
       { titulo: 'Entidad acreedora', ancho: 26 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Nombre y apellido', ancho: 30 },
       { titulo: 'Período', ancho: 10 }, { titulo: 'Para descontar', tipo: 'moneda', ancho: 15 }, { titulo: 'Regla', ancho: 16 },
       { titulo: 'Descontado', tipo: 'moneda', ancho: 14 }, { titulo: 'Falta', tipo: 'moneda', ancho: 14 },
+      { titulo: 'Beneficiario', ancho: 28 }, { titulo: 'Doc. beneficiario', ancho: 14 }, { titulo: 'Banco / medio de cobro', ancho: 20 }, { titulo: 'N° de cuenta', ancho: 20 },
     ];
     const cuerpo = [];
     for (const g of rep.grupos) {
       for (const x of g.filas) {
         cuerpo.push([g.entidad, x.cedula, x.colaborador, x.periodo + (x.arrastre ? ' (saldo)' : ''),
-          x.para_descontar == null ? (x.regla || 'A definir') : x.para_descontar, x.regla || '', x.descontado, x.falta == null ? '' : x.falta]);
+          x.para_descontar == null ? (x.regla || 'A definir') : x.para_descontar, x.regla || '', x.descontado, x.falta == null ? '' : x.falta,
+          x.beneficiario, x.beneficiario_doc, x.banco, x.cuenta]);
       }
-      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.entidad}`, '', `${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'}`, '', g.para_descontar, '', g.descontado, g.falta] });
+      cuerpo.push({ negrita: true, celdas: [`Subtotal ${g.entidad}`, '', `${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'}`, '', g.para_descontar, '', g.descontado, g.falta, '', '', '', ''] });
     }
-    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', '', '', rep.para_descontar, '', rep.descontado, rep.falta] });
+    cuerpo.push({ negrita: true, celdas: ['TOTAL', '', '', '', rep.para_descontar, '', rep.descontado, rep.falta, '', '', '', ''] });
     return { columnas, filas: cuerpo, titulo: 'Retenciones por entidad acreedora', hoja: 'Por entidad' };
   }
 
@@ -2782,19 +2793,23 @@ function tablaPorEntidad(rep) {
   if (!rep.grupos.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
   const para = (x) => (x.para_descontar == null ? etiquetaRegla(x) || '<span class="sec">A definir</span>' : `${moneda(x.para_descontar)}${x.regla ? `<span class="sec">${etiquetaRegla(x)}</span>` : ''}`);
   return `<div class="tabla-contenedor"><table>
-    <thead><tr><th>Cédula</th><th>Nombre y apellido</th><th class="num">Para descontar</th><th class="num">Descontado</th><th class="num">Falta</th></tr></thead>
+    <thead><tr><th>Cédula</th><th>Nombre y apellido</th><th class="num">Para descontar</th><th class="num">Descontado</th><th class="num">Falta</th>
+      <th>Beneficiario</th><th>Banco / medio</th><th>N° de cuenta</th></tr></thead>
     <tbody>${rep.grupos.map((g) => `
-      <tr class="grupo"><td colspan="5">${esc(g.entidad)} · ${tipoTxt[g.tipo] || ''}</td></tr>
+      <tr class="grupo"><td colspan="8">${esc(g.entidad)} · ${tipoTxt[g.tipo] || ''}</td></tr>
       ${g.filas.map((x) => `<tr>
         <td>${esc(cedula(x.cedula))}</td>
         <td>${esc(x.colaborador)}${x.arrastre ? `<span class="sec">Saldo de ${esc(mesCorto(x.periodo))}</span>` : ''}</td>
         <td class="num">${para(x)}</td>
         <td class="num">${moneda(x.descontado)}</td>
-        <td class="num">${x.falta == null ? '<span class="sec">—</span>' : moneda(x.falta)}</td></tr>`).join('')}
+        <td class="num">${x.falta == null ? '<span class="sec">—</span>' : moneda(x.falta)}</td>
+        <td>${x.beneficiario ? `${x.beneficiario === 'A completar' ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(x.beneficiario)}${x.beneficiario_doc ? `<span class="sec">CI ${esc(cedula(x.beneficiario_doc))}</span>` : ''}` : '<span class="sec">—</span>'}</td>
+        <td>${esc(x.banco) || '<span class="sec">—</span>'}</td>
+        <td>${esc(x.cuenta) || '<span class="sec">—</span>'}</td></tr>`).join('')}
       <tr class="subtotal"><td colspan="2">Subtotal ${esc(g.entidad)} (${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'})</td>
-        <td class="num">${moneda(g.para_descontar)}</td><td class="num">${moneda(g.descontado)}</td><td class="num">${moneda(g.falta)}</td></tr>`).join('')}
+        <td class="num">${moneda(g.para_descontar)}</td><td class="num">${moneda(g.descontado)}</td><td class="num">${moneda(g.falta)}</td><td colspan="3"></td></tr>`).join('')}
     </tbody>
-    <tfoot><tr><td colspan="2">Total</td><td class="num">${moneda(rep.para_descontar)}</td><td class="num">${moneda(rep.descontado)}</td><td class="num">${moneda(rep.falta)}</td></tr></tfoot>
+    <tfoot><tr><td colspan="2">Total</td><td class="num">${moneda(rep.para_descontar)}</td><td class="num">${moneda(rep.descontado)}</td><td class="num">${moneda(rep.falta)}</td><td colspan="3"></td></tr></tfoot>
   </table></div>`;
 }
 

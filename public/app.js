@@ -1098,19 +1098,23 @@ function tablaPorEntidad(rep) {
   if (!rep.grupos.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
   const para = (x) => (x.para_descontar == null ? etiquetaRegla(x) || '<span class="sec">A definir</span>' : `${moneda(x.para_descontar)}${x.regla ? `<span class="sec">${etiquetaRegla(x)}</span>` : ''}`);
   return `<div class="tabla-contenedor"><table>
-    <thead><tr><th>Cédula</th><th>Nombre y apellido</th><th class="num">Para descontar</th><th class="num">Descontado</th><th class="num">Falta</th></tr></thead>
+    <thead><tr><th>Cédula</th><th>Nombre y apellido</th><th class="num">Para descontar</th><th class="num">Descontado</th><th class="num">Falta</th>
+      <th>Beneficiario</th><th>Banco / medio</th><th>N° de cuenta</th></tr></thead>
     <tbody>${rep.grupos.map((g) => `
-      <tr class="grupo"><td colspan="5">${esc(g.entidad)} · ${tipoTxt[g.tipo] || ''}</td></tr>
+      <tr class="grupo"><td colspan="8">${esc(g.entidad)} · ${tipoTxt[g.tipo] || ''}</td></tr>
       ${g.filas.map((x) => `<tr>
         <td>${esc(cedula(x.cedula))}</td>
         <td>${esc(x.colaborador)}${x.arrastre ? `<span class="sec">Saldo de ${esc(mesCorto(x.periodo))}</span>` : ''}</td>
         <td class="num">${para(x)}</td>
         <td class="num">${moneda(x.descontado)}</td>
-        <td class="num">${x.falta == null ? '<span class="sec">—</span>' : moneda(x.falta)}</td></tr>`).join('')}
+        <td class="num">${x.falta == null ? '<span class="sec">—</span>' : moneda(x.falta)}</td>
+        <td>${x.beneficiario ? `${x.beneficiario === 'A completar' ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(x.beneficiario)}${x.beneficiario_doc ? `<span class="sec">CI ${esc(cedula(x.beneficiario_doc))}</span>` : ''}` : '<span class="sec">—</span>'}</td>
+        <td>${esc(x.banco) || '<span class="sec">—</span>'}</td>
+        <td>${esc(x.cuenta) || '<span class="sec">—</span>'}</td></tr>`).join('')}
       <tr class="subtotal"><td colspan="2">Subtotal ${esc(g.entidad)} (${g.filas.length} ${g.filas.length === 1 ? 'funcionario' : 'funcionarios'})</td>
-        <td class="num">${moneda(g.para_descontar)}</td><td class="num">${moneda(g.descontado)}</td><td class="num">${moneda(g.falta)}</td></tr>`).join('')}
+        <td class="num">${moneda(g.para_descontar)}</td><td class="num">${moneda(g.descontado)}</td><td class="num">${moneda(g.falta)}</td><td colspan="3"></td></tr>`).join('')}
     </tbody>
-    <tfoot><tr><td colspan="2">Total</td><td class="num">${moneda(rep.para_descontar)}</td><td class="num">${moneda(rep.descontado)}</td><td class="num">${moneda(rep.falta)}</td></tr></tfoot>
+    <tfoot><tr><td colspan="2">Total</td><td class="num">${moneda(rep.para_descontar)}</td><td class="num">${moneda(rep.descontado)}</td><td class="num">${moneda(rep.falta)}</td><td colspan="3"></td></tr></tfoot>
   </table></div>`;
 }
 
