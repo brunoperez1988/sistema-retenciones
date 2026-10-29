@@ -392,6 +392,22 @@
     return { conectado: true };
   }
 
+  // Cambia la clave (token) de GitHub de esta computadora, sin tocar los datos. Se prueba antes de guardarla.
+  async function cambiarClaveNube(token) {
+    token = String(token || '').trim();
+    if (!nubeCfg) throw new ErrorValidacion('Esta computadora no está conectada a GitHub.');
+    if (!token) throw new ErrorValidacion('Pegá la clave nueva (token) de GitHub.');
+    const c = { repo: nubeCfg.repo, token };
+    const res = await github(c, 'GET', `/repos/${c.repo}`).catch((e) => { throw new ErrorValidacion(e.message); });
+    if (res.status === 404) throw new ErrorValidacion('Esa clave no tiene acceso al repositorio de datos.');
+    if (!res.ok) throw new ErrorValidacion(`GitHub respondió ${res.status}.`);
+    const info = await res.json();
+    if (info.permissions && info.permissions.push === false) throw new ErrorValidacion('La clave no tiene permiso para escribir en el repositorio.');
+    await guardarConfigNube(c);
+    if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); }
+    return { ok: true };
+  }
+
   async function desconectarNube() {
     await guardarConfigNube(null);
     shaNube = null;
@@ -1293,6 +1309,7 @@
     borrarTodo: async () => { await iniciar(); return borrarTodo(); },
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
+    cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,
   };

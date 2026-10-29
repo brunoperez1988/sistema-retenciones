@@ -1440,6 +1440,21 @@ function seccionGithub(n) {
       <div class="${n.estado === 'error' ? 'mensaje error' : 'mensaje ok'}" style="margin:12px 0">${txt}</div>
       <div class="acciones"><button class="boton" type="button" id="nube-ahora">Guardar ahora</button>
         <button class="boton peligro" type="button" id="nube-desconectar">Desconectar de esta computadora</button></div>
+      <h3 style="margin-top:20px">Cambiar la clave de GitHub</h3>
+      <p class="nota">Si generaste una clave nueva (por ejemplo para dársela a tus compañeros, o porque venció), pegala acá. Tus datos no cambian.</p>
+      <form class="formulario" id="form-clave-nube" novalidate>
+        <div class="campo"><label for="nube-token-nuevo">Clave nueva (token)</label><input id="nube-token-nuevo" type="password" autocomplete="off" placeholder="github_pat_…"></div>
+        <div class="zona-mensaje"></div>
+        <div class="acciones"><button class="boton secundario" type="submit">Cambiar clave</button></div>
+      </form>
+      <details class="compartir" style="margin-top:16px"><summary><strong>¿Cómo trabajan tus compañeros con los mismos datos?</strong></summary>
+        <ol class="pasos">
+          <li>Cada compañero abre la página en su computadora y crea <strong>su propio</strong> usuario y contraseña (la contraseña de cada uno no se comparte).</li>
+          <li>En esa misma pantalla, en “¿Ya usás el sistema en otra computadora?”, pega la <strong>clave de GitHub</strong> que le pasaste. Se traen todos los datos.</li>
+          <li>Desde ahí, lo que carga cualquiera se guarda en GitHub y los demás lo ven al abrir la página.</li>
+        </ol>
+        <p class="nota">Si querés sacarle el acceso a alguien, generá una clave nueva en GitHub, borrá la vieja y pegá la nueva acá (y en la computadora de quienes sigan trabajando).</p>
+      </details>
     </section>`;
   }
   return `<section class="tarjeta">
@@ -1469,6 +1484,19 @@ function conectarSeccionGithub(n) {
       const r = await window.backendLocal.guardarEnNubeAhora().catch(() => null);
       aviso(r && r.estado === 'ok' ? 'Guardado en GitHub.' : 'No se pudo guardar en GitHub. Tus datos están a salvo en este navegador.');
       navegar();
+    });
+    const formClave = document.getElementById('form-clave-nube');
+    formClave.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const zona = formClave.querySelector('.zona-mensaje');
+      zona.innerHTML = '<p class="nota">Probando la clave con GitHub…</p>';
+      try {
+        await window.backendLocal.cambiarClaveNube(formClave.querySelector('#nube-token-nuevo').value);
+        aviso('Listo: la clave nueva quedó guardada en esta computadora.');
+        navegar();
+      } catch (e) {
+        zona.innerHTML = `<div class="mensaje error">${esc(e.message || 'No se pudo cambiar la clave.')}</div>`;
+      }
     });
     document.getElementById('nube-desconectar').addEventListener('click', () => {
       if (!confirm('¿Desconectar GitHub en esta computadora? Los datos que ya están en GitHub no se borran.')) return;
