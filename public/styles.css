@@ -386,3 +386,4 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 
 /* Constancia */
 .vista-constancia { width: 100%; min-height: 400px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; margin-top: 16px; }
+.dialogo.confirmar ul { margin: 6px 0 0; padding-left: 18px; }

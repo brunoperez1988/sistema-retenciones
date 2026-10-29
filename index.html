@@ -394,6 +394,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 
 /* Constancia */
 .vista-constancia { width: 100%; min-height: 400px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; margin-top: 16px; }
+.dialogo.confirmar ul { margin: 6px 0 0; padding-left: 18px; }
 
 </style>
 </head>
@@ -2385,8 +2386,15 @@ async function vistaPanel(_params, vigente) {
   const nombre = nombreMes(d.periodo).toLowerCase();
   const cerrar = document.getElementById('cerrar-mes');
   if (cerrar) cerrar.addEventListener('click', async () => {
-    const pend = (d.avisos || []).filter((a) => a.clave !== 'cierre').reduce((t, a) => t + a.cantidad, 0);
-    if (!confirm(`¿Cerrar ${nombre}?\n\nDespués nadie va a poder cargar, cambiar ni borrar retenciones o descuentos de ese mes (se puede reabrir).${pend ? `\n\nOjo: el Panel muestra ${pend} ${pend === 1 ? 'aviso pendiente' : 'avisos pendientes'}.` : ''}\n\nSe descarga el Excel "A abonar" del mes.`)) return;
+    const pendientes = (d.avisos || []).filter((a) => a.clave !== 'cierre' && a.cantidad);
+    const ok = await confirmar({
+      titulo: `¿Cerrar ${nombre}?`,
+      html: `<p>Después de cerrarlo, <strong>nadie va a poder cargar, cambiar ni borrar</strong> retenciones o descuentos de ${esc(nombre)}. Si hace falta, se puede reabrir.</p>
+        <p>Se va a descargar el Excel <strong>“A abonar”</strong> del mes.</p>
+        ${pendientes.length ? `<div class="mensaje error"><strong>Todavía hay pendientes:</strong><ul>${pendientes.map((a) => `<li>${esc(a.titulo)}: ${a.cantidad}</li>`).join('')}</ul></div>` : '<div class="mensaje ok">No hay pendientes para revisar.</div>'}`,
+      boton: `Sí, cerrar ${nombre}`,
+    });
+    if (!ok) return;
     cerrar.disabled = true;
     try {
       await api('/api/cierres', { metodo: 'POST', cuerpo: { mes: d.periodo } });
@@ -2397,7 +2405,12 @@ async function vistaPanel(_params, vigente) {
   });
   const reabrir = document.getElementById('reabrir-mes');
   if (reabrir) reabrir.addEventListener('click', async () => {
-    if (!confirm(`¿Reabrir ${nombre}? Se va a poder cargar y cambiar de nuevo. Queda anotado en el historial.`)) return;
+    const ok = await confirmar({
+      titulo: `¿Reabrir ${nombre}?`,
+      html: `<p>Se va a poder cargar, cambiar y borrar de nuevo en ${esc(nombre)}. Queda anotado en el historial con tu usuario.</p>`,
+      boton: `Sí, reabrir ${nombre}`,
+    });
+    if (!ok) return;
     try { await api(`/api/cierres/${d.periodo}`, { metodo: 'DELETE' }); aviso(`${nombreMes(d.periodo)} quedó abierto de nuevo.`); navegar(); }
     catch (e) { aviso(e.validacion ? e.message : MENSAJE_FALLA); }
   });
@@ -2405,6 +2418,23 @@ async function vistaPanel(_params, vigente) {
     if (!ev.target.value) return;
     estado.mes = ev.target.value;
     navegar();
+  });
+}
+
+// Ventana de confirmación de la página (no depende de los avisos del navegador). Devuelve true si se confirma.
+function confirmar({ titulo, html, boton }) {
+  return new Promise((resolver) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dialogo confirmar';
+    dlg.innerHTML = `<form method="dialog">
+      <h2>${esc(titulo)}</h2>
+      ${html}
+      <div class="acciones"><button class="boton ambar" value="si" id="cf-si">${esc(boton)}</button><button class="boton secundario" value="no" id="cf-no">Cancelar</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    dlg.addEventListener('close', () => { resolver(dlg.returnValue === 'si'); dlg.remove(); });
+    dlg.showModal();
+    dlg.querySelector('#cf-no').focus();
   });
 }
 
