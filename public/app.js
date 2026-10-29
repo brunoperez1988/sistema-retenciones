@@ -1553,7 +1553,7 @@ function pantallaAcceso(c) {
       <form class="formulario" id="form-acceso" novalidate>
         <div class="campo"><label for="ac-usuario">Usuario</label><input id="ac-usuario" autocomplete="username" value="${esc(c.usuario)}" autocapitalize="off" spellcheck="false"></div>
         <div class="campo"><label for="ac-clave">Contraseña</label><input id="ac-clave" type="password" autocomplete="${crear ? 'new-password' : 'current-password'}"></div>
-        ${crear ? '<div class="campo"><label for="ac-clave2">Repetí la contraseña</label><input id="ac-clave2" type="password" autocomplete="new-password"><span class="ayuda">Mínimo 8 caracteres.</span></div>' : ''}
+        ${crear ? '<div class="campo"><label for="ac-clave2">Repetí la contraseña</label><input id="ac-clave2" type="password" autocomplete="new-password"></div>' : ''}
         ${crear ? `<details class="traer-github"${c.usuario ? '' : ' open'}><summary>¿Ya usás el sistema en otra computadora? Traé tus datos de GitHub</summary>
           <div class="campo"><label for="ac-token">Clave de GitHub (token)</label><input id="ac-token" type="password" autocomplete="off" placeholder="github_pat_…"><span class="ayuda">Es la misma clave que pegaste en Respaldo → Guardar en GitHub. Si no la tenés, en <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">GitHub</a> tocá la clave “Retenciones” y luego <strong>Regenerate token</strong>. Dejalo vacío si empezás de cero.</span></div>
         </details>` : ''}

@@ -127,7 +127,7 @@
     if (leerCuenta()) throw new ErrorValidacion('Ya hay un usuario creado en este navegador.');
     const u = normalizarUsuario(usuario);
     if (!/^[a-z0-9._-]{3,40}$/.test(u)) throw new ErrorValidacion('El usuario debe tener entre 3 y 40 letras o números, sin espacios.');
-    if (String(contrasena || '').length < 8) throw new ErrorValidacion('La contraseña debe tener al menos 8 caracteres.');
+    if (!String(contrasena || '').length) throw new ErrorValidacion('Escribí una contraseña.');
     if (contrasena !== repetida) throw new ErrorValidacion('Las dos contraseñas no coinciden.');
     const sal = crypto.getRandomValues(new Uint8Array(16));
     const nueva = await derivarLlave(contrasena, sal, ITERACIONES);
@@ -157,7 +157,7 @@
     if (!c || !llave) throw new ErrorBloqueado();
     const vieja = await derivarLlave(String(actual || ''), deB64(c.sal), c.iteraciones);
     try { await descifrar({ cifrado: 1, iv: deB64(c.verif.iv), datos: deB64(c.verif.datos) }, vieja); } catch { throw new ErrorValidacion('La contraseña actual no es correcta.'); }
-    if (String(nueva || '').length < 8) throw new ErrorValidacion('La contraseña nueva debe tener al menos 8 caracteres.');
+    if (!String(nueva || '').length) throw new ErrorValidacion('Escribí la contraseña nueva.');
     if (nueva !== repetida) throw new ErrorValidacion('Las dos contraseñas nuevas no coinciden.');
     await iniciar();
     const sal = crypto.getRandomValues(new Uint8Array(16));
