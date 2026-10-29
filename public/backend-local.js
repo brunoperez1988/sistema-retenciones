@@ -252,12 +252,12 @@
     constructor(mensaje, status = 0) { super(mensaje); this.status = status; }
   }
 
-  async function github(config, metodo, ruta, cuerpo, accept = 'application/vnd.github+json') {
+  async function github(config, metodo, ruta, cuerpo, accept = 'application/vnd.github+json', extra = {}) {
     let res;
     try {
       res = await fetch(`https://api.github.com${ruta}`, {
         method: metodo,
-        headers: { Authorization: `Bearer ${config.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(cuerpo ? { 'Content-Type': 'application/json' } : {}) },
+        headers: { Authorization: `Bearer ${config.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(cuerpo ? { 'Content-Type': 'application/json' } : {}), ...extra },
         body: cuerpo ? JSON.stringify(cuerpo) : undefined,
         cache: 'no-store',
       });
@@ -272,17 +272,24 @@
   const rutaArchivo = (c) => `/repos/${c.repo}/contents/${ARCHIVO_NUBE}`;
 
   // Devuelve { datos, sha } del archivo en GitHub, o null si todavía no existe.
+  // Si el archivo no cambió desde la última lectura, GitHub responde 304 sin mandarlo de nuevo (rápido y no gasta el límite).
+  let ultimaLectura = null; // { repo, etag, valor }
   async function leerNube(c) {
-    const res = await github(c, 'GET', `${rutaArchivo(c)}?t=${Date.now()}`);
+    const previa = ultimaLectura && ultimaLectura.repo === c.repo ? ultimaLectura : null;
+    const res = await github(c, 'GET', rutaArchivo(c), null, undefined, previa ? { 'If-None-Match': previa.etag } : {});
+    if (res.status === 304 && previa) return structuredClone(previa.valor);
     if (res.status === 404) return null;
     if (!res.ok) throw new ErrorNube(`GitHub respondió ${res.status}.`, res.status);
+    const etag = res.headers.get('ETag');
     const info = await res.json();
     let texto = info.content ? deBase64(info.content) : '';
     if (!texto && info.size > 0) {
       const raw = await github(c, 'GET', `${rutaArchivo(c)}?t=${Date.now()}`, null, 'application/vnd.github.raw+json');
       texto = await raw.text();
     }
-    return { datos: JSON.parse(texto), sha: info.sha };
+    const valor = { datos: JSON.parse(texto), sha: info.sha };
+    ultimaLectura = etag ? { repo: c.repo, etag, valor: structuredClone(valor) } : null;
+    return valor;
   }
 
   function paraNube(e) {
@@ -539,7 +546,7 @@
     setInterval(() => {
       if (document.visibilityState !== 'visible' || !estado || !llave || !configNube() || subiendo || estado.pendienteNube) return;
       sincronizarAlAbrir(true);
-    }, 60000);
+    }, 10000);
   } catch { /* sin documento */ }
 
   const ahora = () => {
