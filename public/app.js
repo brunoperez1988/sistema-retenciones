@@ -234,7 +234,14 @@ if (LOCAL) {
     pastilla.title = n.mensaje || '';
   };
   window.addEventListener('nube-estado', (ev) => pintarNube(ev.detail));
-  window.addEventListener('datos-actualizados', () => { aviso('Se cargaron los datos más nuevos desde GitHub.'); navegar(); });
+  window.addEventListener('datos-actualizados', (ev) => {
+    const mensaje = (ev.detail && ev.detail.mensaje) || 'Llegaron cambios nuevos de otra persona.';
+    const activo = document.activeElement;
+    const escribiendo = activo && $app.contains(activo) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activo.tagName) && activo.value;
+    if (escribiendo || document.querySelector('dialog[open]')) { aviso(`${mensaje} Se van a ver cuando cambies de pantalla.`); return; }
+    aviso(mensaje);
+    navegar();
+  });
   pintarNube(window.backendLocal.estadoNube());
 
   const salir = document.createElement('button');
@@ -300,10 +307,18 @@ async function vistaPanel(_params, vigente) {
       <div>
         <h1>Panel de retenciones</h1>
         <p>${esc(nombreMes(d.periodo))} · ${d.ordenes} ${d.ordenes === 1 ? 'orden' : 'órdenes'}, ${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}</p>
+        <p class="estado-cierre">${d.cierre
+          ? `<span class="etiqueta-tipo cerrado">🔒 Mes cerrado</span> por ${esc(d.cierre.cerrado_por || 'sin usuario')} el ${esc(fecha(d.cierre.fecha))}`
+          : '<span class="etiqueta-tipo abierto">Mes abierto</span>'}</p>
       </div>
-      <div class="campo">
-        <label for="panel-mes">Mes</label>
-        <input type="month" id="panel-mes" value="${esc(d.periodo)}" required>
+      <div class="panel-controles">
+        <div class="campo">
+          <label for="panel-mes">Mes</label>
+          <input type="month" id="panel-mes" value="${esc(d.periodo)}" required>
+        </div>
+        ${d.cierre
+          ? '<button class="boton secundario" type="button" id="reabrir-mes">Reabrir mes</button>'
+          : '<button class="boton ambar" type="button" id="cerrar-mes">Cerrar mes</button>'}
       </div>
     </section>
 
@@ -316,6 +331,8 @@ async function vistaPanel(_params, vigente) {
       <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar${d.sinTope ? ' (sin contar las de porcentaje)' : ''}</div></div>
     </section>
 
+    ${seccionAvisos(d.avisos)}
+
     <div class="encabezado"><h2>Órdenes de ${esc(nombreMes(d.periodo).toLowerCase())}</h2>
       <a class="boton secundario" href="#/retenciones">+ Cargar retención</a></div>
     ${d.retenciones.length ? `<div class="ordenes">${d.retenciones.map(tarjetaOrden).join('')}</div>`
@@ -323,11 +340,48 @@ async function vistaPanel(_params, vigente) {
 
   conectarDefinirImporte($app, navegar);
   conectarDetalle($app, d.retenciones, navegar);
+  $app.querySelectorAll('[data-ir-mes]').forEach((b) => b.addEventListener('click', () => { estado.mes = b.dataset.irMes; navegar(); }));
+  const nombre = nombreMes(d.periodo).toLowerCase();
+  const cerrar = document.getElementById('cerrar-mes');
+  if (cerrar) cerrar.addEventListener('click', async () => {
+    const pend = (d.avisos || []).filter((a) => a.clave !== 'cierre').reduce((t, a) => t + a.cantidad, 0);
+    if (!confirm(`¿Cerrar ${nombre}?\n\nDespués nadie va a poder cargar, cambiar ni borrar retenciones o descuentos de ese mes (se puede reabrir).${pend ? `\n\nOjo: el Panel muestra ${pend} ${pend === 1 ? 'aviso pendiente' : 'avisos pendientes'}.` : ''}\n\nSe descarga el Excel "A abonar" del mes.`)) return;
+    cerrar.disabled = true;
+    try {
+      await api('/api/cierres', { metodo: 'POST', cuerpo: { mes: d.periodo } });
+      aviso(`Listo: ${nombre} quedó cerrado.`);
+      try { await descargarArchivo(`/api/reportes/abonar?periodo=${d.periodo}&formato=xlsx`, `a-abonar-${d.periodo}.xlsx`); } catch { aviso(`${nombreMes(d.periodo)} quedó cerrado, pero no se pudo descargar el Excel. Bajalo desde Reportes → A abonar.`); }
+      navegar();
+    } catch (e) { cerrar.disabled = false; aviso(e.validacion ? e.message : MENSAJE_FALLA); }
+  });
+  const reabrir = document.getElementById('reabrir-mes');
+  if (reabrir) reabrir.addEventListener('click', async () => {
+    if (!confirm(`¿Reabrir ${nombre}? Se va a poder cargar y cambiar de nuevo. Queda anotado en el historial.`)) return;
+    try { await api(`/api/cierres/${d.periodo}`, { metodo: 'DELETE' }); aviso(`${nombreMes(d.periodo)} quedó abierto de nuevo.`); navegar(); }
+    catch (e) { aviso(e.validacion ? e.message : MENSAJE_FALLA); }
+  });
   document.getElementById('panel-mes').addEventListener('change', (ev) => {
     if (!ev.target.value) return;
     estado.mes = ev.target.value;
     navegar();
   });
+}
+
+function seccionAvisos(avisos) {
+  if (!avisos || !avisos.length) return '<section class="avisos-panel vacio-ok"><span aria-hidden="true">✓</span> No hay pendientes para revisar este mes.</section>';
+  return `<section class="avisos-panel" aria-label="Pendientes para revisar">
+    <h2>Para revisar</h2>
+    <div class="avisos-lista">${avisos.map((a) => `
+      <div class="aviso-item ${esc(a.nivel)}">
+        <div class="aviso-cabeza"><strong>${esc(a.titulo)}</strong>${a.cantidad ? `<span class="aviso-cant">${a.cantidad}</span>` : ''}</div>
+        <p>${esc(a.ayuda)}</p>
+        ${a.mes ? `<button class="boton chico secundario" type="button" data-ir-mes="${esc(a.mes)}">Ir a ${esc(nombreMes(a.mes).toLowerCase())}</button>` : ''}
+        ${a.items.length ? `<details><summary>Ver ${a.items.length === 1 ? 'cuál' : `cuáles (${a.items.length})`}</summary><ul>
+          ${a.items.slice(0, 60).map((i) => `<li>${esc(i.texto)}<span class="sec">${esc(i.sub)}</span></li>`).join('')}
+          ${a.items.length > 60 ? `<li class="sec">y ${a.items.length - 60} más…</li>` : ''}</ul></details>` : ''}
+      </div>`).join('')}
+    </div>
+  </section>`;
 }
 
 function tarjetaOrden(r) {
@@ -564,6 +618,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
         ${r.completa || r.a_definir ? '' : `<a class="boton" href="#/descuentos?retencion=${r.id}">Registrar descuento</a>`}
         ${r.a_definir ? `<button class="boton ambar" type="button" ${atributosDefinir(r)}>Definir importe</button>` : ''}
         ${r.tipo === 'judicial' ? `<button class="boton secundario" type="button" data-benef="${r.id}">${r.beneficiario === 'A completar' ? 'Completar beneficiario' : 'Editar beneficiario'}</button>` : ''}
+        <a class="boton secundario" href="#/reportes?pestana=constancia&colaborador=${r.colaborador_id}">Constancia</a>
         <button class="boton secundario" type="button" data-cerrar>Cerrar</button>
       </div>`;
     dlg.querySelector('[data-cerrar]').addEventListener('click', () => dlg.close());
@@ -1037,13 +1092,17 @@ function tablaDescuentos(filas) {
 // ── Reportes ──
 
 const filtrosRep = { periodo: '', q: '', tipo: '', tipo_descuento: '', empresa_id: '', agrupar: 'beneficiario', pestana: 'planilla' };
+const filtrosHist = { q: '', usuario: '' };
+const filtrosConst = { colaborador_id: '', desde: '', hasta: '' };
 
-async function vistaReportes(_params, vigente) {
+async function vistaReportes(params, vigente) {
   const cat = await api('/api/catalogos');
   if (!vigente()) return;
+  if (params && params.get('pestana')) filtrosRep.pestana = params.get('pestana');
+  if (params && params.get('colaborador')) { filtrosConst.colaborador_id = params.get('colaborador'); history.replaceState(null, '', '#/reportes'); }
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Reportes</h1><p>Filtrá, revisá en pantalla y descargá en Excel o CSV.</p></div></div>
-    <section class="tarjeta">
+    <section class="tarjeta" id="rp-filtros">
       <h2>Filtros</h2>
       <div class="filtros">
         <div class="campo"><label for="rp-periodo">Mes</label><input type="month" id="rp-periodo" value="${esc(filtrosRep.periodo)}"></div>
@@ -1059,12 +1118,14 @@ async function vistaReportes(_params, vigente) {
       <button type="button" role="tab" data-pestana="planilla">Planilla de personas con retenciones</button>
       <button type="button" role="tab" data-pestana="entidades">Por entidad acreedora</button>
       <button type="button" role="tab" data-pestana="abonar">A abonar</button>
+      <button type="button" role="tab" data-pestana="constancia">Constancia por funcionario</button>
+      <button type="button" role="tab" data-pestana="historial">Historial de cambios</button>
     </div>
 
     <section class="tarjeta">
       <div class="encabezado" style="margin-bottom:12px">
         <div id="rp-opciones"></div>
-        <div class="acciones">
+        <div class="acciones" id="rp-botones">
           <button class="boton ambar" type="button" id="rp-xlsx">Descargar Excel</button>
           <button class="boton secundario" type="button" id="rp-csv">Descargar CSV</button>
         </div>
@@ -1086,6 +1147,12 @@ async function vistaReportes(_params, vigente) {
 
   const recargar = () => cargarEn(resultado, async () => {
     document.querySelectorAll('.pestanas button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.pestana === filtrosRep.pestana)));
+    const propia = ['constancia', 'historial'].includes(filtrosRep.pestana);
+    document.getElementById('rp-filtros').hidden = propia;
+    document.getElementById('rp-botones').hidden = propia;
+    document.getElementById('rp-descarga').innerHTML = '';
+    if (filtrosRep.pestana === 'constancia') { await pestanaConstancia(opciones, resultado, cat); return; }
+    if (filtrosRep.pestana === 'historial') { await pestanaHistorial(opciones, resultado); return; }
     if (filtrosRep.pestana === 'planilla') {
       opciones.innerHTML = '<h2>Planilla de personas con retenciones</h2>';
       const filas = await api(`/api/reportes/planilla?${consulta()}`);
@@ -1119,6 +1186,141 @@ async function vistaReportes(_params, vigente) {
   document.getElementById('rp-xlsx').addEventListener('click', () => bajar('xlsx'));
   document.getElementById('rp-csv').addEventListener('click', () => bajar('csv'));
   recargar();
+}
+
+// ── Historial de cambios ──
+
+async function pestanaHistorial(opciones, resultado) {
+  const h = await api(`/api/historial?${new URLSearchParams(Object.entries(filtrosHist).filter(([, v]) => v))}`);
+  opciones.innerHTML = `<h2>Historial de cambios</h2>
+    <div class="filtros" style="margin-top:10px">
+      <div class="campo"><label for="hi-usuario">Usuario</label><select id="hi-usuario"><option value="">Todos</option>${h.usuarios.map((u) => `<option>${esc(u)}</option>`).join('')}</select></div>
+      <div class="campo ancho"><label for="hi-q">Buscar</label><input type="search" id="hi-q" placeholder="Nombre, CI, acción, fecha" value="${esc(filtrosHist.q)}"></div>
+    </div>`;
+  const sel = document.getElementById('hi-usuario');
+  sel.value = filtrosHist.usuario;
+  sel.addEventListener('change', () => { filtrosHist.usuario = sel.value; pestanaHistorial(opciones, resultado); });
+  let espera;
+  document.getElementById('hi-q').addEventListener('input', (ev) => {
+    clearTimeout(espera);
+    espera = setTimeout(async () => {
+      filtrosHist.q = ev.target.value;
+      const r = await api(`/api/historial?${new URLSearchParams(Object.entries(filtrosHist).filter(([, v]) => v))}`);
+      resultado.innerHTML = tablaHistorial(r);
+    }, 250);
+  });
+  resultado.innerHTML = tablaHistorial(h);
+}
+
+function tablaHistorial(h) {
+  if (!h.filas.length) return '<div class="tabla-contenedor"><p class="vacio">Todavía no hay cambios anotados con estos filtros. Desde ahora, cada alta, descuento, borrado o cierre queda registrado acá con el usuario que lo hizo.</p></div>';
+  return `<div class="tabla-contenedor"><table>
+    <thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Qué hizo</th><th>Detalle</th></tr></thead>
+    <tbody>${h.filas.map((x) => `<tr><td>${esc(fecha(x.fecha))}<span class="sec">${esc(x.fecha.slice(11, 16))}</span></td><td>${esc(x.usuario || '—')}</td><td>${esc(x.accion)}</td><td>${esc(x.detalle)}</td></tr>`).join('')}</tbody>
+  </table></div>${h.total > h.filas.length ? `<p class="nota">Se muestran los últimos ${h.filas.length} de ${h.total}. Usá el buscador para encontrar uno en particular.</p>` : ''}`;
+}
+
+// ── Constancia por funcionario ──
+
+async function pestanaConstancia(opciones, resultado, cat) {
+  opciones.innerHTML = '<h2>Constancia por funcionario</h2>';
+  const col = cat.colaboradores.find((c) => String(c.id) === String(filtrosConst.colaborador_id));
+  resultado.innerHTML = `
+    <form class="formulario form-ancho" id="form-constancia" novalidate>
+      <div class="campo buscador" style="grid-column: span 2"><label for="co-colab-q">Funcionario <span class="obligatorio">*</span></label>
+        <input id="co-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="co-colab-lista">
+        <input type="hidden" id="co-colab">
+        <ul class="sugerencias" id="co-colab-lista" role="listbox" hidden></ul></div>
+      <div class="campo"><label for="co-desde">Desde</label><input type="month" id="co-desde" value="${esc(filtrosConst.desde)}"></div>
+      <div class="campo"><label for="co-hasta">Hasta</label><input type="month" id="co-hasta" value="${esc(filtrosConst.hasta)}"></div>
+      <p class="nota">Si dejás los meses vacíos, sale todo lo retenido a esa persona.</p>
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton" type="submit">Ver constancia</button>
+        <button class="boton ambar" type="button" id="co-imprimir" hidden>Imprimir o guardar en PDF</button></div>
+    </form>
+    <div id="co-vista"></div>`;
+  const form = document.getElementById('form-constancia');
+  const buscador = conectarBuscadorColaborador(document.getElementById('co-colab-q'), document.getElementById('co-colab'), document.getElementById('co-colab-lista'), cat.colaboradores);
+  if (col) { document.getElementById('co-colab').value = col.id; document.getElementById('co-colab-q').value = `${col.nombre} · CI ${cedula(col.cedula)}`; }
+  const vista = document.getElementById('co-vista');
+  const imprimir = document.getElementById('co-imprimir');
+  const zona = form.querySelector('.zona-mensaje');
+  const mostrar = async () => {
+    zona.innerHTML = '';
+    filtrosConst.colaborador_id = document.getElementById('co-colab').value;
+    filtrosConst.desde = document.getElementById('co-desde').value;
+    filtrosConst.hasta = document.getElementById('co-hasta').value;
+    if (!filtrosConst.colaborador_id) { zona.innerHTML = '<div class="mensaje error">Buscá el funcionario por cédula o nombre y elegilo de la lista.</div>'; return; }
+    try {
+      const c = await api(`/api/constancia?${new URLSearchParams(Object.entries(filtrosConst).filter(([, v]) => v))}`);
+      vista.innerHTML = '<iframe class="vista-constancia" title="Vista de la constancia"></iframe>';
+      const marco = vista.querySelector('iframe');
+      marco.srcdoc = htmlConstancia(c);
+      marco.addEventListener('load', () => { marco.style.height = `${marco.contentDocument.documentElement.scrollHeight + 20}px`; });
+      imprimir.hidden = false;
+      imprimir.onclick = () => { marco.contentWindow.focus(); marco.contentWindow.print(); };
+    } catch (e) {
+      zona.innerHTML = `<div class="mensaje error">${esc(e.validacion ? e.message : MENSAJE_FALLA)}</div>`;
+    }
+  };
+  form.addEventListener('submit', (ev) => { ev.preventDefault(); mostrar(); });
+  if (col) mostrar();
+  return buscador;
+}
+
+function htmlConstancia(c) {
+  const letras = document.querySelector('.marca .logo-letras')?.src || '';
+  const hoja = document.querySelector('.marca .logo-hoja')?.src || '';
+  const rango = c.desde || c.hasta
+    ? `${c.desde ? `desde ${nombreMes(c.desde).toLowerCase()}` : ''}${c.desde && c.hasta ? ' ' : ''}${c.hasta ? `hasta ${nombreMes(c.hasta).toLowerCase()}` : ''}`
+    : 'todo el período registrado';
+  const regla = (r) => (r.sin_tope ? `${textoPct(r)} · sin tope` : r.importe_total == null ? (r.regla || 'A definir') : moneda(r.importe_total));
+  const bloques = c.retenciones.map((r) => `
+    <section class="ret">
+      <div class="ret-cab"><strong>${esc(r.entidad)}</strong> · ${esc(tipoTxt[r.tipo] || '')} · ${esc(nombreMes(r.periodo))}</div>
+      <div class="ret-datos">
+        ${r.concepto ? `<span>Concepto: ${esc(r.concepto)}</span>` : ''}${r.expediente ? `<span>Expediente / Juzgado: ${esc(r.expediente)}</span>` : ''}
+        ${r.beneficiario ? `<span>Beneficiario: ${esc(r.beneficiario)}${r.beneficiario_doc ? ` (CI ${esc(cedula(r.beneficiario_doc))})` : ''}</span>` : ''}
+        <span>Retención: ${esc(regla(r))}</span>
+      </div>
+      ${r.descuentos_rango.length ? `<table><thead><tr><th>Fecha</th><th>Tipo</th><th>Empresa</th><th class="num">Importe</th></tr></thead><tbody>
+        ${r.descuentos_rango.map((d) => `<tr><td>${esc(fecha(d.fecha))}</td><td>${esc(d.tipo)}</td><td>${esc(d.empresa)}</td><td class="num">${moneda(d.importe)}</td></tr>`).join('')}
+        <tr class="sub"><td colspan="3">Subtotal</td><td class="num">${moneda(r.total_rango)}</td></tr></tbody></table>`
+        : '<p class="nada">Sin descuentos en el período.</p>'}
+    </section>`).join('');
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Constancia de retenciones - ${esc(c.colaborador.nombre)}</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #222; font-size: 12px; margin: 0; padding: 24px; background: #fff; }
+    .cab { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #9abb0d; padding-bottom: 12px; margin-bottom: 18px; }
+    .logo { position: relative; width: 150px; height: 66px; }
+    .logo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+    .cab .titulo { text-align: right; }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    .persona { background: #f3f5ee; border-radius: 6px; padding: 10px 12px; margin-bottom: 16px; line-height: 1.6; }
+    .ret { border: 1px solid #ddd; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; page-break-inside: avoid; }
+    .ret-cab { font-size: 13px; margin-bottom: 6px; }
+    .ret-datos span { display: block; color: #444; }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; }
+    th { background: #f3f5ee; font-size: 11px; }
+    .num { text-align: right; }
+    tr.sub td { font-weight: bold; border-top: 1px solid #ccc; }
+    .nada { color: #777; margin: 6px 0 0; }
+    .total { font-size: 15px; font-weight: bold; text-align: right; margin: 16px 0 36px; padding: 10px 12px; border-top: 2px solid #222; }
+    .firma { margin-top: 48px; display: flex; justify-content: space-between; gap: 40px; }
+    .firma div { flex: 1; border-top: 1px solid #555; padding-top: 4px; text-align: center; color: #555; }
+    .pie { margin-top: 24px; color: #777; font-size: 10px; }
+  </style></head><body>
+  <div class="cab"><div class="logo">${letras ? `<img src="${esc(letras)}" alt="QGLH">` : ''}${hoja ? `<img src="${esc(hoja)}" alt="">` : '<strong>QGLH</strong>'}</div>
+    <div class="titulo"><h1>Constancia de retenciones</h1><div>Emitida el ${esc(fecha(c.emitido))}</div></div></div>
+  <div class="persona"><strong>Funcionario:</strong> ${esc(c.colaborador.nombre)}<br><strong>Cédula:</strong> ${esc(cedula(c.colaborador.cedula))}<br><strong>Período:</strong> ${esc(rango)}</div>
+  ${bloques || '<p class="nada">No hay retenciones ni descuentos para esta persona en el período elegido.</p>'}
+  <div class="total">Total retenido en el período: ${moneda(c.total)}</div>
+  <div class="firma"><div>Firma</div><div>Aclaración</div></div>
+  <p class="pie">Constancia emitida por ${esc(c.usuario || 'QGLH')} con el Sistema de Control de Retenciones de QGLH.</p>
+  </body></html>`;
 }
 
 function tablaPlanilla(filas) {

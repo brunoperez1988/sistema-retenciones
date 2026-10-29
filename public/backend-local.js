@@ -191,7 +191,7 @@
   let iniciando = null;
 
   function estadoVacio() {
-    return { version: VERSION_DATOS, sig: 1, entidades: [], colaboradores: [], empresas: [], retenciones: [], descuentos: [], ultimoRespaldo: null, modificado: null };
+    return { version: VERSION_DATOS, sig: 1, entidades: [], colaboradores: [], empresas: [], retenciones: [], descuentos: [], cierres: [], historial: [], ultimoRespaldo: null, modificado: null };
   }
 
   async function iniciar() {
@@ -286,8 +286,7 @@
   }
 
   function paraNube(e) {
-    const { ultimoRespaldo, pendienteNube, ...resto } = e;
-    return JSON.stringify({ sistema: 'Sistema de Retenciones', ...resto }, null, 1);
+    return JSON.stringify({ sistema: 'Sistema de Retenciones', ...datosNube(e) }, null, 1);
   }
 
   async function subirAhora() {
@@ -296,20 +295,36 @@
     const enviado = estado;
     avisarNube({ estado: 'subiendo', mensaje: 'Guardando en GitHub…' });
     try {
-      const cuerpo = (sha) => ({ message: `Datos actualizados ${enviado.modificado || ahora()}`, content: aBase64(paraNube(enviado)), ...(sha ? { sha } : {}) });
+      let datos = datosNube(enviado);
+      let mensajeFusion = '';
+      const cuerpo = (sha) => ({ message: `Datos actualizados ${datos.modificado || ahora()}${usuarioActual ? ` por ${usuarioActual}` : ''}`, content: aBase64(paraNube(datos)), ...(sha ? { sha } : {}) });
       let res = await github(c, 'PUT', rutaArchivo(c), cuerpo(shaNube));
       if (res.status === 409 || res.status === 422) {
-        // Otra computadora guardó antes: tomamos su versión del archivo y subimos encima (gana el último cambio).
+        // Otra persona guardó antes: se juntan sus cambios con los de acá antes de subir.
         const actual = await leerNube(c);
         shaNube = actual ? actual.sha : null;
+        if (actual) {
+          const remoto = datosNube(validarEstado(actual.datos, { tolerante: true }));
+          const f = fusionar(enviado.baseNube, datos, remoto);
+          datos = { ...f.datos, modificado: ahora() };
+          mensajeFusion = textoFusion(f.conflictos);
+        }
         res = await github(c, 'PUT', rutaArchivo(c), cuerpo(shaNube));
       }
       if (!res.ok) throw new ErrorNube(`GitHub respondió ${res.status}.`, res.status);
       shaNube = (await res.json()).content.sha;
-      if (estado === enviado || (estado && estado.modificado === enviado.modificado)) {
-        await modificarSinMarca((e) => { e.pendienteNube = false; });
-      }
+      // Si mientras se subía hubo más cambios acá, se juntan con lo subido y quedan pendientes.
+      const actualLocal = estado;
+      let nuevo;
+      if (actualLocal === enviado || !actualLocal.pendienteNube) nuevo = { ...structuredClone(datos), pendienteNube: false };
+      else nuevo = { ...fusionar(datosNube(enviado), datosNube(actualLocal), datos).datos, pendienteNube: true };
+      nuevo.ultimoRespaldo = actualLocal.ultimoRespaldo;
+      nuevo.baseNube = structuredClone(datos);
+      await guardarEstado(nuevo);
+      estado = nuevo;
+      if (nuevo.pendienteNube) programarSubida();
       avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+      if (mensajeFusion) avisarCambiosAjenos(mensajeFusion);
     } catch (err) {
       avisarNube({ estado: 'error', mensaje: err instanceof ErrorNube ? err.message : 'No se pudo guardar en GitHub.' });
     }
@@ -325,34 +340,135 @@
     }, espera);
   }
 
-  // Al abrir: si GitHub tiene una versión más nueva, se usa esa; si la de este navegador es más nueva, se sube.
-  async function sincronizarAlAbrir() {
+  // Al abrir (y cada tanto): si otra persona guardó en GitHub, se traen sus cambios y se juntan con los de acá.
+  async function sincronizarAlAbrir(silencioso = false) {
     const c = configNube();
     if (!c) { avisarNube({ estado: 'apagado', mensaje: '' }); return; }
-    avisarNube({ estado: 'subiendo', mensaje: 'Revisando GitHub…' });
+    if (!silencioso) avisarNube({ estado: 'subiendo', mensaje: 'Revisando GitHub…' });
     try {
-      const remoto = await leerNube(c);
-      shaNube = remoto ? remoto.sha : null;
-      const remotoMasNuevo = remoto && (!estado.modificado || (remoto.datos.modificado || '') > estado.modificado);
-      if (remotoMasNuevo && !estado.pendienteNube) {
-        const nuevo = validarEstado(remoto.datos);
-        delete nuevo.sistema;
-        nuevo.ultimoRespaldo = estado.ultimoRespaldo;
-        nuevo.pendienteNube = false;
+      const leido = await leerNube(c);
+      if (!estado) return;
+      shaNube = leido ? leido.sha : null;
+      if (!leido) {
+        await modificarSinMarca((e) => { e.pendienteNube = true; });
+        programarSubida(0);
+        return;
+      }
+      const remoto = datosNube(validarEstado(leido.datos, { tolerante: true }));
+      const base = estado.baseNube || null;
+      const pendiente = Boolean(estado.pendienteNube);
+      const remotoCambio = base ? (remoto.modificado || '') !== (base.modificado || '') : (remoto.modificado || '') !== (estado.modificado || '');
+      if (!remotoCambio) {
+        if (!base) await modificarSinMarca((e) => { e.baseNube = structuredClone(remoto); });
+        if (pendiente) programarSubida(0); else avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+        return;
+      }
+      if (!pendiente && (base || !estado.modificado || (remoto.modificado || '') > estado.modificado)) {
+        // Nada pendiente acá: se usa la versión de GitHub tal cual.
+        const nuevo = { ...structuredClone(remoto), ultimoRespaldo: estado.ultimoRespaldo, pendienteNube: false, baseNube: structuredClone(remoto) };
         await guardarEstado(nuevo);
         estado = nuevo;
         avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
-        try { window.dispatchEvent(new CustomEvent('datos-actualizados')); } catch { /* sin eventos */ }
-      } else if (!remoto || estado.pendienteNube || (estado.modificado || '') > (remoto.datos.modificado || '')) {
-        estado = { ...estado, pendienteNube: true };
-        await guardarEstado(estado);
-        programarSubida(0);
-      } else {
-        avisarNube({ estado: 'ok', mensaje: 'Guardado en GitHub' });
+        avisarCambiosAjenos('');
+        return;
       }
+      // Hay cambios acá y en GitHub: se juntan y se suben.
+      const f = fusionar(base, datosNube(estado), remoto);
+      const nuevo = { ...f.datos, modificado: ahora(), ultimoRespaldo: estado.ultimoRespaldo, pendienteNube: true, baseNube: structuredClone(remoto) };
+      await guardarEstado(nuevo);
+      estado = nuevo;
+      programarSubida(0);
+      avisarCambiosAjenos(textoFusion(f.conflictos));
     } catch (err) {
-      avisarNube({ estado: 'error', mensaje: err instanceof ErrorNube ? err.message : 'No se pudo leer GitHub.' });
+      if (!silencioso) avisarNube({ estado: 'error', mensaje: err instanceof ErrorNube ? err.message : 'No se pudo leer GitHub.' });
     }
+  }
+
+  // ── Juntar cambios de dos computadoras ──
+  // base: lo último que esta computadora vio en GitHub; local: lo de acá; remoto: lo que hay ahora en GitHub.
+  // Cada registro se compara por su id: gana el lado que lo cambió; si cambiaron los dos, queda el de acá.
+  const COLECCIONES = ['entidades', 'colaboradores', 'empresas', 'retenciones', 'descuentos', 'cierres'];
+  const REFERENCIAS = ['colaborador_id', 'entidad_id', 'empresa_id', 'retencion_id', 'origen_id'];
+  const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+  function datosNube(e) {
+    const { ultimoRespaldo, pendienteNube, baseNube, sistema, ...resto } = e;
+    return resto;
+  }
+
+  function fusionar(base, local, remoto) {
+    local = structuredClone(local);
+    let conflictos = 0;
+    const idsDe = (e) => new Set(COLECCIONES.flatMap((c) => (e[c] || []).map((x) => x.id)));
+    if (base) {
+      // Dos personas pudieron crear cosas con el mismo número: las nuevas de acá se renumeran.
+      const idsBase = idsDe(base);
+      const idsRem = idsDe(remoto);
+      let sig = Math.max(local.sig || 1, remoto.sig || 1, ...idsRem, ...idsDe(local)) + 1;
+      const cambio = new Map();
+      for (const c of COLECCIONES) for (const x of local[c] || []) if (!idsBase.has(x.id) && idsRem.has(x.id)) cambio.set(x.id, sig++);
+      if (cambio.size) {
+        for (const c of COLECCIONES) for (const x of local[c] || []) {
+          if (cambio.has(x.id)) x.id = cambio.get(x.id);
+          for (const r of REFERENCIAS) if (x[r] != null && cambio.has(x[r])) x[r] = cambio.get(x[r]);
+        }
+        local.sig = sig;
+      }
+    }
+    const res = { ...remoto };
+    const fuentes = {};
+    for (const c of COLECCIONES) {
+      const B = new Map(((base && base[c]) || []).map((x) => [x.id, x]));
+      const L = new Map((local[c] || []).map((x) => [x.id, x]));
+      const R = new Map((remoto[c] || []).map((x) => [x.id, x]));
+      fuentes[c] = [L, R, B];
+      const salida = [];
+      for (const [id, r] of R) {
+        const l = L.get(id);
+        const b = B.get(id);
+        if (l) {
+          if (!b) salida.push(l);
+          else if (igual(l, b)) salida.push(r);
+          else if (igual(r, b)) salida.push(l);
+          else { if (!igual(l, r)) conflictos += 1; salida.push(l); }
+        } else if (!b) salida.push(r);
+        else if (!igual(r, b)) { conflictos += 1; salida.push(r); } // se borró acá pero allá lo cambiaron
+      }
+      for (const [id, l] of L) {
+        if (R.has(id)) continue;
+        const b = B.get(id);
+        if (!b) salida.push(l);
+        else if (!igual(l, b)) { conflictos += 1; salida.push(l); } // se borró allá pero acá lo cambiaron
+      }
+      res[c] = salida;
+    }
+    // Historial: se suman los registros de los dos lados.
+    const hist = new Map();
+    for (const h of [...(remoto.historial || []), ...(local.historial || [])]) if (h && h.k && !hist.has(h.k)) hist.set(h.k, h);
+    res.historial = [...hist.values()].sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(-MAX_HISTORIAL);
+    // Lo que quedó apuntando a algo borrado se recupera de donde esté (o se descarta si no está en ningún lado).
+    const recuperar = (c, id) => {
+      if (res[c].some((x) => x.id === id)) return true;
+      for (const M of fuentes[c]) if (M.has(id)) { res[c].push(M.get(id)); return true; }
+      return false;
+    };
+    res.descuentos = res.descuentos.filter((d) => recuperar('retenciones', d.retencion_id) && recuperar('empresas', d.empresa_id));
+    res.retenciones = res.retenciones.filter((r) => recuperar('colaboradores', r.colaborador_id) && recuperar('entidades', r.entidad_id));
+    const ids = idsDe(res);
+    res.descuentos = res.descuentos.filter((d) => ids.has(d.retencion_id));
+    res.sig = Math.max(local.sig || 1, remoto.sig || 1, ...ids) + 1;
+    res.ejemplos = Boolean(local.ejemplos && remoto.ejemplos);
+    return { datos: res, conflictos };
+  }
+
+  function textoFusion(conflictos) {
+    return conflictos
+      ? `Otra persona cambió los mismos datos al mismo tiempo (${conflictos} ${conflictos === 1 ? 'registro' : 'registros'}): quedó tu versión. Revisalo en Reportes → Historial de cambios.`
+      : 'Se sumaron los cambios que hizo otra persona.';
+  }
+
+  function avisarCambiosAjenos(mensaje) {
+    try { window.dispatchEvent(new CustomEvent('datos-actualizados', { detail: { mensaje } })); } catch { /* sin eventos */ }
   }
 
   // Conecta un repositorio. modo: 'traer' usa los datos de GitHub; 'subir' sube los de este navegador.
@@ -373,8 +489,8 @@
     await guardarConfigNube(c);
     shaNube = remoto ? remoto.sha : null;
     if (remoto && modo === 'traer') {
-      const nuevo = validarEstado(remoto.datos);
-      delete nuevo.sistema;
+      const nuevo = datosNube(validarEstado(remoto.datos, { tolerante: true }));
+      nuevo.baseNube = structuredClone(nuevo);
       nuevo.ultimoRespaldo = estado.ultimoRespaldo;
       nuevo.pendienteNube = false;
       await guardarEstado(nuevo);
@@ -418,8 +534,12 @@
   try {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState !== 'visible' || !estado || !configNube() || subiendo) return;
-      if (estado.pendienteNube) programarSubida(0);
+      if (estado.pendienteNube) programarSubida(0); else sincronizarAlAbrir(true);
     });
+    setInterval(() => {
+      if (document.visibilityState !== 'visible' || !estado || !llave || !configNube() || subiendo || estado.pendienteNube) return;
+      sincronizarAlAbrir(true);
+    }, 60000);
   } catch { /* sin documento */ }
 
   const ahora = () => {
@@ -429,10 +549,24 @@
   };
 
   // Aplica un cambio sobre una copia; solo si se guarda bien reemplaza el estado.
+  const MAX_HISTORIAL = 3000;
+  let registroPendiente = null; // lo que se anota en el historial con el próximo cambio
+
+  function entradaHistorial(accion, detalle) {
+    return { k: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, fecha: ahora(), usuario: usuarioActual || '', accion, detalle: detalle || '' };
+  }
+
   async function modificar(fn) {
     const copia = structuredClone(estado);
     const resultado = fn(copia);
     copia.modificado = ahora();
+    if (registroPendiente) {
+      const r = registroPendiente;
+      registroPendiente = null;
+      let detalle = '';
+      try { detalle = typeof r.detalle === 'function' ? r.detalle(resultado, copia) : r.detalle; } catch { /* sin detalle */ }
+      copia.historial = [...(copia.historial || []), entradaHistorial(r.accion, detalle)].slice(-MAX_HISTORIAL);
+    }
     if (configNube()) copia.pendienteNube = true;
     await guardarEstado(copia);
     estado = copia;
@@ -655,7 +789,8 @@
     const saldoAnterior = filas.filter((x) => x.arrastre).reduce((a, x) => a + (x.importe_total || 0) - previo.get(x.id), 0);
     const pactado = filas.reduce((a, x) => a + (x.importe_total || 0) - (previo.get(x.id) || 0), 0);
     const retenido = filas.reduce((a, x) => a + x.descontado_real - (previo.get(x.id) || 0), 0);
-    return { periodo: mes, sinTope: filas.filter((x) => x.sin_tope).length, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: filas.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - (retenido - filas.filter((x) => x.sin_tope).reduce((a, x) => a + x.descontado_real, 0)), retenciones: filas };
+    const cierre = cierreDe(mes);
+    return { periodo: mes, cierre, avisos: avisosDelMes(mes, filas), sinTope: filas.filter((x) => x.sin_tope).length, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: filas.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - (retenido - filas.filter((x) => x.sin_tope).reduce((a, x) => a + x.descontado_real, 0)), retenciones: filas };
   }
 
   function reporteAbonar(f) {
@@ -669,6 +804,134 @@
     }
     const lista = [...grupos.values()].map(({ tipos, ...g }) => ({ ...g, tipo: [...tipos].join(' / ') })).sort((a, b) => a.grupo.localeCompare(b.grupo, 'es'));
     return { agrupar, grupos: lista, total: lista.reduce((a, g) => a + g.abonar, 0) };
+  }
+
+  // ── Cierre de mes ──
+  // Un mes cerrado no deja cargar, cambiar ni borrar retenciones o descuentos de ese mes. Se puede reabrir.
+
+  const nombreMesTxt = (m) => { const [a, x] = m.split('-').map(Number); return `${['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'setiembre', 'octubre', 'noviembre', 'diciembre'][x - 1]} de ${a}`; };
+  const cierreDe = (m) => (estado.cierres || []).find((x) => x.mes === m) || null;
+
+  function exigirAbierto(mes, que) {
+    if (cierreDe(mes)) throw new ErrorValidacion(`No se puede ${que}: ${nombreMesTxt(mes)} está cerrado. Si hace falta, reabrilo desde el Panel.`, 409);
+    return mes;
+  }
+
+  function cerrarMes(datos) {
+    const mes = periodo(datos.mes);
+    if (cierreDe(mes)) throw new ErrorValidacion(`${nombreMesTxt(mes)} ya está cerrado.`, 409);
+    return modificar((e) => {
+      e.cierres = [...(e.cierres || []), { id: e.sig++, mes, cerrado_por: usuarioActual || '', fecha: ahora() }];
+      return { ok: true, mes };
+    });
+  }
+
+  function reabrirMes(mes) {
+    mes = periodo(mes);
+    if (!cierreDe(mes)) throw new ErrorValidacion(`${nombreMesTxt(mes)} no está cerrado.`, 404);
+    return modificar((e) => { e.cierres = e.cierres.filter((x) => x.mes !== mes); return { ok: true, mes }; });
+  }
+
+  // ── Avisos del Panel: lo que está pendiente de revisar ──
+
+  const pesosTxt = (c) => `$ ${(c / 100).toLocaleString('es-UY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const mayuscula = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+  function avisosDelMes(mes, filas) {
+    const avisos = [];
+    const item = (x, sub) => ({ id: x.id, texto: `${x.colaborador} · ${x.entidad}`, sub: sub || `CI ${x.cedula}` });
+    const conDescuentoEnMes = new Set(estado.descuentos.filter((d) => d.fecha.slice(0, 7) === mes).map((d) => d.retencion_id));
+    const agregar = (clave, nivel, titulo, ayuda, items) => { if (items.length) avisos.push({ clave, nivel, titulo, ayuda, cantidad: items.length, items }); };
+
+    const [a, x] = mes.split('-').map(Number);
+    const anterior = x === 1 ? `${a - 1}-12` : `${a}-${String(x - 1).padStart(2, '0')}`;
+    if (!cierreDe(anterior) && estado.retenciones.some((r) => r.periodo === anterior)) {
+      avisos.push({ clave: 'cierre', nivel: 'alerta', titulo: `${mayuscula(nombreMesTxt(anterior))} no está cerrado`, ayuda: 'Cuando esté todo cargado, cerralo para que nadie lo cambie por error.', cantidad: 0, items: [], mes: anterior });
+    }
+    agregar('beneficiario', 'alerta', 'Judiciales sin datos del beneficiario', 'Completá el beneficiario para poder pagarle.',
+      filas.filter((r) => r.tipo === 'judicial' && (!r.beneficiario || r.beneficiario === 'A completar')).map((r) => item(r)));
+    agregar('a-definir', 'alerta', 'Importe a definir', 'Tienen una regla (por ejemplo BPC) pero falta el importe en pesos.',
+      filas.filter((r) => r.a_definir).map((r) => item(r, `CI ${r.cedula} · ${r.regla || 'sin regla'}`)));
+    agregar('sin-descuento', 'info', 'Sin ningún descuento este mes', 'Retenciones que todavía no tienen descuentos cargados en el mes.',
+      filas.filter((r) => !r.completa && !r.a_definir && !conDescuentoEnMes.has(r.id)).map((r) => item(r, r.sin_tope ? `CI ${r.cedula} · ${r.regla || 'porcentaje'}` : `CI ${r.cedula}`)));
+    agregar('otros-arrastre', 'info', 'Otros descuentos que vienen de meses anteriores', 'Adelantos o ajustes que todavía no se terminaron de descontar.',
+      filas.filter((r) => r.arrastre && r.tipo === 'otros').map((r) => item(r, `Desde ${nombreMesTxt(r.periodo)} · falta ${pesosTxt(r.pendiente)}`)));
+    agregar('excedido', 'error', 'Se descontó más que el total', 'Puede pasar si dos personas cargaron el mismo descuento a la vez. Revisá y borrá el que sobra.',
+      listarRetenciones().filter((r) => r.importe_total != null && r.descontado_real > r.importe_total).map((r) => item(r, `CI ${r.cedula} · ${nombreMesTxt(r.periodo)} · ${pesosTxt(r.descontado_real - r.importe_total)} de más`)));
+    return avisos;
+  }
+
+  // ── Historial de cambios ──
+
+  function listarHistorial(f = {}) {
+    let filas = [...(estado.historial || [])].reverse();
+    if (f.usuario) filas = filas.filter((h) => normalizar(h.usuario) === normalizar(f.usuario));
+    filas = filtrarTexto(filas, f.q, (h) => [h.usuario, h.accion, h.detalle, h.fecha]);
+    return { usuarios: [...new Set((estado.historial || []).map((h) => h.usuario).filter(Boolean))].sort(), total: filas.length, filas: filas.slice(0, 500) };
+  }
+
+  const nombreCol = (id) => (estado.colaboradores.find((x) => x.id === Number(id)) || {}).nombre || '';
+  const nombreEnt = (id) => (estado.entidades.find((x) => x.id === Number(id)) || {}).nombre || '';
+  const descRet = (r) => (r ? `${nombreCol(r.colaborador_id)} · ${nombreEnt(r.entidad_id)} · ${nombreMesTxt(r.periodo)}` : '');
+  const fechaTxt = (f) => String(f || '').split('-').reverse().join('/');
+
+  // Qué se anota en el historial para cada operación (se arma antes de hacerla, para tener los nombres).
+  function describir(metodo, ruta, c) {
+    let m;
+    const ret = (id) => estado.retenciones.find((r) => r.id === Number(id));
+    if (metodo === 'POST') {
+      if (ruta === '/api/entidades') return { accion: 'Alta de entidad', detalle: String(c.nombre || '').trim() };
+      if (ruta === '/api/colaboradores') return { accion: 'Alta de colaborador', detalle: `${String(c.nombre || '').trim()} · CI ${String(c.cedula || '').replace(/\D/g, '')}` };
+      if (ruta === '/api/empresas') return { accion: 'Alta de empresa', detalle: String(c.nombre || '').trim() };
+      if (ruta === '/api/retenciones') {
+        return { accion: 'Alta de retención', detalle: (res, e) => { const r = e.retenciones.find((x) => x.id === res.id); return `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}`; } };
+      }
+      if (ruta === '/api/descuentos') {
+        return { accion: 'Descuento registrado', detalle: (res, e) => { const d = e.descuentos.find((x) => x.id === res.id); return `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${d.tipo} · ${(e.empresas.find((x) => x.id === d.empresa_id) || {}).nombre || ''} · ${fechaTxt(d.fecha)}`; } };
+      }
+      if (ruta === '/api/importar') {
+        return { accion: 'Importación de archivo', detalle: (res) => [res.retenciones ? `${res.retenciones} retenciones` : '', res.colaboradores ? `${res.colaboradores} colaboradores` : '', res.empresas ? `${res.empresas} empresas` : ''].filter(Boolean).join(', ') || 'Sin datos nuevos' };
+      }
+      if (ruta === '/api/cierres') return { accion: 'Mes cerrado', detalle: c.mes ? nombreMesTxt(periodo(c.mes)) : '' };
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) { const r = ret(m[1]); return { accion: 'Importe definido', detalle: () => `${descRet(r)} · ${pesosTxt(importe(c.importe_total))}` }; }
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return { accion: 'Dejó de repetirse', detalle: descRet(ret(m[1])) };
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/beneficiario$/))) return { accion: 'Beneficiario editado', detalle: `${descRet(ret(m[1]))} · ${String(c.beneficiario || '').trim()}` };
+    }
+    if (metodo === 'DELETE') {
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) { const r = ret(m[1]); return { accion: 'Retención eliminada', detalle: r ? `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}` : '' }; }
+      if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) { const d = estado.descuentos.find((x) => x.id === Number(m[1])); return { accion: 'Descuento eliminado', detalle: d ? `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${fechaTxt(d.fecha)}` : '' }; }
+      if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return { accion: 'Empresa eliminada', detalle: (estado.empresas.find((x) => x.id === Number(m[1])) || {}).nombre || '' };
+      if ((m = ruta.match(/^\/api\/cierres\/(\d{4}-\d{2})$/))) return { accion: 'Mes reabierto', detalle: nombreMesTxt(m[1]) };
+    }
+    return null;
+  }
+
+  // ── Constancia por funcionario ──
+  // Lo retenido a una persona entre dos meses (según la fecha de cada descuento), con sus retenciones y descuentos.
+
+  function constancia(f) {
+    const col = estado.colaboradores.find((x) => x.id === Number(f.colaborador_id));
+    if (!col) throw new ErrorValidacion('Elegí el colaborador.');
+    const desde = f.desde ? periodo(f.desde) : '0000-00';
+    const hasta = f.hasta ? periodo(f.hasta) : '9999-12';
+    if (desde > hasta) throw new ErrorValidacion('El mes "desde" no puede ser posterior al mes "hasta".');
+    const emp = new Map(estado.empresas.map((x) => [x.id, x.nombre]));
+    const enRango = (m) => m >= desde && m <= hasta;
+    const retenciones = listarRetenciones({ colaborador_id: col.id })
+      .map((r) => {
+        const descuentos = estado.descuentos.filter((d) => d.retencion_id === r.id && enRango(d.fecha.slice(0, 7)))
+          .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.id - b.id)
+          .map((d) => ({ fecha: d.fecha, tipo: d.tipo, empresa: emp.get(d.empresa_id) || '', importe: d.importe }));
+        return { ...r, descuentos_rango: descuentos, total_rango: descuentos.reduce((a, d) => a + d.importe, 0) };
+      })
+      .filter((r) => r.descuentos_rango.length || enRango(r.periodo))
+      .sort((a, b) => a.periodo.localeCompare(b.periodo) || a.entidad.localeCompare(b.entidad, 'es'));
+    return {
+      colaborador: { id: col.id, nombre: col.nombre, cedula: col.cedula },
+      desde: f.desde ? desde : '', hasta: f.hasta ? hasta : '',
+      retenciones, total: retenciones.reduce((a, r) => a + r.total_rango, 0),
+      emitido: ahora(), usuario: usuarioActual || '',
+    };
   }
 
   // ── Altas, bajas y la regla del tope ──
@@ -700,6 +963,7 @@
     if (!estado.colaboradores.some((c) => c.id === colaborador_id)) throw new ErrorValidacion('El colaborador elegido no existe.');
     const entidad = estado.entidades.find((x) => x.id === entidad_id);
     if (!entidad) throw new ErrorValidacion('La entidad elegida no existe.');
+    exigirAbierto(periodo(datos.periodo), 'cargar retenciones');
     const fila = {
       colaborador_id, entidad_id,
       periodo: periodo(datos.periodo),
@@ -745,7 +1009,7 @@
     for (const t of e.retenciones.filter((r) => r.mensual && sePuedeRepetir(ent.get(r.entidad_id)))) {
       for (let m = mesSiguiente(t.periodo); m <= limite; m = mesSiguiente(m)) {
         if ((t.hasta && m > t.hasta) || (t.baja && m >= t.baja)) break;
-        if (hay.has(`${t.id}|${m}`) || (t.omitidos || []).includes(m)) continue;
+        if (hay.has(`${t.id}|${m}`) || (t.omitidos || []).includes(m) || (e.cierres || []).some((x) => x.mes === m)) continue;
         faltan.push({
           colaborador_id: t.colaborador_id, entidad_id: t.entidad_id, periodo: m, regla: t.regla || '',
           importe_total: esPorcentaje(t.regla) ? null : t.importe_total,
@@ -801,6 +1065,7 @@
     const n = Number(id);
     const ret = estado.retenciones.find((r) => r.id === n);
     if (!ret) throw new ErrorValidacion('La retención no existe.', 404);
+    exigirAbierto(ret.periodo, 'cambiar el importe');
     const total = importe(datos.importe_total, 'el importe total');
     if (total < descontadoDe(estado, n)) throw new ErrorValidacion('El importe total no puede ser menor a lo que ya se descontó.', 409);
     return modificar((e) => { e.retenciones.find((r) => r.id === n).importe_total = total; return { ok: true }; });
@@ -846,7 +1111,7 @@
         let ent = entPorNombre.get(normalizar(x.entidad));
         if (!ent) { ent = { id: e.sig++, nombre: texto(x.entidad, 'entidad'), tipo }; e.entidades.push(ent); entPorNombre.set(normalizar(ent.nombre), ent); res.entidades += 1; }
         const r = {
-          colaborador_id: col.id, entidad_id: ent.id, periodo: periodo(x.periodo),
+          colaborador_id: col.id, entidad_id: ent.id, periodo: exigirAbierto(periodo(x.periodo), 'importar retenciones'),
           regla: reglaCanonica(x.regla),
           importe_total: x.importe_total == null ? null : importe(x.importe_total, 'el importe total'),
           concepto: texto(x.concepto, 'concepto', { obligatorio: false }),
@@ -895,6 +1160,7 @@
     const n = Number(id);
     if (!estado.retenciones.some((r) => r.id === n)) throw new ErrorValidacion('La retención no existe.', 404);
     if (estado.descuentos.some((d) => d.retencion_id === n)) throw new ErrorValidacion('No se puede eliminar una retención que ya tiene descuentos.', 409);
+    exigirAbierto(estado.retenciones.find((r) => r.id === n).periodo, 'eliminar retenciones');
     return modificar((e) => {
       const r = e.retenciones.find((x) => x.id === n);
       // Si era una copia mensual, que no se vuelva a crear para ese mes.
@@ -917,6 +1183,7 @@
       fecha: fecha(datos.fecha),
     };
     if (!TIPOS_DESCUENTO.includes(fila.tipo)) throw new ErrorValidacion('Elegí el tipo de descuento.');
+    exigirAbierto(fila.fecha.slice(0, 7), 'registrar descuentos');
     if (!estado.empresas.some((x) => x.id === fila.empresa_id)) throw new ErrorValidacion('La empresa elegida no existe.');
     return modificar((e) => {
       // Regla de oro, verificada sobre los datos que se van a guardar.
@@ -943,17 +1210,18 @@
   function eliminarDescuento(id) {
     const n = Number(id);
     if (!estado.descuentos.some((d) => d.id === n)) throw new ErrorValidacion('El descuento no existe.', 404);
+    exigirAbierto(estado.descuentos.find((d) => d.id === n).fecha.slice(0, 7), 'eliminar descuentos');
     return modificar((e) => { e.descuentos = e.descuentos.filter((d) => d.id !== n); return { ok: true }; });
   }
 
   // Revisa un respaldo completo antes de aceptarlo (todas las reglas, incluido el tope).
-  function validarEstado(e) {
+  function validarEstado(e, { tolerante = false } = {}) {
     if (!e || typeof e !== 'object' || !Array.isArray(e.retenciones) || !Array.isArray(e.descuentos)
       || !Array.isArray(e.entidades) || !Array.isArray(e.colaboradores) || !Array.isArray(e.empresas)) {
       throw new ErrorValidacion('El archivo no es un respaldo del Sistema de Retenciones.');
     }
     const ids = new Set();
-    for (const lista of [e.entidades, e.colaboradores, e.empresas, e.retenciones, e.descuentos]) {
+    for (const lista of [e.entidades, e.colaboradores, e.empresas, e.retenciones, e.descuentos, e.cierres || []]) {
       for (const x of lista) {
         if (!Number.isInteger(x.id) || ids.has(x.id)) throw new ErrorValidacion('El respaldo tiene datos dañados (identificadores).');
         ids.add(x.id);
@@ -970,11 +1238,13 @@
     for (const d of e.descuentos) {
       if (!rets.has(d.retencion_id) || !emps.has(d.empresa_id) || !(Number.isInteger(d.importe) && d.importe > 0)) throw new ErrorValidacion('El respaldo tiene un descuento con datos dañados.');
     }
-    for (const r of e.retenciones) {
+    for (const r of tolerante ? [] : e.retenciones) {
       if (r.importe_total != null && descontadoDe(e, r.id) > r.importe_total) throw new ErrorValidacion('El respaldo tiene descuentos que superan el total de una retención.');
     }
     const maxId = Math.max(0, ...ids);
-    return { ...estadoVacio(), ...e, version: VERSION_DATOS, sig: Math.max(Number(e.sig) || 0, maxId + 1) };
+    const limpio = { ...estadoVacio(), ...e, version: VERSION_DATOS, sig: Math.max(Number(e.sig) || 0, maxId + 1) };
+    delete limpio.baseNube;
+    return limpio;
   }
 
   // ── Respaldo ──
@@ -997,6 +1267,7 @@
     const copia = { ...structuredClone(estado), sistema: 'Sistema de Retenciones', exportado: ahora() };
     delete copia.ultimoRespaldo;
     delete copia.pendienteNube;
+    delete copia.baseNube;
     const blob = new Blob([JSON.stringify(copia, null, 1)], { type: 'application/json' });
     await modificarSinMarca((e) => { e.ultimoRespaldo = ahora(); });
     return blob;
@@ -1016,7 +1287,9 @@
     delete nuevo.sistema; delete nuevo.exportado;
     nuevo.ultimoRespaldo = ahora();
     nuevo.modificado = ahora();
+    nuevo.historial = [...(nuevo.historial || []), entradaHistorial('Respaldo recuperado', 'Se reemplazaron todos los datos por los de un archivo de respaldo')].slice(-MAX_HISTORIAL);
     nuevo.pendienteNube = Boolean(configNube());
+    if (estado.baseNube) nuevo.baseNube = estado.baseNube; // así lo borrado o reemplazado también se borra en GitHub
     await guardarEstado(nuevo);
     estado = nuevo;
     programarSubida(0);
@@ -1026,7 +1299,9 @@
   async function borrarTodo() {
     const nuevo = estadoVacio();
     nuevo.modificado = ahora();
+    nuevo.historial = [entradaHistorial('Datos borrados', 'Se borraron todos los datos para empezar de cero')];
     nuevo.pendienteNube = Boolean(configNube());
+    if (estado.baseNube) nuevo.baseNube = estado.baseNube; // así lo borrado o reemplazado también se borra en GitHub
     await guardarEstado(nuevo);
     estado = nuevo;
     programarSubida(0);
@@ -1270,8 +1545,21 @@
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
       if (ruta === '/api/reportes/entidades') return reportePorEntidad(f);
       if (ruta === '/api/datos') return infoDatos();
+      if (ruta === '/api/historial') return listarHistorial(f);
+      if (ruta === '/api/constancia') return constancia(f);
     }
+    registroPendiente = metodo === 'GET' ? null : (() => { try { return describir(metodo, ruta, cuerpo || {}); } catch { return null; } })();
+    try {
+      return await atender(metodo, ruta, cuerpo);
+    } finally {
+      registroPendiente = null;
+    }
+  }
+
+  async function atender(metodo, ruta, cuerpo) {
+    let m;
     if (metodo === 'POST') {
+      if (ruta === '/api/cierres') return cerrarMes(cuerpo || {});
       if (ruta === '/api/entidades') return crearEntidad(cuerpo || {});
       if (ruta === '/api/colaboradores') return crearColaborador(cuerpo || {});
       if (ruta === '/api/empresas') return crearEmpresa(cuerpo || {});
@@ -1286,6 +1574,7 @@
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) return eliminarRetencion(m[1]);
       if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) return eliminarDescuento(m[1]);
       if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return eliminarEmpresa(m[1]);
+      if ((m = ruta.match(/^\/api\/cierres\/(\d{4}-\d{2})$/))) return reabrirMes(m[1]);
     }
     throw new ErrorValidacion('Ruta no encontrada.', 404);
   }
