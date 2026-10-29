@@ -165,6 +165,8 @@
     const verif = await cifrar({ usuario: c.usuario }, llaveNueva);
     await guardarRegistro(CLAVE, await cifrar(estado, llaveNueva));
     await guardarRegistro('nube', nubeCfg ? await cifrar(nubeCfg, llaveNueva) : null);
+    const pruebaAdmin = await leerPruebaAdmin();
+    await guardarRegistro('admin', pruebaAdmin ? await cifrar(pruebaAdmin, llaveNueva) : null);
     localStorage.setItem(CLAVE_CUENTA, JSON.stringify({ usuario: c.usuario, sal: b64(sal), iteraciones: ITERACIONES, verif: { iv: b64(verif.iv), datos: b64(verif.datos) } }));
     llave = llaveNueva;
     return { ok: true };
@@ -174,11 +176,63 @@
   async function olvideContrasena() {
     await guardarRegistro(CLAVE, null);
     await guardarRegistro('nube', null);
+    await guardarRegistro('admin', null);
     try { localStorage.removeItem(CLAVE_CUENTA); localStorage.removeItem('ret.nube'); localStorage.setItem('ret.sinEjemplos', '1'); } catch { /* sin almacenamiento */ }
     llave = null; estado = null; nubeCfg = null;
   }
 
-  function salir() { llave = null; estado = null; nubeCfg = null; usuarioActual = ''; }
+  function salir() { llave = null; estado = null; nubeCfg = null; usuarioActual = ''; pruebaAdminCache = undefined; }
+
+  // ── Administrador ──
+  // La clave de administrador se guarda en los datos compartidos solo como un resumen (hash) con sal.
+  // En cada computadora donde se ingresó bien, queda una prueba cifrada con la contraseña del usuario.
+  // Mientras no haya clave de administrador, todos pueden todo (como antes).
+  let pruebaAdminCache;
+  async function leerPruebaAdmin() {
+    if (pruebaAdminCache !== undefined) return pruebaAdminCache;
+    try { pruebaAdminCache = (await descifrar(await leerRegistro('admin'))) || null; } catch { pruebaAdminCache = null; }
+    return pruebaAdminCache;
+  }
+  async function guardarPruebaAdmin(v) { pruebaAdminCache = v || null; await guardarRegistro('admin', v ? await cifrar(v) : null); }
+  async function resumenClaveAdmin(clave, sal, iteraciones) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(clave)), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: sal, iterations: iteraciones }, base, 256);
+    return b64(new Uint8Array(bits));
+  }
+  async function permisos() {
+    await iniciar();
+    const cfg = estado.admin;
+    if (!cfg || !cfg.hash) return { configurado: false, admin: true };
+    const prueba = await leerPruebaAdmin();
+    return { configurado: true, admin: Boolean(prueba && prueba.hash === cfg.hash) };
+  }
+  async function exigirAdmin(que) {
+    if (!(await permisos()).admin) throw new ErrorValidacion(`Solo el administrador puede ${que}.`, 403);
+  }
+  async function configurarAdmin(datos) {
+    await iniciar();
+    const p = await permisos();
+    if (p.configurado && !p.admin) throw new ErrorValidacion('Ya hay una clave de administrador. Para cambiarla, primero ingresá con la clave actual.', 403);
+    const clave = String(datos.clave || '');
+    if (!clave) throw new ErrorValidacion('Escribí la clave de administrador.');
+    if (clave !== String(datos.clave2 || '')) throw new ErrorValidacion('Las dos claves no coinciden.');
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const cfg = { sal: b64(sal), iteraciones: 200000, hash: await resumenClaveAdmin(clave, sal, 200000), definido_por: usuarioActual || '', fecha: ahora() };
+    registroPendiente = { accion: p.configurado ? 'Clave de administrador cambiada' : 'Clave de administrador creada', detalle: '' };
+    await modificar((e) => { e.admin = cfg; });
+    await guardarPruebaAdmin({ hash: cfg.hash });
+    return permisos();
+  }
+  async function ingresarAdmin(datos) {
+    await iniciar();
+    const cfg = estado.admin;
+    if (!cfg || !cfg.hash) throw new ErrorValidacion('Todavía no hay clave de administrador.');
+    const hash = await resumenClaveAdmin(String(datos.clave || ''), deB64(cfg.sal), cfg.iteraciones);
+    if (hash !== cfg.hash) { await new Promise((r) => setTimeout(r, 600)); throw new ErrorValidacion('La clave de administrador no es correcta.'); }
+    await guardarPruebaAdmin({ hash });
+    return permisos();
+  }
+  async function salirAdmin() { await guardarPruebaAdmin(null); return permisos(); }
 
   function cuenta() {
     const c = leerCuenta();
@@ -465,6 +519,9 @@
     res.descuentos = res.descuentos.filter((d) => ids.has(d.retencion_id));
     res.sig = Math.max(local.sig || 1, remoto.sig || 1, ...ids) + 1;
     res.ejemplos = Boolean(local.ejemplos && remoto.ejemplos);
+    // Clave de administrador: si se cambió acá, queda la de acá; si no, la de GitHub.
+    res.admin = !igual(local.admin, base && base.admin) ? local.admin : remoto.admin;
+    if (!res.admin) delete res.admin;
     return { datos: res, conflictos };
   }
 
@@ -1565,6 +1622,16 @@
 
   async function atender(metodo, ruta, cuerpo) {
     let m;
+    if ((metodo === 'POST' && (ruta === '/api/entidades' || ruta === '/api/empresas')) || (metodo === 'DELETE' && /^\/api\/(empresas|entidades)\//.test(ruta))) {
+      await exigirAdmin(ruta.includes('empresas') ? 'agregar o borrar empresas' : 'agregar entidades');
+    }
+    if (metodo === 'POST' && ruta === '/api/importar' && !(await permisos()).admin) {
+      const c = cuerpo || {};
+      const ents = new Set(estado.entidades.map((x) => normalizar(x.nombre)));
+      const nuevasEnt = (c.retenciones || []).some((x) => !ents.has(normalizar(x.entidad)));
+      const nuevasEmp = (c.empresas || []).some((n) => n && !estado.empresas.some((x) => mismoNombre(x.nombre, String(n))));
+      if (nuevasEnt || nuevasEmp) throw new ErrorValidacion('El archivo trae empresas o entidades nuevas, y solo el administrador puede agregarlas. Pedile a quien administra que lo importe.', 403);
+    }
     if (metodo === 'POST') {
       if (ruta === '/api/cierres') return cerrarMes(cuerpo || {});
       if (ruta === '/api/entidades') return crearEntidad(cuerpo || {});
@@ -1606,6 +1673,7 @@
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
     cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
+    permisos, configurarAdmin, ingresarAdmin, salirAdmin,
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,
   };

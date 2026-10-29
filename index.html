@@ -592,6 +592,8 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     const verif = await cifrar({ usuario: c.usuario }, llaveNueva);
     await guardarRegistro(CLAVE, await cifrar(estado, llaveNueva));
     await guardarRegistro('nube', nubeCfg ? await cifrar(nubeCfg, llaveNueva) : null);
+    const pruebaAdmin = await leerPruebaAdmin();
+    await guardarRegistro('admin', pruebaAdmin ? await cifrar(pruebaAdmin, llaveNueva) : null);
     localStorage.setItem(CLAVE_CUENTA, JSON.stringify({ usuario: c.usuario, sal: b64(sal), iteraciones: ITERACIONES, verif: { iv: b64(verif.iv), datos: b64(verif.datos) } }));
     llave = llaveNueva;
     return { ok: true };
@@ -601,11 +603,63 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
   async function olvideContrasena() {
     await guardarRegistro(CLAVE, null);
     await guardarRegistro('nube', null);
+    await guardarRegistro('admin', null);
     try { localStorage.removeItem(CLAVE_CUENTA); localStorage.removeItem('ret.nube'); localStorage.setItem('ret.sinEjemplos', '1'); } catch { /* sin almacenamiento */ }
     llave = null; estado = null; nubeCfg = null;
   }
 
-  function salir() { llave = null; estado = null; nubeCfg = null; usuarioActual = ''; }
+  function salir() { llave = null; estado = null; nubeCfg = null; usuarioActual = ''; pruebaAdminCache = undefined; }
+
+  // ── Administrador ──
+  // La clave de administrador se guarda en los datos compartidos solo como un resumen (hash) con sal.
+  // En cada computadora donde se ingresó bien, queda una prueba cifrada con la contraseña del usuario.
+  // Mientras no haya clave de administrador, todos pueden todo (como antes).
+  let pruebaAdminCache;
+  async function leerPruebaAdmin() {
+    if (pruebaAdminCache !== undefined) return pruebaAdminCache;
+    try { pruebaAdminCache = (await descifrar(await leerRegistro('admin'))) || null; } catch { pruebaAdminCache = null; }
+    return pruebaAdminCache;
+  }
+  async function guardarPruebaAdmin(v) { pruebaAdminCache = v || null; await guardarRegistro('admin', v ? await cifrar(v) : null); }
+  async function resumenClaveAdmin(clave, sal, iteraciones) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(String(clave)), 'PBKDF2', false, ['deriveBits']);
+    const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: sal, iterations: iteraciones }, base, 256);
+    return b64(new Uint8Array(bits));
+  }
+  async function permisos() {
+    await iniciar();
+    const cfg = estado.admin;
+    if (!cfg || !cfg.hash) return { configurado: false, admin: true };
+    const prueba = await leerPruebaAdmin();
+    return { configurado: true, admin: Boolean(prueba && prueba.hash === cfg.hash) };
+  }
+  async function exigirAdmin(que) {
+    if (!(await permisos()).admin) throw new ErrorValidacion(`Solo el administrador puede ${que}.`, 403);
+  }
+  async function configurarAdmin(datos) {
+    await iniciar();
+    const p = await permisos();
+    if (p.configurado && !p.admin) throw new ErrorValidacion('Ya hay una clave de administrador. Para cambiarla, primero ingresá con la clave actual.', 403);
+    const clave = String(datos.clave || '');
+    if (!clave) throw new ErrorValidacion('Escribí la clave de administrador.');
+    if (clave !== String(datos.clave2 || '')) throw new ErrorValidacion('Las dos claves no coinciden.');
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const cfg = { sal: b64(sal), iteraciones: 200000, hash: await resumenClaveAdmin(clave, sal, 200000), definido_por: usuarioActual || '', fecha: ahora() };
+    registroPendiente = { accion: p.configurado ? 'Clave de administrador cambiada' : 'Clave de administrador creada', detalle: '' };
+    await modificar((e) => { e.admin = cfg; });
+    await guardarPruebaAdmin({ hash: cfg.hash });
+    return permisos();
+  }
+  async function ingresarAdmin(datos) {
+    await iniciar();
+    const cfg = estado.admin;
+    if (!cfg || !cfg.hash) throw new ErrorValidacion('Todavía no hay clave de administrador.');
+    const hash = await resumenClaveAdmin(String(datos.clave || ''), deB64(cfg.sal), cfg.iteraciones);
+    if (hash !== cfg.hash) { await new Promise((r) => setTimeout(r, 600)); throw new ErrorValidacion('La clave de administrador no es correcta.'); }
+    await guardarPruebaAdmin({ hash });
+    return permisos();
+  }
+  async function salirAdmin() { await guardarPruebaAdmin(null); return permisos(); }
 
   function cuenta() {
     const c = leerCuenta();
@@ -892,6 +946,9 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     res.descuentos = res.descuentos.filter((d) => ids.has(d.retencion_id));
     res.sig = Math.max(local.sig || 1, remoto.sig || 1, ...ids) + 1;
     res.ejemplos = Boolean(local.ejemplos && remoto.ejemplos);
+    // Clave de administrador: si se cambió acá, queda la de acá; si no, la de GitHub.
+    res.admin = !igual(local.admin, base && base.admin) ? local.admin : remoto.admin;
+    if (!res.admin) delete res.admin;
     return { datos: res, conflictos };
   }
 
@@ -1992,6 +2049,16 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 
   async function atender(metodo, ruta, cuerpo) {
     let m;
+    if ((metodo === 'POST' && (ruta === '/api/entidades' || ruta === '/api/empresas')) || (metodo === 'DELETE' && /^\/api\/(empresas|entidades)\//.test(ruta))) {
+      await exigirAdmin(ruta.includes('empresas') ? 'agregar o borrar empresas' : 'agregar entidades');
+    }
+    if (metodo === 'POST' && ruta === '/api/importar' && !(await permisos()).admin) {
+      const c = cuerpo || {};
+      const ents = new Set(estado.entidades.map((x) => normalizar(x.nombre)));
+      const nuevasEnt = (c.retenciones || []).some((x) => !ents.has(normalizar(x.entidad)));
+      const nuevasEmp = (c.empresas || []).some((n) => n && !estado.empresas.some((x) => mismoNombre(x.nombre, String(n))));
+      if (nuevasEnt || nuevasEmp) throw new ErrorValidacion('El archivo trae empresas o entidades nuevas, y solo el administrador puede agregarlas. Pedile a quien administra que lo importe.', 403);
+    }
     if (metodo === 'POST') {
       if (ruta === '/api/cierres') return cerrarMes(cuerpo || {});
       if (ruta === '/api/entidades') return crearEntidad(cuerpo || {});
@@ -2033,6 +2100,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
     cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
+    permisos, configurarAdmin, ingresarAdmin, salirAdmin,
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,
   };
@@ -2227,7 +2295,17 @@ function errorLocal(mensaje) { const e = new Error(mensaje); e.local = true; ret
 
 const estado = { mes: mesActual() };
 
+// Solapas que solo ve el administrador (cuando hay clave de administrador).
+const SOLO_ADMIN = ['empresas', 'entidades'];
+let permisosActuales = { configurado: false, admin: true };
+
 const vistas = {
+  'solo-admin': async () => {
+    $app.innerHTML = `<div class="tarjeta vacio" style="max-width:560px;margin:40px auto;text-align:center">
+      <h2 style="justify-content:center">Solo para el administrador</h2>
+      <p>Esta solapa la puede ver y modificar solo quien administra el sistema.</p>
+      <p class="nota">Si sos el administrador, ingresá tu clave en <a href="#/respaldo">Respaldo → Administrador</a>.</p></div>`;
+  },
   panel: vistaPanel,
   retenciones: vistaRetenciones,
   descuentos: vistaDescuentos,
@@ -2318,7 +2396,12 @@ async function navegar() {
     document.getElementById('boton-salir').title = `Cerrar la sesión de ${c.usuario}`;
   }
   const [ruta, consulta = ''] = location.hash.replace(/^#\/?/, '').split('?');
-  const seccion = vistas[ruta] ? ruta : 'panel';
+  let seccion = vistas[ruta] ? ruta : 'panel';
+  if (LOCAL) {
+    permisosActuales = await window.backendLocal.permisos().catch(() => ({ configurado: false, admin: true }));
+    document.querySelectorAll('.menu a[data-seccion="empresas"], .menu a[data-seccion="entidades"]').forEach((a) => { a.hidden = !permisosActuales.admin; });
+    if (!permisosActuales.admin && SOLO_ADMIN.includes(seccion)) seccion = 'solo-admin';
+  }
   document.querySelectorAll('.menu a').forEach((a) => a.classList.toggle('activo', a.dataset.seccion === seccion));
   document.getElementById('menu').classList.remove('abierto');
   const id = ++navegacionActual;
@@ -3606,6 +3689,7 @@ async function vistaRespaldo(_params, vigente) {
     <div class="encabezado"><div><h1>Respaldo de los datos</h1>
       <p>Todo lo que cargás se guarda automáticamente en este navegador${info.nube.estado !== 'apagado' ? ' y en tu repositorio privado de GitHub' : ', en esta computadora'}.</p></div></div>
     ${seccionGithub(info.nube)}
+    ${seccionAdmin()}
     ${seccionContrasena()}
     <div class="columnas">
       <section class="tarjeta">
@@ -3651,6 +3735,7 @@ async function vistaRespaldo(_params, vigente) {
 
   conectarSeccionGithub(info.nube);
   conectarSeccionContrasena();
+  conectarSeccionAdmin();
 
   const zona = document.getElementById('zona-respaldo');
   const bajar = async () => {
@@ -3878,6 +3963,61 @@ function pantallaAcceso(c) {
     if (!confirm('Si olvidaste la contraseña, se borran los datos guardados en ESTE navegador y creás un usuario nuevo.\n\nSi los datos están guardados en GitHub, los recuperás desde Respaldo → Guardar en GitHub (vas a necesitar la clave de GitHub; si no la tenés, en GitHub podés tocar "Regenerate token").\n\n¿Continuar?')) return;
     try { await window.backendLocal.olvideContrasena(); } catch (e) { console.error(e); }
     location.reload();
+  });
+}
+
+function seccionAdmin() {
+  const p = permisosActuales;
+  const form = (id, campos, boton) => `<form class="formulario" id="${id}" novalidate>${campos}<div class="zona-mensaje"></div><div class="acciones"><button class="boton secundario" type="submit">${boton}</button></div></form>`;
+  if (!p.configurado) {
+    return `<section class="tarjeta" id="sec-admin"><h2>Administrador</h2>
+      <p>Si creás una <strong>clave de administrador</strong>, las solapas <strong>Empresas</strong> y <strong>Entidades</strong> solo se van a ver y modificar en las computadoras donde se ingresó esa clave. Tus compañeros siguen cargando retenciones y descuentos como siempre.</p>
+      <p class="nota">Ahora mismo no hay clave: todos ven todo. La clave no se recupera si se olvida, así que anotala.</p>
+      ${form('form-admin-crear', `<div class="fila"><div class="campo"><label for="ad-clave">Clave de administrador</label><input id="ad-clave" type="password" autocomplete="new-password"></div>
+        <div class="campo"><label for="ad-clave2">Repetí la clave</label><input id="ad-clave2" type="password" autocomplete="new-password"></div></div>`, 'Crear clave y ser administrador')}
+    </section>`;
+  }
+  if (p.admin) {
+    return `<section class="tarjeta" id="sec-admin"><h2>Administrador</h2>
+      <div class="mensaje ok" style="margin-bottom:12px">En esta computadora sos el administrador: ves y modificás Empresas y Entidades.</div>
+      <details><summary><strong>Cambiar la clave de administrador</strong></summary>
+      ${form('form-admin-crear', `<div class="fila"><div class="campo"><label for="ad-clave">Clave nueva</label><input id="ad-clave" type="password" autocomplete="new-password"></div>
+        <div class="campo"><label for="ad-clave2">Repetí la clave nueva</label><input id="ad-clave2" type="password" autocomplete="new-password"></div></div>`, 'Cambiar clave')}
+      </details>
+      <div class="acciones" style="margin-top:12px"><button class="boton secundario" type="button" id="ad-salir">Dejar de ser administrador en esta computadora</button></div>
+    </section>`;
+  }
+  return `<section class="tarjeta" id="sec-admin"><h2>Administrador</h2>
+    <p>Empresas y Entidades las administra otra persona. Si sos el administrador, ingresá la clave para habilitarlas en esta computadora.</p>
+    ${form('form-admin-ingresar', '<div class="campo"><label for="ad-clave">Clave de administrador</label><input id="ad-clave" type="password" autocomplete="current-password"></div>', 'Ingresar como administrador')}
+  </section>`;
+}
+
+function conectarSeccionAdmin() {
+  const enviar = (id, accion, exito) => {
+    const f = document.getElementById(id);
+    if (!f) return;
+    f.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const zona = f.querySelector('.zona-mensaje');
+      try {
+        await accion(f);
+        aviso(exito);
+        navegar();
+      } catch (e) {
+        zona.innerHTML = `<div class="mensaje error">${esc(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA)}</div>`;
+      }
+    });
+  };
+  enviar('form-admin-crear', (f) => window.backendLocal.configurarAdmin({ clave: f.querySelector('#ad-clave').value, clave2: f.querySelector('#ad-clave2').value }),
+    'Listo: la clave de administrador quedó guardada. Empresas y Entidades ahora son solo tuyas.');
+  enviar('form-admin-ingresar', (f) => window.backendLocal.ingresarAdmin({ clave: f.querySelector('#ad-clave').value }), 'Listo: en esta computadora sos el administrador.');
+  const salirAd = document.getElementById('ad-salir');
+  if (salirAd) salirAd.addEventListener('click', async () => {
+    if (!(await confirmar({ titulo: '¿Dejar de ser administrador acá?', html: '<p>En esta computadora se van a ocultar Empresas y Entidades. Podés volver a habilitarlas ingresando la clave.</p>', boton: 'Sí, dejar de ser administrador' }))) return;
+    await window.backendLocal.salirAdmin();
+    aviso('Listo: en esta computadora ya no sos administrador.');
+    navegar();
   });
 }
 
