@@ -664,12 +664,13 @@ const filtrosRet = { periodo: '', tipo: '', q: '' };
 
 // Buscador de colaboradores: se escribe la cédula o parte del nombre y se elige de la lista.
 const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores) {
-  const todos = colaboradores.map((c) => ({ ...c, clave: `${sinAcentos(c.nombre)} ${cedula(c.cedula)}` }));
+function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores, { alElegir, sinResultado } = {}) {
+  const preparar = (cs) => cs.map((c) => ({ ...c, clave: `${sinAcentos(c.nombre)} ${cedula(c.cedula)}` }));
+  let todos = preparar(colaboradores);
   let opciones = [];
   let activa = -1;
   const cerrar = () => { lista.hidden = true; entrada.setAttribute('aria-expanded', 'false'); activa = -1; };
-  const elegir = (c) => { oculto.value = c.id; entrada.value = `${c.nombre} · CI ${cedula(c.cedula)}`; cerrar(); };
+  const elegir = (c) => { oculto.value = c.id; entrada.value = `${c.nombre} · CI ${cedula(c.cedula)}`; cerrar(); if (alElegir) alElegir(c); };
   const marcar = () => lista.querySelectorAll('li[data-i]').forEach((li) => {
     const si = Number(li.dataset.i) === activa;
     li.classList.toggle('activa', si); li.setAttribute('aria-selected', si);
@@ -684,10 +685,10 @@ function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores) {
     lista.innerHTML = opciones.length
       ? opciones.map((c, i) => `<li role="option" data-i="${i}">${esc(c.nombre)}<span class="sec">CI ${esc(cedula(c.cedula))}</span></li>`).join('')
         + (hallados.length > opciones.length ? `<li class="sin-resultado">Hay ${hallados.length - opciones.length} más: escribí un poco más.</li>` : '')
-      : '<li class="sin-resultado">No encontré ningún colaborador con eso. Si es nuevo, cargalo en <a href="#/colaboradores">Colaboradores</a>.</li>';
+      : `<li class="sin-resultado">${sinResultado || 'No encontré ningún colaborador con eso. Si es nuevo, cargalo en <a href="#/colaboradores">Colaboradores</a>.'}</li>`;
     lista.hidden = false; entrada.setAttribute('aria-expanded', 'true'); marcar();
   };
-  entrada.addEventListener('input', () => { oculto.value = ''; mostrar(); });
+  entrada.addEventListener('input', () => { const habia = oculto.value; oculto.value = ''; mostrar(); if (habia && alElegir) alElegir(null); });
   entrada.addEventListener('focus', () => { if (!oculto.value && entrada.value) mostrar(); });
   entrada.addEventListener('keydown', (ev) => {
     if (lista.hidden) { if (ev.key === 'ArrowDown') mostrar(); return; }
@@ -702,7 +703,11 @@ function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores) {
     if (li) { ev.preventDefault(); elegir(opciones[Number(li.dataset.i)]); }
   });
   entrada.addEventListener('blur', () => setTimeout(cerrar, 150));
-  return { limpiar: () => { oculto.value = ''; entrada.value = ''; cerrar(); } };
+  return {
+    limpiar: () => { oculto.value = ''; entrada.value = ''; cerrar(); },
+    elegirId: (id) => { const c = todos.find((x) => String(x.id) === String(id)); if (c) elegir(c); },
+    cambiarLista: (cs) => { todos = preparar(cs); },
+  };
 }
 
 async function vistaRetenciones(_params, vigente) {
@@ -930,8 +935,11 @@ async function vistaDescuentos(params, vigente) {
       <section class="tarjeta">
         <h2>Registrar descuento</h2>
         <form class="formulario" id="form-desc" novalidate>
-          <div class="campo"><label for="d-colab">Persona <span class="obligatorio">*</span></label>
-            <select id="d-colab" required><option value="">Elegí…</option></select></div>
+          <div class="campo buscador"><label for="d-colab-q">Persona <span class="obligatorio">*</span></label>
+            <input id="d-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="d-colab-lista">
+            <input type="hidden" id="d-colab">
+            <ul class="sugerencias" id="d-colab-lista" role="listbox" hidden></ul>
+            <span class="ayuda">Aparecen solo las personas con retenciones pendientes.</span></div>
           <div class="campo"><label for="d-ret">Retención <span class="obligatorio">*</span></label>
             <select id="d-ret" required disabled><option value="">Elegí primero la persona</option></select>
             <span class="ayuda" id="d-ret-ayuda"></span></div>
@@ -981,13 +989,13 @@ async function vistaDescuentos(params, vigente) {
 
   const retElegida = () => retenciones.find((r) => String(r.id) === selRet.value);
 
+  const buscadorPersona = conectarBuscadorColaborador(form.querySelector('#d-colab-q'), selColab, form.querySelector('#d-colab-lista'), [], {
+    alElegir: () => llenarRetenciones(),
+    sinResultado: 'No encontré a nadie con eso entre las personas con retenciones pendientes. Si la retención todavía no está cargada, cargala en <a href="#/retenciones">Retenciones recibidas</a>.',
+  });
   function llenarPersonas() {
-    const actual = selColab.value;
     const conPendientes = new Set(retenciones.filter(abierta).map((r) => r.colaborador_id));
-    const personas = cat.colaboradores.filter((c) => conPendientes.has(c.id));
-    selColab.innerHTML = `<option value="">${personas.length ? 'Elegí…' : 'No hay retenciones pendientes'}</option>` +
-      personas.map((c) => `<option value="${c.id}">${esc(c.nombre)} · CI ${esc(cedula(c.cedula))}</option>`).join('');
-    if (personas.some((c) => String(c.id) === actual)) selColab.value = actual;
+    buscadorPersona.cambiarLista(cat.colaboradores.filter((c) => conPendientes.has(c.id)));
   }
 
   function llenarRetenciones(preferida) {
@@ -1029,13 +1037,12 @@ async function vistaDescuentos(params, vigente) {
     return !msg;
   }
 
-  selColab.addEventListener('change', () => llenarRetenciones());
   selRet.addEventListener('change', actualizarAyuda);
   inImporte.addEventListener('input', validarImporte);
 
   llenarPersonas();
   if (preRet && abierta(preRet)) {
-    selColab.value = String(preRet.colaborador_id);
+    buscadorPersona.elegirId(preRet.colaborador_id);
     llenarRetenciones(preRet.id);
     inImporte.focus();
   } else llenarRetenciones();
