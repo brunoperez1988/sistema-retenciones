@@ -701,7 +701,7 @@ function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores, { al
       ? opciones.map((c, i) => `<li role="option" data-i="${i}">${esc(c.nombre)}<span class="sec">CI ${esc(cedula(c.cedula))}</span></li>`).join('')
         + (hallados.length > opciones.length ? `<li class="sin-resultado">Hay ${hallados.length - opciones.length} más: escribí un poco más.</li>` : '')
       : alAgregar
-        ? `<li class="sin-resultado">No encontré ningún colaborador con eso.</li><li class="agregar-colab" data-agregar role="option">+ Agregarlo como colaborador nuevo</li>`
+        ? `<li class="sin-resultado">${sinResultado || 'No encontré ningún colaborador con eso.'}</li><li class="agregar-colab" data-agregar role="option">+ Agregarlo como colaborador nuevo</li>`
         : `<li class="sin-resultado">${sinResultado || 'No encontré ningún colaborador con eso. Si es nuevo, cargalo en <a href="#/colaboradores">Colaboradores</a>.'}</li>`;
     lista.hidden = false; entrada.setAttribute('aria-expanded', 'true'); marcar();
   };
@@ -786,13 +786,13 @@ async function vistaRetenciones(_params, vigente) {
     <div class="apilado">
       <section class="tarjeta">
         <h2>Cargar retención</h2>
-        ${!cat.entidades.length ? '<p class="mensaje error">Primero cargá las <a href="#/entidades">entidades</a>.</p>' : ''}
+        ${!cat.colaboradores.length || !cat.entidades.length
+          ? `<p class="mensaje error">Primero cargá ${!cat.colaboradores.length ? '<a href="#/colaboradores">colaboradores</a>' : ''}${!cat.colaboradores.length && !cat.entidades.length ? ' y ' : ''}${!cat.entidades.length ? '<a href="#/entidades">entidades</a>' : ''}.</p>` : ''}
         <form class="formulario form-ancho" id="form-ret" novalidate>
           <div class="campo buscador"><label for="r-colab-q">Colaborador <span class="obligatorio">*</span></label>
             <input id="r-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="r-colab-lista">
             <input type="hidden" id="r-colab">
-            <ul class="sugerencias" id="r-colab-lista" role="listbox" hidden></ul>
-            <button type="button" class="enlace-boton" id="r-colab-nuevo">+ Agregar colaborador nuevo</button></div>
+            <ul class="sugerencias" id="r-colab-lista" role="listbox" hidden></ul></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
               ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)}${normalizarTxt(e.nombre) === normalizarTxt(tipoTxt[e.tipo]) ? '' : ` (${tipoTxt[e.tipo]})`}</option>`).join('')}
@@ -846,16 +846,7 @@ async function vistaRetenciones(_params, vigente) {
     </div>`;
 
   document.getElementById('f-tipo').value = filtrosRet.tipo;
-  const agregarColaborador = async (escrito) => {
-    const nuevo = await dialogoNuevoColaborador(escrito);
-    if (!nuevo) { document.getElementById('r-colab-q')?.focus(); return; }
-    cat.colaboradores.push(nuevo);
-    buscadorColab.cambiarLista(cat.colaboradores);
-    buscadorColab.elegirId(nuevo.id);
-    aviso(`${nuevo.nombre} agregado como colaborador y elegido.`);
-  };
-  const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores, { alAgregar: agregarColaborador });
-  document.getElementById('r-colab-nuevo').addEventListener('click', () => agregarColaborador(document.getElementById('r-colab').value ? '' : document.getElementById('r-colab-q').value));
+  const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores);
   const selEnt = document.getElementById('r-ent');
   const chkMensual = document.getElementById('r-mensual');
   const campoBenef = document.getElementById('campo-benef');
@@ -1016,7 +1007,8 @@ async function vistaDescuentos(params, vigente) {
             <input id="d-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="d-colab-lista">
             <input type="hidden" id="d-colab">
             <ul class="sugerencias" id="d-colab-lista" role="listbox" hidden></ul>
-            <span class="ayuda">Aparecen solo las personas con retenciones pendientes.</span></div>
+            <span class="ayuda">Aparecen solo las personas con retenciones pendientes.</span>
+            <button type="button" class="enlace-boton" id="d-colab-nuevo">+ Agregar colaborador nuevo</button></div>
           <div class="campo"><label for="d-ret">Retención <span class="obligatorio">*</span></label>
             <select id="d-ret" required disabled><option value="">Elegí primero la persona</option></select>
             <span class="ayuda" id="d-ret-ayuda"></span></div>
@@ -1068,8 +1060,19 @@ async function vistaDescuentos(params, vigente) {
 
   const buscadorPersona = conectarBuscadorColaborador(form.querySelector('#d-colab-q'), selColab, form.querySelector('#d-colab-lista'), [], {
     alElegir: () => llenarRetenciones(),
-    sinResultado: 'No encontré a nadie con eso entre las personas con retenciones pendientes. Si la retención todavía no está cargada, cargala en <a href="#/retenciones">Retenciones recibidas</a>.',
+    sinResultado: 'No encontré a nadie con eso entre las personas con retenciones pendientes.',
+    alAgregar: (escrito) => agregarColaborador(escrito),
   });
+  // Alta rápida: la persona nueva todavía no tiene retenciones, así que no aparece para descontar hasta que se le cargue una.
+  async function agregarColaborador(escrito) {
+    const nuevo = await dialogoNuevoColaborador(escrito);
+    if (!nuevo) { form.querySelector('#d-colab-q').focus(); return; }
+    cat.colaboradores.push(nuevo);
+    buscadorPersona.limpiar();
+    llenarRetenciones();
+    aviso(`${nuevo.nombre} quedó agregado como colaborador. Para descontarle, primero cargale la retención en Retenciones recibidas.`);
+  }
+  form.querySelector('#d-colab-nuevo').addEventListener('click', () => agregarColaborador(selColab.value ? '' : form.querySelector('#d-colab-q').value));
   function llenarPersonas() {
     const conPendientes = new Set(retenciones.filter(abierta).map((r) => r.colaborador_id));
     buscadorPersona.cambiarLista(cat.colaboradores.filter((c) => conPendientes.has(c.id)));
