@@ -199,6 +199,7 @@ const vistas = {
   panel: vistaPanel,
   retenciones: vistaRetenciones,
   descuentos: vistaDescuentos,
+  pagos: vistaPagos,
   reportes: vistaReportes,
   empresas: vistaEmpresas,
   colaboradores: vistaColaboradores,
@@ -1284,6 +1285,150 @@ function tablaDescuentos(filas) {
     </tr>`).join('')}</tbody>
     <tfoot><tr><td colspan="5">Total descontado (${filas.length})</td><td class="num">${moneda(total)}</td><td colspan="4"></td></tr></tfoot>
   </table></div>`;
+}
+
+// ── Pagos a las entidades ──
+
+let mesPagos = null;
+
+function leerArchivoBase64(archivo) {
+  return new Promise((ok, mal) => {
+    const lector = new FileReader();
+    lector.onload = () => ok(String(lector.result).replace(/^data:[^,]*,/, ''));
+    lector.onerror = () => mal(errorLocal('No se pudo leer el archivo.'));
+    lector.readAsDataURL(archivo);
+  });
+}
+async function archivoComprobante(input) {
+  const a = input.files && input.files[0];
+  if (!a) return null;
+  if (a.size > 10 * 1024 * 1024) throw errorLocal('El comprobante es muy grande: el máximo es 10 MB.');
+  return { nombre: a.name, tipo: a.type, base64: await leerArchivoBase64(a) };
+}
+
+async function vistaPagos(_params, vigente) {
+  const d = await api(`/api/pagos${mesPagos ? `?periodo=${mesPagos}` : ''}`);
+  if (!vigente()) return;
+  const pagados = d.grupos.filter((g) => g.pago).length;
+  $app.innerHTML = `
+    <div class="encabezado"><div><h1>Pagos</h1><p>Lo que hay que abonarle a cada entidad por lo descontado en el mes, con el número de transferencia y el comprobante.</p></div>
+      <div class="campo"><label for="pg-mes">Mes</label><input type="month" id="pg-mes" value="${esc(d.mes)}"></div></div>
+    <section class="indicadores" aria-label="Resumen de pagos">
+      <div class="indicador pactado"><div class="titulo">A abonar</div><div class="valor">${moneda(d.total)}</div><div class="detalle">${d.grupos.length} ${d.grupos.length === 1 ? 'entidad' : 'entidades'}</div></div>
+      <div class="indicador retenido"><div class="titulo">Pagado</div><div class="valor">${moneda(d.pagado)}</div><div class="detalle">${pagados} de ${d.grupos.length}</div></div>
+      <div class="indicador disponible"><div class="titulo">Falta pagar</div><div class="valor">${moneda(d.pendiente)}</div><div class="detalle">${d.grupos.length - pagados} ${d.grupos.length - pagados === 1 ? 'entidad' : 'entidades'}</div></div>
+    </section>
+    <section class="tarjeta">
+      <h2>Entidades de ${esc(nombreMes(d.mes).toLowerCase())}</h2>
+      ${!d.grupos.length ? '<p class="vacio">No hay importes descontados para abonar en este mes.</p>' : `<div class="tabla-contenedor"><table class="tabla-ret tabla-pagos">
+        <thead><tr><th>Entidad</th><th class="num">Retenciones</th><th class="num">A abonar</th><th>Estado</th><th>N° de transferencia</th><th>Fecha de pago</th><th>Comprobante</th><th></th></tr></thead>
+        <tbody>${d.grupos.map((g) => filaPago(g)).join('')}</tbody>
+        <tfoot><tr><td>Total (${d.grupos.length})</td><td class="num">${d.grupos.reduce((a, g) => a + g.detalle.length, 0)}</td><td class="num">${moneda(d.total)}</td><td colspan="5"></td></tr></tfoot>
+      </table></div>`}
+    </section>`;
+
+  document.getElementById('pg-mes').addEventListener('change', (ev) => { if (ev.target.value) { mesPagos = ev.target.value; navegar(); } });
+  $app.querySelectorAll('[data-ver-detalle]').forEach((b) => b.addEventListener('click', () => {
+    const fila = $app.querySelector(`tr[data-detalle="${b.dataset.verDetalle}"]`);
+    fila.hidden = !fila.hidden; b.textContent = fila.hidden ? 'Ver detalle' : 'Ocultar detalle';
+  }));
+  $app.querySelectorAll('[data-pagar]').forEach((b) => b.addEventListener('click', () => {
+    const g = d.grupos.find((x) => String(x.entidad_id) === b.dataset.pagar);
+    dialogoPago(d.mes, g);
+  }));
+  $app.querySelectorAll('[data-adjuntar]').forEach((b) => b.addEventListener('click', () => {
+    const g = d.grupos.find((x) => String(x.pago && x.pago.id) === b.dataset.adjuntar);
+    dialogoPago(d.mes, g, { soloComprobante: true });
+  }));
+  $app.querySelectorAll('[data-ver-comp]').forEach((b) => b.addEventListener('click', async () => {
+    const ventana = window.open('', '_blank');
+    try {
+      const c = await api(`/api/pagos/${b.dataset.verComp}/comprobante`);
+      const url = URL.createObjectURL(c.blob);
+      if (ventana) ventana.location.href = url;
+      else { const a = document.createElement('a'); a.href = url; a.download = c.nombre; a.click(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { if (ventana) ventana.close(); aviso(e.validacion ? e.message : MENSAJE_FALLA); }
+  }));
+  $app.querySelectorAll('[data-anular]').forEach((b) => b.addEventListener('click', async () => {
+    const g = d.grupos.find((x) => String(x.pago && x.pago.id) === b.dataset.anular);
+    const ok = await confirmar({ titulo: `¿Anular el pago a ${g.entidad}?`, boton: 'Anular pago',
+      html: `<p>El pago de ${moneda(g.pago.importe)} (transferencia ${esc(g.pago.transferencia)}) vuelve a quedar pendiente. El comprobante sigue guardado en GitHub.</p>` });
+    if (!ok) return;
+    try { await api(`/api/pagos/${g.pago.id}`, { metodo: 'DELETE' }); aviso('Pago anulado.'); navegar(); }
+    catch (e) { aviso(e.validacion ? e.message : MENSAJE_FALLA); }
+  }));
+}
+
+function filaPago(g) {
+  const p = g.pago;
+  const cambio = p && p.importe !== g.importe;
+  return `<tr class="${p ? 'pagado' : ''}">
+    <td><strong>${esc(g.entidad)}</strong><span class="sec">${etiquetaTipo(g.tipo)}</span>
+      <button class="enlace" type="button" data-ver-detalle="${g.entidad_id}">Ver detalle</button></td>
+    <td class="num">${g.detalle.length}</td>
+    <td class="num">${moneda(g.importe)}${cambio ? `<span class="sec aviso-cambio">Se pagó ${moneda(p.importe)}: cambiaron los descuentos después del pago</span>` : ''}</td>
+    <td>${p ? '<span class="etiqueta-tipo completa">Pagado</span>' : '<span class="etiqueta-tipo a-definir">Pendiente</span>'}</td>
+    <td>${p ? esc(p.transferencia) : '<span class="sec">—</span>'}</td>
+    <td>${p ? `${fecha(p.fecha_pago)}<span class="sec">por ${esc(p.registrado_por || '—')}</span>` : '<span class="sec">—</span>'}</td>
+    <td>${p && p.comprobante ? `<button class="enlace" type="button" data-ver-comp="${p.id}" title="${esc(p.comprobante.nombre)}">Ver comprobante</button>`
+      : p ? `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>` : '<span class="sec">—</span>'}</td>
+    <td>${p ? `<button class="boton chico peligro" type="button" data-anular="${p.id}">Anular</button>`
+      : `<button class="boton chico" type="button" data-pagar="${g.entidad_id}">Registrar pago</button>`}</td>
+  </tr>
+  <tr class="detalle-pago" data-detalle="${g.entidad_id}" hidden><td colspan="8">
+    <table class="mini"><thead><tr><th>Colaborador</th><th>Período</th>${g.tipo === 'judicial' ? '<th>Beneficiario</th><th>Banco / medio</th><th>Cuenta</th>' : ''}<th class="num">Importe</th></tr></thead>
+    <tbody>${g.detalle.map((x) => `<tr><td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td><td>${esc(mesCorto(x.periodo))}</td>
+      ${g.tipo === 'judicial' ? `<td>${esc(x.beneficiario)}${x.beneficiario_doc ? `<span class="sec">Doc. ${esc(x.beneficiario_doc)}</span>` : ''}</td><td>${esc(x.banco)}</td><td>${esc(x.cuenta)}</td>` : ''}
+      <td class="num">${moneda(x.importe)}</td></tr>`).join('')}</tbody></table>
+  </td></tr>`;
+}
+
+function dialogoPago(mes, g, { soloComprobante = false } = {}) {
+  const dlg = document.createElement('dialog');
+  dlg.className = 'dialogo';
+  dlg.innerHTML = `<form id="pg-form" class="formulario" novalidate>
+    <h2>${soloComprobante ? 'Adjuntar comprobante' : 'Registrar pago'}</h2>
+    <p><strong>${esc(g.entidad)}</strong> · ${esc(nombreMes(mes).toLowerCase())} · ${moneda(soloComprobante ? g.pago.importe : g.importe)}</p>
+    ${soloComprobante ? '' : `
+    <div class="campo"><label for="pg-transf">N° de transferencia <span class="obligatorio">*</span></label><input id="pg-transf" maxlength="60" autocomplete="off"></div>
+    <div class="campo"><label for="pg-fecha">Fecha de pago <span class="obligatorio">*</span></label><input type="date" id="pg-fecha" value="${hoy()}"></div>`}
+    <div class="campo"><label for="pg-archivo">Comprobante${soloComprobante ? ' <span class="obligatorio">*</span>' : ' (opcional)'}</label>
+      <input type="file" id="pg-archivo" accept="application/pdf,image/png,image/jpeg,image/webp">
+      <span class="ayuda">PDF o foto, hasta 10 MB. Se guarda en el repositorio privado de GitHub.</span></div>
+    <p class="mensaje error" id="pg-error" role="alert" hidden></p>
+    <div class="acciones"><button class="boton" type="submit" id="pg-guardar">Guardar</button><button class="boton secundario" type="button" id="pg-cancelar">Cancelar</button></div>
+  </form>`;
+  document.body.appendChild(dlg);
+  const form = dlg.querySelector('#pg-form');
+  const error = dlg.querySelector('#pg-error');
+  dlg.querySelector('#pg-cancelar').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('close', () => dlg.remove());
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    error.hidden = true;
+    const boton = form.querySelector('#pg-guardar');
+    boton.disabled = true; boton.textContent = 'Guardando…';
+    try {
+      const archivo = await archivoComprobante(form.querySelector('#pg-archivo'));
+      if (soloComprobante) {
+        if (!archivo) throw errorLocal('Elegí el archivo del comprobante.');
+        await api(`/api/pagos/${g.pago.id}/comprobante`, { metodo: 'POST', cuerpo: { archivo } });
+      } else {
+        const transferencia = form.querySelector('#pg-transf').value.trim();
+        if (!transferencia) throw errorLocal('Ingresá el número de transferencia.');
+        await api('/api/pagos', { metodo: 'POST', cuerpo: { mes, entidad_id: g.entidad_id, transferencia, fecha_pago: form.querySelector('#pg-fecha').value, archivo } });
+      }
+      dlg.close();
+      aviso(soloComprobante ? 'Comprobante adjuntado.' : `Pago a ${g.entidad} registrado.`);
+      navegar();
+    } catch (e) {
+      error.textContent = e.validacion || e.local ? e.message : MENSAJE_FALLA; error.hidden = false;
+      boton.disabled = false; boton.textContent = 'Guardar';
+    }
+  });
+  dlg.showModal();
+  form.querySelector(soloComprobante ? '#pg-archivo' : '#pg-transf').focus();
 }
 
 // ── Reportes ──

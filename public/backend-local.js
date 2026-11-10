@@ -245,7 +245,7 @@
   let iniciando = null;
 
   function estadoVacio() {
-    return { version: VERSION_DATOS, sig: 1, entidades: [], colaboradores: [], empresas: [], retenciones: [], descuentos: [], cierres: [], historial: [], ultimoRespaldo: null, modificado: null };
+    return { version: VERSION_DATOS, sig: 1, entidades: [], colaboradores: [], empresas: [], retenciones: [], descuentos: [], cierres: [], pagos: [], historial: [], ultimoRespaldo: null, modificado: null };
   }
 
   async function iniciar() {
@@ -448,7 +448,7 @@
   // ── Juntar cambios de dos computadoras ──
   // base: lo último que esta computadora vio en GitHub; local: lo de acá; remoto: lo que hay ahora en GitHub.
   // Cada registro se compara por su id: gana el lado que lo cambió; si cambiaron los dos, queda el de acá.
-  const COLECCIONES = ['entidades', 'colaboradores', 'empresas', 'retenciones', 'descuentos', 'cierres'];
+  const COLECCIONES = ['entidades', 'colaboradores', 'empresas', 'retenciones', 'descuentos', 'cierres', 'pagos'];
   const REFERENCIAS = ['colaborador_id', 'entidad_id', 'empresa_id', 'retencion_id', 'origen_id'];
   const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -894,6 +894,111 @@
     return { agrupar, grupos: lista, total: lista.reduce((a, g) => a + g.abonar, 0) };
   }
 
+  // ── Pagos a las entidades ──
+  // Por cada entidad, lo que se descontó en el mes y hay que abonarle. Se registra el número de transferencia,
+  // la fecha y el comprobante (que se guarda en el mismo repositorio privado de GitHub, en comprobantes/AAAA-MM/).
+
+  const TIPOS_COMPROBANTE = { 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+  const MAX_COMPROBANTE = 10 * 1024 * 1024;
+
+  function listarPagos(f = {}) {
+    const mes = periodo(f.periodo || mesDeTrabajo());
+    const grupos = new Map();
+    const grupo = (ent) => {
+      if (!grupos.has(ent.id)) grupos.set(ent.id, { entidad_id: ent.id, entidad: ent.nombre, tipo: ent.tipo, importe: 0, detalle: [], pago: null });
+      return grupos.get(ent.id);
+    };
+    const ents = new Map(estado.entidades.map((x) => [x.id, x]));
+    for (const x of listarRetenciones({ periodo: mes, con_saldo: true })) {
+      const importe = x.descontado_real - (x.arrastre ? x.descontado_antes : 0);
+      if (importe <= 0) continue;
+      const g = grupo(ents.get(x.entidad_id));
+      g.importe += importe;
+      g.detalle.push({ retencion_id: x.id, colaborador: x.colaborador, cedula: x.cedula, periodo: x.periodo, importe,
+        beneficiario: x.tipo === 'judicial' ? x.beneficiario || '' : '', beneficiario_doc: x.beneficiario_doc || '',
+        ...(x.tipo === 'judicial' && x.beneficiario ? cobroBeneficiario(x) : { banco: '', cuenta: '' }) });
+    }
+    for (const p of (estado.pagos || []).filter((y) => y.mes === mes)) {
+      const ent = ents.get(p.entidad_id);
+      if (ent) grupo(ent).pago = p;
+    }
+    const lista = [...grupos.values()].sort((a, b) => a.entidad.localeCompare(b.entidad, 'es'));
+    lista.forEach((g) => g.detalle.sort((a, b) => a.colaborador.localeCompare(b.colaborador, 'es')));
+    const total = lista.reduce((a, g) => a + g.importe, 0);
+    const pagado = lista.filter((g) => g.pago).reduce((a, g) => a + g.pago.importe, 0);
+    return { mes, mes_trabajo: mesDeTrabajo(), grupos: lista, total, pagado, pendiente: lista.filter((g) => !g.pago).reduce((a, g) => a + g.importe, 0) };
+  }
+
+  function nombreArchivoSeguro(n) {
+    return String(n || 'comprobante').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.\-]+/g, '-').replace(/-+/g, '-').slice(-80) || 'comprobante';
+  }
+
+  async function subirComprobante(mes, archivo, etiqueta) {
+    const c = configNube();
+    if (!c) throw new ErrorValidacion('Para adjuntar comprobantes tenés que tener conectado GitHub (en Respaldo).');
+    const tipo = String(archivo.tipo || '');
+    if (!TIPOS_COMPROBANTE[tipo]) throw new ErrorValidacion('El comprobante tiene que ser un PDF o una imagen (JPG, PNG o WEBP).');
+    const b64 = String(archivo.base64 || '').replace(/^data:[^,]*,/, '');
+    const tamano = Math.floor((b64.length * 3) / 4);
+    if (!tamano) throw new ErrorValidacion('El archivo del comprobante está vacío.');
+    if (tamano > MAX_COMPROBANTE) throw new ErrorValidacion('El comprobante es muy grande: el máximo es 10 MB.');
+    const ruta = `comprobantes/${mes}/${Date.now()}-${nombreArchivoSeguro(archivo.nombre)}`;
+    let res;
+    try {
+      res = await github(c, 'PUT', `/repos/${c.repo}/contents/${ruta.split('/').map(encodeURIComponent).join('/')}`, { message: `Comprobante de pago: ${etiqueta}`, content: b64 });
+    } catch (err) {
+      throw new ErrorValidacion(`No se pudo subir el comprobante a GitHub: ${err.message}`);
+    }
+    if (!res.ok) throw new ErrorValidacion(`No se pudo subir el comprobante a GitHub (respondió ${res.status}). Probá de nuevo.`);
+    return { ruta, nombre: String(archivo.nombre || 'comprobante').slice(0, 120), tipo, tamano };
+  }
+
+  async function registrarPago(datos) {
+    const mes = periodo(datos.mes);
+    const entidad_id = entero(datos.entidad_id, 'la entidad');
+    const lista = listarPagos({ periodo: mes });
+    const g = lista.grupos.find((x) => x.entidad_id === entidad_id);
+    if (!g || !g.importe) throw new ErrorValidacion('Esa entidad no tiene nada para abonar en el mes.');
+    if (g.pago) throw new ErrorValidacion('El pago de esa entidad ya está registrado. Si hay que corregirlo, anulalo y registralo de nuevo.', 409);
+    const transferencia = texto(datos.transferencia, 'número de transferencia', { max: 60 });
+    const fecha_pago = fecha(datos.fecha_pago);
+    const comprobante = datos.archivo ? await subirComprobante(mes, datos.archivo, `${g.entidad} · ${nombreMesTxt(mes)}`) : null;
+    return modificar((e) => {
+      const id = e.sig++;
+      e.pagos = [...(e.pagos || []), { id, mes, entidad_id, importe: g.importe, retenciones: g.detalle.length, transferencia, fecha_pago, comprobante,
+        registrado_por: usuarioActual || '', registrado_en: ahora() }];
+      return { id };
+    });
+  }
+
+  async function adjuntarComprobante(id, datos) {
+    const n = Number(id);
+    const p = (estado.pagos || []).find((x) => x.id === n);
+    if (!p) throw new ErrorValidacion('El pago no existe.', 404);
+    if (!datos.archivo) throw new ErrorValidacion('Elegí el archivo del comprobante.');
+    const comprobante = await subirComprobante(p.mes, datos.archivo, `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}`);
+    return modificar((e) => { e.pagos.find((x) => x.id === n).comprobante = comprobante; return { ok: true }; });
+  }
+
+  function anularPago(id) {
+    const n = Number(id);
+    if (!(estado.pagos || []).some((x) => x.id === n)) throw new ErrorValidacion('El pago no existe.', 404);
+    // El archivo del comprobante queda guardado en GitHub; el pago deja de figurar.
+    return modificar((e) => { e.pagos = e.pagos.filter((x) => x.id !== n); return { ok: true }; });
+  }
+
+  async function verComprobante(id) {
+    const p = (estado.pagos || []).find((x) => x.id === Number(id));
+    if (!p || !p.comprobante) throw new ErrorValidacion('Ese pago no tiene comprobante.', 404);
+    const c = configNube();
+    if (!c) throw new ErrorValidacion('Para ver el comprobante tenés que tener conectado GitHub (en Respaldo).');
+    let res;
+    try { res = await github(c, 'GET', `/repos/${c.repo}/contents/${p.comprobante.ruta.split('/').map(encodeURIComponent).join('/')}`, null, 'application/vnd.github.raw'); }
+    catch (err) { throw new ErrorValidacion(`No se pudo traer el comprobante: ${err.message}`); }
+    if (!res.ok) throw new ErrorValidacion(`No se pudo traer el comprobante (GitHub respondió ${res.status}).`);
+    return { nombre: p.comprobante.nombre, tipo: p.comprobante.tipo, blob: new Blob([await res.arrayBuffer()], { type: p.comprobante.tipo }) };
+  }
+
   // ── Cierre de mes ──
   // Un mes cerrado no deja cargar, cambiar ni borrar retenciones o descuentos de ese mes. Se puede reabrir.
 
@@ -980,6 +1085,10 @@
       if (ruta === '/api/importar') {
         return { accion: 'Importación de archivo', detalle: (res) => [res.retenciones ? `${res.retenciones} retenciones` : '', res.colaboradores ? `${res.colaboradores} colaboradores` : '', res.empresas ? `${res.empresas} empresas` : ''].filter(Boolean).join(', ') || 'Sin datos nuevos' };
       }
+      if (ruta === '/api/pagos') {
+        return { accion: 'Pago registrado', detalle: (res, e) => { const p = e.pagos.find((x) => x.id === res.id); return `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia} · ${fechaTxt(p.fecha_pago)}${p.comprobante ? ' · con comprobante' : ''}`; } };
+      }
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Comprobante adjuntado', detalle: p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}` : '' }; }
       if (ruta === '/api/cierres') return { accion: 'Mes cerrado', detalle: c.mes ? nombreMesTxt(periodo(c.mes)) : '' };
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) { const r = ret(m[1]); return { accion: 'Importe definido', detalle: () => `${descRet(r)} · ${pesosTxt(importe(c.importe_total))}` }; }
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/editar$/))) {
@@ -1002,6 +1111,7 @@
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) { const r = ret(m[1]); return { accion: 'Retención eliminada', detalle: r ? `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}` : '' }; }
       if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) { const d = estado.descuentos.find((x) => x.id === Number(m[1])); return { accion: 'Descuento eliminado', detalle: d ? `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${fechaTxt(d.fecha)}` : '' }; }
       if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return { accion: 'Empresa eliminada', detalle: (estado.empresas.find((x) => x.id === Number(m[1])) || {}).nombre || '' };
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Pago anulado', detalle: p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia}` : '' }; }
       if ((m = ruta.match(/^\/api\/cierres\/(\d{4}-\d{2})$/))) return { accion: 'Mes reabierto', detalle: nombreMesTxt(m[1]) };
     }
     return null;
@@ -1373,7 +1483,7 @@
       throw new ErrorValidacion('El archivo no es un respaldo del Sistema de Retenciones.');
     }
     const ids = new Set();
-    for (const lista of [e.entidades, e.colaboradores, e.empresas, e.retenciones, e.descuentos, e.cierres || []]) {
+    for (const lista of [e.entidades, e.colaboradores, e.empresas, e.retenciones, e.descuentos, e.cierres || [], e.pagos || []]) {
       for (const x of lista) {
         if (!Number.isInteger(x.id) || ids.has(x.id)) throw new ErrorValidacion('El respaldo tiene datos dañados (identificadores).');
         ids.add(x.id);
@@ -1699,6 +1809,8 @@
       if (ruta === '/api/reportes/entidades') return reportePorEntidad(f);
       if (ruta === '/api/datos') return infoDatos();
       if (ruta === '/api/historial') return listarHistorial(f);
+      if (ruta === '/api/pagos') return listarPagos(f);
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) return verComprobante(m[1]);
       if (ruta === '/api/constancia') return constancia(f);
     }
     registroPendiente = metodo === 'GET' ? null : (() => { try { return describir(metodo, ruta, cuerpo || {}); } catch { return null; } })();
@@ -1723,6 +1835,8 @@
     }
     if (metodo === 'POST') {
       if (ruta === '/api/cierres') return cerrarMes(cuerpo || {});
+      if (ruta === '/api/pagos') return registrarPago(cuerpo || {});
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) return adjuntarComprobante(m[1], cuerpo || {});
       if (ruta === '/api/entidades') return crearEntidad(cuerpo || {});
       if (ruta === '/api/colaboradores') return crearColaborador(cuerpo || {});
       if (ruta === '/api/empresas') return crearEmpresa(cuerpo || {});
@@ -1739,6 +1853,7 @@
       if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) return eliminarDescuento(m[1]);
       if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return eliminarEmpresa(m[1]);
       if ((m = ruta.match(/^\/api\/cierres\/(\d{4}-\d{2})$/))) return reabrirMes(m[1]);
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)$/))) return anularPago(m[1]);
     }
     throw new ErrorValidacion('Ruta no encontrada.', 404);
   }

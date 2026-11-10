@@ -398,3 +398,10 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .mensaje.editando { background: #fff6e0; border: 1px solid #f0d28a; color: #5a4300; border-radius: 10px; padding: 10px 14px; margin: 0 0 14px; }
 :root[data-tema="oscuro"] .mensaje.editando { background: #3a2f12; border-color: #6b5520; color: #f3dfa6; }
 #tarjeta-form-ret { scroll-margin-top: 150px; }
+/* Pagos */
+.tabla-pagos tr.pagado > td { background: color-mix(in srgb, var(--superficie) 88%, #7fb33a 12%); }
+.tabla-pagos .aviso-cambio { color: var(--ambar-oscuro); }
+.detalle-pago > td { background: var(--fondo); padding: 8px 12px 14px; }
+table.mini { width: 100%; font-size: .9rem; }
+table.mini th { text-transform: none; font-size: .82rem; }
+.encabezado > .campo { min-width: 170px; }
