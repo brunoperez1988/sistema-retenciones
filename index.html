@@ -395,6 +395,11 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 /* Constancia */
 .vista-constancia { width: 100%; min-height: 400px; border: 1px solid var(--borde); border-radius: 10px; background: #fff; margin-top: 16px; }
 .dialogo.confirmar ul { margin: 6px 0 0; padding-left: 18px; }
+.enlace-boton { background: none; border: none; padding: 4px 0 0; color: var(--verde-profundo); font: inherit; font-size: .88rem; font-weight: 600; cursor: pointer; justify-self: start; text-decoration: underline; text-underline-offset: 2px; }
+.enlace-boton:hover { opacity: .8; }
+.sugerencias li.agregar-colab { color: var(--verde-profundo); font-weight: 600; cursor: pointer; }
+.sugerencias li.agregar-colab:hover { background: var(--fondo); }
+#nc-form { display: grid; gap: 14px; } #nc-form h2 { margin-bottom: 0; } #nc-form .acciones { margin-top: 4px; }
 
 </style>
 </head>
@@ -2789,7 +2794,7 @@ const filtrosRet = { periodo: '', tipo: '', q: '' };
 
 // Buscador de colaboradores: se escribe la cédula o parte del nombre y se elige de la lista.
 const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores, { alElegir, sinResultado } = {}) {
+function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores, { alElegir, sinResultado, alAgregar } = {}) {
   const preparar = (cs) => cs.map((c) => ({ ...c, clave: `${sinAcentos(c.nombre)} ${cedula(c.cedula)}` }));
   let todos = preparar(colaboradores);
   let opciones = [];
@@ -2810,7 +2815,9 @@ function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores, { al
     lista.innerHTML = opciones.length
       ? opciones.map((c, i) => `<li role="option" data-i="${i}">${esc(c.nombre)}<span class="sec">CI ${esc(cedula(c.cedula))}</span></li>`).join('')
         + (hallados.length > opciones.length ? `<li class="sin-resultado">Hay ${hallados.length - opciones.length} más: escribí un poco más.</li>` : '')
-      : `<li class="sin-resultado">${sinResultado || 'No encontré ningún colaborador con eso. Si es nuevo, cargalo en <a href="#/colaboradores">Colaboradores</a>.'}</li>`;
+      : alAgregar
+        ? `<li class="sin-resultado">No encontré ningún colaborador con eso.</li><li class="agregar-colab" data-agregar role="option">+ Agregarlo como colaborador nuevo</li>`
+        : `<li class="sin-resultado">${sinResultado || 'No encontré ningún colaborador con eso. Si es nuevo, cargalo en <a href="#/colaboradores">Colaboradores</a>.'}</li>`;
     lista.hidden = false; entrada.setAttribute('aria-expanded', 'true'); marcar();
   };
   entrada.addEventListener('input', () => { const habia = oculto.value; oculto.value = ''; mostrar(); if (habia && alElegir) alElegir(null); });
@@ -2819,20 +2826,71 @@ function conectarBuscadorColaborador(entrada, oculto, lista, colaboradores, { al
     if (lista.hidden) { if (ev.key === 'ArrowDown') mostrar(); return; }
     if (ev.key === 'ArrowDown') { ev.preventDefault(); activa = Math.min(activa + 1, opciones.length - 1); marcar(); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); activa = Math.max(activa - 1, 0); marcar(); }
-    else if (ev.key === 'Enter') { if (opciones[activa]) { ev.preventDefault(); elegir(opciones[activa]); } }
+    else if (ev.key === 'Enter') {
+      if (opciones[activa]) { ev.preventDefault(); elegir(opciones[activa]); }
+      else if (alAgregar && !opciones.length) { ev.preventDefault(); const t = entrada.value; cerrar(); alAgregar(t); }
+    }
     else if (ev.key === 'Escape') cerrar();
   });
   // mousedown para que elija antes de que el campo pierda el foco
   lista.addEventListener('mousedown', (ev) => {
     const li = ev.target.closest('li[data-i]');
-    if (li) { ev.preventDefault(); elegir(opciones[Number(li.dataset.i)]); }
+    if (li) { ev.preventDefault(); elegir(opciones[Number(li.dataset.i)]); return; }
+    if (alAgregar && ev.target.closest('li[data-agregar]')) { ev.preventDefault(); const t = entrada.value; cerrar(); alAgregar(t); }
   });
-  entrada.addEventListener('blur', () => setTimeout(cerrar, 150));
+  // Si el campo vuelve a tener el foco antes de que se cierre la lista (por ejemplo al volver de una ventana), no se cierra.
+  let cierrePendiente = null;
+  entrada.addEventListener('blur', () => { cierrePendiente = setTimeout(cerrar, 150); });
+  ['focus', 'input'].forEach((t) => entrada.addEventListener(t, () => clearTimeout(cierrePendiente)));
   return {
     limpiar: () => { oculto.value = ''; entrada.value = ''; cerrar(); },
     elegirId: (id) => { const c = todos.find((x) => String(x.id) === String(id)); if (c) elegir(c); },
     cambiarLista: (cs) => { todos = preparar(cs); },
   };
+}
+
+// Alta rápida de un colaborador desde otra pantalla. Lo escrito en el buscador se usa para llenar la cédula o el nombre.
+// Devuelve el colaborador creado ({id, cedula, nombre}) o null si se cancela.
+function dialogoNuevoColaborador(escrito = '') {
+  const t = String(escrito || '').trim();
+  const soloNumeros = /^[\d.\-\s]+$/.test(t);
+  return new Promise((resolver) => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dialogo';
+    dlg.innerHTML = `<form id="nc-form" novalidate>
+      <h2>Nuevo colaborador</h2>
+      <div class="campo"><label for="nc-ci">Cédula <span class="obligatorio">*</span></label>
+        <input id="nc-ci" inputmode="numeric" maxlength="12" placeholder="12345672" value="${esc(soloNumeros ? t.replace(/\D/g, '') : '')}">
+        <span class="ayuda">Solo números, con el dígito verificador al final.</span></div>
+      <div class="campo"><label for="nc-nombre">Nombre completo <span class="obligatorio">*</span></label>
+        <input id="nc-nombre" maxlength="200" value="${esc(soloNumeros ? '' : t)}"></div>
+      <p class="mensaje error" id="nc-error" role="alert" hidden></p>
+      <div class="acciones"><button class="boton" type="submit" id="nc-guardar">Guardar y elegir</button><button class="boton secundario" type="button" id="nc-cancelar">Cancelar</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    let creado = null;
+    const form = dlg.querySelector('#nc-form');
+    const error = dlg.querySelector('#nc-error');
+    dlg.querySelector('#nc-cancelar').addEventListener('click', () => dlg.close());
+    dlg.addEventListener('close', () => { resolver(creado); dlg.remove(); });
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      error.hidden = true;
+      const datos = { cedula: form.querySelector('#nc-ci').value.trim(), nombre: form.querySelector('#nc-nombre').value.trim() };
+      if (!datos.cedula || !datos.nombre) { error.textContent = 'Completá la cédula y el nombre.'; error.hidden = false; return; }
+      const boton = form.querySelector('#nc-guardar');
+      boton.disabled = true;
+      try {
+        const res = await api('/api/colaboradores', { metodo: 'POST', cuerpo: datos });
+        creado = { id: res.id, cedula: datos.cedula.replace(/\D/g, ''), nombre: datos.nombre };
+        dlg.close();
+      } catch (err) {
+        error.textContent = err.validacion ? err.message : MENSAJE_FALLA; error.hidden = false; boton.disabled = false;
+      }
+    });
+    dlg.showModal();
+    form.querySelector(soloNumeros && t ? '#nc-nombre' : '#nc-ci').focus();
+  });
 }
 
 async function vistaRetenciones(_params, vigente) {
@@ -2843,13 +2901,13 @@ async function vistaRetenciones(_params, vigente) {
     <div class="apilado">
       <section class="tarjeta">
         <h2>Cargar retención</h2>
-        ${!cat.colaboradores.length || !cat.entidades.length
-          ? `<p class="mensaje error">Primero cargá ${!cat.colaboradores.length ? '<a href="#/colaboradores">colaboradores</a>' : ''}${!cat.colaboradores.length && !cat.entidades.length ? ' y ' : ''}${!cat.entidades.length ? '<a href="#/entidades">entidades</a>' : ''}.</p>` : ''}
+        ${!cat.entidades.length ? '<p class="mensaje error">Primero cargá las <a href="#/entidades">entidades</a>.</p>' : ''}
         <form class="formulario form-ancho" id="form-ret" novalidate>
           <div class="campo buscador"><label for="r-colab-q">Colaborador <span class="obligatorio">*</span></label>
             <input id="r-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="r-colab-lista">
             <input type="hidden" id="r-colab">
-            <ul class="sugerencias" id="r-colab-lista" role="listbox" hidden></ul></div>
+            <ul class="sugerencias" id="r-colab-lista" role="listbox" hidden></ul>
+            <button type="button" class="enlace-boton" id="r-colab-nuevo">+ Agregar colaborador nuevo</button></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
               ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)}${normalizarTxt(e.nombre) === normalizarTxt(tipoTxt[e.tipo]) ? '' : ` (${tipoTxt[e.tipo]})`}</option>`).join('')}
@@ -2903,7 +2961,16 @@ async function vistaRetenciones(_params, vigente) {
     </div>`;
 
   document.getElementById('f-tipo').value = filtrosRet.tipo;
-  const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores);
+  const agregarColaborador = async (escrito) => {
+    const nuevo = await dialogoNuevoColaborador(escrito);
+    if (!nuevo) { document.getElementById('r-colab-q')?.focus(); return; }
+    cat.colaboradores.push(nuevo);
+    buscadorColab.cambiarLista(cat.colaboradores);
+    buscadorColab.elegirId(nuevo.id);
+    aviso(`${nuevo.nombre} agregado como colaborador y elegido.`);
+  };
+  const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores, { alAgregar: agregarColaborador });
+  document.getElementById('r-colab-nuevo').addEventListener('click', () => agregarColaborador(document.getElementById('r-colab').value ? '' : document.getElementById('r-colab-q').value));
   const selEnt = document.getElementById('r-ent');
   const chkMensual = document.getElementById('r-mensual');
   const campoBenef = document.getElementById('campo-benef');
