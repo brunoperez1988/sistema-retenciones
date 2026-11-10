@@ -1219,11 +1219,13 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
         const fil = todos.filter((d) => (!tdesc || d.tipo === tdesc) && (!empresaId || d.empresa_id === empresaId));
         const real = todos.reduce((a, d) => a + d.importe, 0);
         const filtrado = fil.reduce((a, d) => a + d.importe, 0);
+        // Lo descontado antes del mes pedido: sirve para saber con qué saldo entró a ese mes.
+        const antes = per ? todos.filter((d) => d.fecha.slice(0, 7) < per).reduce((a, d) => a + d.importe, 0) : 0;
         return {
           ...r,
           colaborador_id: c.id, cedula: c.cedula, colaborador: c.nombre,
           entidad_id: e.id, entidad: e.nombre, tipo: e.tipo,
-          descontado_real: real, cantidad_descuentos: todos.length, descontado_filtrado: filtrado,
+          descontado_real: real, descontado_antes: antes, cantidad_descuentos: todos.length, descontado_filtrado: filtrado,
           empresas: [...new Set(fil.map((d) => emp.get(d.empresa_id).nombre))].join(', '),
           descontado: filtraDescuentos ? filtrado : real,
           regla: reglaCanonica(r.regla, { exigirBase: false }),
@@ -1239,7 +1241,9 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
           _hayFiltrados: fil.length > 0,
         };
       })
-      .filter((x) => !x.arrastre || (x.pasa_saldo && (x.a_definir || x.pendiente > 0)))
+      // Las de meses anteriores entran si llegaron a este mes con saldo, aunque en este mes se hayan terminado de descontar
+      // (si no, al completarse desaparecían del mes y lo retenido no se sumaba).
+      .filter((x) => !x.arrastre || (x.pasa_saldo && (x.a_definir || x.importe_total - x.descontado_antes > 0)))
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
@@ -1280,8 +1284,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
   function panel(mes) {
     const filas = listarRetenciones({ periodo: periodo(mes), con_saldo: true });
     // De lo que viene de meses anteriores cuenta solo el saldo con que entró a este mes.
-    const antesDelMes = (x) => estado.descuentos.filter((d) => d.retencion_id === x.id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0);
-    const previo = new Map(filas.filter((x) => x.arrastre).map((x) => [x.id, antesDelMes(x)]));
+    const previo = new Map(filas.filter((x) => x.arrastre).map((x) => [x.id, x.descontado_antes]));
     const saldoAnterior = filas.filter((x) => x.arrastre).reduce((a, x) => a + (x.importe_total || 0) - previo.get(x.id), 0);
     const pactado = filas.reduce((a, x) => a + (x.importe_total || 0) - (previo.get(x.id) || 0), 0);
     const retenido = filas.reduce((a, x) => a + x.descontado_real - (previo.get(x.id) || 0), 0);
