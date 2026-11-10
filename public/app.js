@@ -284,6 +284,7 @@ if (LOCAL) {
 }
 
 let navegacionActual = 0;
+let ultimaSeccion = null;
 async function navegar() {
   if (LOCAL) {
     const c = window.backendLocal.cuenta();
@@ -299,6 +300,8 @@ async function navegar() {
     if (!permisosActuales.admin && SOLO_ADMIN.includes(seccion)) seccion = 'solo-admin';
   }
   document.querySelectorAll('.menu a').forEach((a) => a.classList.toggle('activo', a.dataset.seccion === seccion));
+  // Las animaciones de entrada solo se ven al llegar a una pantalla, no cuando se refresca por cambios de otra persona.
+  $app.classList.toggle('animar', seccion !== ultimaSeccion); ultimaSeccion = seccion;
   document.getElementById('menu').classList.remove('abierto');
   const id = ++navegacionActual;
   $app.innerHTML = '<p class="cargando">Cargando…</p>';
@@ -347,19 +350,22 @@ async function vistaPanel(_params, vigente) {
 
     ${await avisoRespaldo()}
     <section class="indicadores" aria-label="Resumen del mes">
-      <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor">${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}${d.sinTope ? ` · ${d.sinTope} por porcentaje` : ''}${d.aDefinir ? ` · ${d.aDefinir} a definir` : ''}</div></div>
-      <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor">${moneda(d.pactado)}</div><div class="detalle">${d.arrastradas ? `Incluye ${moneda(d.saldoAnterior)} que vienen de meses anteriores` : 'Suma de las retenciones del mes'}</div></div>
-      <div class="indicador retenido"><div class="titulo">Total retenido</div><div class="valor">${moneda(d.retenido)}</div>
+      <div class="indicador ordenes"><div class="titulo">Órdenes</div><div class="valor" data-contar="${d.ordenes}" data-entero>${d.ordenes}</div><div class="detalle">${d.completas} ${d.completas === 1 ? 'completa' : 'completas'}${d.sinTope ? ` · ${d.sinTope} por porcentaje` : ''}${d.aDefinir ? ` · ${d.aDefinir} a definir` : ''}</div></div>
+      <div class="indicador pactado"><div class="titulo">Total pactado</div><div class="valor" data-contar="${d.pactado}">${moneda(d.pactado)}</div><div class="detalle">${d.arrastradas ? `Incluye ${moneda(d.saldoAnterior)} que vienen de meses anteriores` : 'Suma de las retenciones del mes'}</div></div>
+      <div class="indicador retenido"><div class="titulo">Total retenido</div><div class="valor" data-contar="${d.retenido}">${moneda(d.retenido)}</div>
         <div class="avance-general" title="${avance}% retenido"><span style="width:${Math.min(avance, 100)}%"></span></div></div>
-      <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar${d.sinTope ? ' (sin contar las de porcentaje)' : ''}</div></div>
+      <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor" data-contar="${d.disponible}">${moneda(d.disponible)}</div><div class="detalle">Falta descontar${d.sinTope ? ' (sin contar las de porcentaje)' : ''}</div></div>
     </section>
+
+    ${graficosPanel(d)}
 
     ${d.no_habilitado ? `<div class="mensaje editando">${esc(nombreMes(d.periodo))} todavía no está habilitado: se está trabajando ${esc(nombreMes(d.no_habilitado).toLowerCase())}. Cuando lo cierres, se crean solas las retenciones que se repiten y ya se puede cargar este mes. <button class="boton chico secundario" type="button" data-ir-mes="${esc(d.no_habilitado)}">Ir a ${esc(nombreMes(d.no_habilitado).toLowerCase())}</button></div>` : seccionAvisos(d.avisos)}
 
     <div class="encabezado"><h2>Órdenes de ${esc(nombreMes(d.periodo).toLowerCase())}</h2>
       <a class="boton secundario" href="#/retenciones">+ Cargar retención</a></div>
-    ${d.retenciones.length ? `<div class="ordenes">${d.retenciones.map(tarjetaOrden).join('')}</div>`
+    ${d.retenciones.length ? `<div class="ordenes">${d.retenciones.map((r, i) => tarjetaOrden(r).replace('<article ', `<article style="--i:${Math.min(i, 24)}" `)).join('')}</div>`
       : `<div class="tarjeta vacio">No hay retenciones cargadas para este mes.</div>`}`;
+  contarIndicadores();
 
   conectarDefinirImporte($app, navegar);
   conectarDetalle($app, d.retenciones, navegar);
@@ -447,6 +453,43 @@ function seccionAvisos(avisos) {
       </div>`).join('')}
     </div>
   </section>`;
+}
+
+// Anillo con el % retenido del mes y barras de retenido contra pactado por tipo (solo las que tienen importe).
+function graficosPanel(d) {
+  if (!d.retenciones.length || !d.pactado) return '';
+  const pct = Math.min(100, Math.round((d.retenido / d.pactado) * 100));
+  const tipos = [['comercial', 'Comerciales'], ['judicial', 'Judiciales'], ['otros', 'Otros']];
+  const suma = Object.fromEntries(tipos.map(([t]) => [t, { ret: 0, pac: 0 }]));
+  for (const r of d.retenciones) {
+    if (r.sin_tope || r.a_definir || !r.importe_total || !suma[r.tipo]) continue;
+    suma[r.tipo].pac += r.importe_total; suma[r.tipo].ret += Math.min(r.descontado_real, r.importe_total);
+  }
+  const filas = tipos.filter(([t]) => suma[t].pac > 0);
+  const max = Math.max(1, ...filas.map(([t]) => suma[t].pac));
+  return `<section class="graficos" aria-label="Avance del mes">
+    <div class="tarjeta"><h3>Avance del mes</h3><div class="dona-box">
+      <div class="dona" style="--pct:${pct}" role="img" aria-label="${pct}% retenido"><div>${pct}%<small>retenido</small></div></div>
+      <div class="ley"><span><i class="retenido"></i>Retenido</span><span><i class="falta"></i>Falta</span></div></div></div>
+    <div class="tarjeta"><h3>Retenido por tipo (de lo pactado)</h3><div class="barras">
+      ${filas.map(([t, nombre]) => `<div class="b ${t}"><strong>${nombre}</strong>
+        <div class="pista"><em style="width:${(suma[t].pac / max) * 100}%"></em><span style="width:${(suma[t].ret / max) * 100}%"></span></div>
+        <span class="num">${moneda(suma[t].ret)} <span class="sec">de ${moneda(suma[t].pac)}</span></span></div>`).join('')}
+      ${filas.length ? '' : '<p class="sec">Todavía no hay retenciones con importe este mes.</p>'}</div></div>
+  </section>`;
+}
+
+// Los totales del Panel cuentan desde cero al entrar.
+function contarIndicadores() {
+  if (!$app.classList.contains('animar') || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const t0 = performance.now(); const dur = 900;
+  const els = [...$app.querySelectorAll('[data-contar]')];
+  const paso = (t) => {
+    const k = Math.min(1, (t - t0) / dur); const e = 1 - Math.pow(1 - k, 3);
+    for (const el of els) { const v = Number(el.dataset.contar) * e; el.textContent = el.hasAttribute('data-entero') ? String(Math.round(v)) : moneda(Math.round(v)); }
+    if (k < 1) requestAnimationFrame(paso);
+  };
+  requestAnimationFrame(paso);
 }
 
 function tarjetaOrden(r) {

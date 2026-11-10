@@ -417,3 +417,72 @@ table.mini input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
 .barra-seleccion { display: flex; gap: 14px; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 12px 4px 4px; }
 .pagos-titulo { margin: 18px 0 6px; font-size: .95rem; }
 table.mini td.marca, table.mini th.marca { background: inherit; position: static; box-shadow: none; }
+
+/* ── Panel dinámico: tarjetas de color, gráficos y movimiento ── */
+.indicadores .indicador { border: 0; color: #fff; position: relative; overflow: hidden; padding: 20px 22px; box-shadow: 0 8px 22px rgba(40, 42, 45, .16); }
+.indicadores .indicador::after { content: ''; position: absolute; right: -30px; top: -30px; width: 120px; height: 120px; border-radius: 50%; background: rgba(255, 255, 255, .12); pointer-events: none; }
+.indicadores .indicador .titulo, .indicadores .indicador .detalle { color: rgba(255, 255, 255, .86); }
+.indicadores .indicador .valor { color: #fff; font-size: 1.85rem; }
+.indicadores .indicador.ordenes, :root[data-tema="oscuro"] .indicadores .indicador.ordenes { background: linear-gradient(135deg, #2b2c2e, #4a4c50); }
+.indicadores .indicador.pactado { background: linear-gradient(135deg, #4b6409, #7a9a12); }
+.indicadores .indicador.retenido { background: linear-gradient(135deg, #6f8f0e, #9abb0d); }
+.indicadores .indicador.disponible { background: linear-gradient(135deg, #b8740f, #f2a93b); }
+.indicadores .indicador .avance-general { background: rgba(255, 255, 255, .25); }
+.indicadores .indicador .avance-general span { background: #fff; }
+
+.orden { border-left: 0; border-top: 5px solid var(--borde-orden, var(--verde-suave)); border-radius: 14px; }
+.orden.judicial { --borde-orden: var(--grafito); --tinte: #ecedeb; }
+.orden.comercial { --borde-orden: var(--ambar); --tinte: var(--ambar-claro); }
+.orden.otros { --borde-orden: var(--lima); --tinte: var(--lima-claro); }
+.orden.judicial, .orden.comercial, .orden.otros { background: linear-gradient(180deg, var(--tinte), var(--superficie) 45%); }
+:root[data-tema="oscuro"] .orden.judicial { --borde-orden: #6a6d72; --tinte: #2c2e31; }
+.barra-avance { height: 14px; }
+.orden.judicial .barra-avance span { background: linear-gradient(90deg, #2b2c2e, #63666a); }
+.orden.comercial .barra-avance span { background: linear-gradient(90deg, #b8740f, #f2a93b); }
+.orden.otros .barra-avance span { background: linear-gradient(90deg, #6f8f0e, #9abb0d); }
+:root[data-tema="oscuro"] .orden.judicial .barra-avance span { background: linear-gradient(90deg, #8a8d92, #c4c6c2); }
+
+.graficos { display: grid; grid-template-columns: minmax(260px, 300px) 1fr; gap: 16px; margin-bottom: 22px; }
+.graficos .tarjeta { margin: 0; }
+.graficos h3 { margin: 0 0 12px; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--texto-suave); }
+.dona-box { display: flex; align-items: center; gap: 18px; }
+@property --pct-v { syntax: '<number>'; inherits: false; initial-value: 0; }
+.dona { --pct-v: var(--pct); flex: none; width: 140px; height: 140px; border-radius: 50%; display: grid; place-items: center;
+  background: conic-gradient(var(--verde) 0 calc(var(--pct-v) * 1%), var(--ambar) calc(var(--pct-v) * 1%) 100%); }
+.dona > div { width: 96px; height: 96px; border-radius: 50%; background: var(--superficie); display: grid; place-items: center; align-content: center; text-align: center; font-weight: 750; font-size: 1.3rem; }
+.dona small { display: block; font-size: .72rem; font-weight: 500; color: var(--texto-suave); }
+.ley { display: grid; gap: 8px; font-size: .85rem; }
+.ley i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
+.ley i.retenido { background: var(--verde); } .ley i.falta { background: var(--ambar); }
+.barras { display: grid; gap: 12px; }
+.barras .b { display: grid; grid-template-columns: 110px 1fr minmax(230px, auto); gap: 12px; align-items: center; font-size: .88rem; }
+.barras .pista { height: 22px; background: var(--pista); border-radius: 6px; overflow: hidden; position: relative; }
+.barras .pista span, .barras .pista em { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: var(--c-barra); }
+.barras .pista em { opacity: .3; }
+.barras .comercial { --c-barra: var(--ambar); } .barras .judicial { --c-barra: var(--grafito); } .barras .otros { --c-barra: var(--lima); }
+:root[data-tema="oscuro"] .barras .judicial { --c-barra: #a5a8a2; }
+.barras .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.barras .num .sec { color: var(--texto-suave); }
+@media (max-width: 800px) {
+  .graficos { grid-template-columns: minmax(0, 1fr); }
+  .barras .b { grid-template-columns: minmax(0, 1fr) auto; }
+  .barras .pista { grid-column: 1 / -1; grid-row: 2; }
+}
+
+.indicador, .orden { transition: transform .18s, box-shadow .18s; }
+.indicador:hover, .orden:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(40, 42, 45, .08), 0 12px 28px rgba(40, 42, 45, .16); }
+.boton { transition: transform .12s, filter .12s, background-color .15s; }
+.boton:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.06); }
+@keyframes subir { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes llenar { from { width: 0; } }
+@keyframes girar-dona { from { --pct-v: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  .animar .indicador, .animar .orden, .animar .tarjeta, .animar .panel-cabecera { animation: subir .5s cubic-bezier(.2, .7, .2, 1) both; }
+  .animar .indicadores .indicador:nth-child(2) { animation-delay: .07s; }
+  .animar .indicadores .indicador:nth-child(3) { animation-delay: .14s; }
+  .animar .indicadores .indicador:nth-child(4) { animation-delay: .21s; }
+  .animar .graficos .tarjeta { animation-delay: .25s; }
+  .animar .orden { animation-delay: calc(.3s + var(--i, 0) * .03s); }
+  .animar .barra-avance span, .animar .avance-general span, .animar .barras .pista span, .animar .barras .pista em { animation: llenar 1.1s cubic-bezier(.2, .7, .2, 1) .35s both; }
+  .animar .dona { animation: girar-dona 1.2s cubic-bezier(.2, .7, .2, 1) .3s both; }
+}
