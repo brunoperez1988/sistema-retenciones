@@ -1284,10 +1284,26 @@ async function vistaDescuentos(params, vigente) {
   } else llenarRetenciones();
 
   const lista = document.getElementById('lista-desc');
+  let ultimasFilasDesc = [];
+  // Ordenar no vuelve a pedir los datos: reordena lo que ya está en pantalla.
+  function pintarTablaDesc() {
+    lista.innerHTML = tablaDescuentos(ultimasFilasDesc);
+    lista.querySelectorAll('[data-ordenar]').forEach((b) => b.addEventListener('click', () => {
+      const col = b.dataset.ordenar;
+      if (ordenDesc.col === col) ordenDesc.dir *= -1;
+      else { ordenDesc.col = col; ordenDesc.dir = ['fecha', 'importe', 'saldo_despues', 'saldo_actual'].includes(col) ? -1 : 1; }
+      pintarTablaDesc();
+      const nuevo = lista.querySelector(`[data-ordenar="${col}"]`); if (nuevo) nuevo.focus();
+    }));
+    conectarEliminarDesc();
+  }
   const recargarLista = () => cargarEn(lista, async () => {
     const qs = new URLSearchParams(Object.entries(filtrosDesc).filter(([, v]) => v));
     const filas = await api(`/api/descuentos?${qs}`);
-    lista.innerHTML = tablaDescuentos(filas);
+    ultimasFilasDesc = filas;
+    pintarTablaDesc();
+  });
+  function conectarEliminarDesc() {
     lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('¿Eliminar este descuento? El importe vuelve a quedar pendiente en la retención.')) return;
       try {
@@ -1297,7 +1313,7 @@ async function vistaDescuentos(params, vigente) {
         recargarLista();
       } catch (e) { if (e.validacion) aviso(e.message); else fallaEnLinea(lista, recargarLista); }
     }));
-  });
+  }
 
   async function refrescarRetenciones() {
     retenciones = await api('/api/retenciones');
@@ -1387,12 +1403,33 @@ async function vistaDescuentos(params, vigente) {
   });
 }
 
-function tablaDescuentos(filas) {
-  if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay descuentos con estos filtros.</p></div>';
+// Orden del histórico: se cambia tocando el título de la columna (una vez de la A a la Z, otra vez al revés).
+const ordenDesc = { col: 'fecha', dir: -1 };
+const COLUMNAS_DESC = [
+  ['fecha', 'Fecha', (d) => d.fecha], ['colaborador', 'Colaborador', (d) => d.colaborador], ['retencion', 'Retención', (d) => `${d.entidad} ${d.periodo}`],
+  ['tipo', 'Tipo', (d) => d.tipo], ['empresa', 'Empresa', (d) => d.empresa], ['importe', 'Importe', (d) => d.importe, 'num'],
+  ['saldo_despues', 'Saldo luego', (d) => d.saldo_despues ?? -1, 'num'], ['saldo_actual', 'Saldo pendiente', (d) => d.saldo_actual ?? -1, 'num'], ['descontado_por', 'Descontó', (d) => d.descontado_por || ''],
+];
+function ordenarDescuentos(filas) {
+  const c = COLUMNAS_DESC.find((x) => x[0] === ordenDesc.col) || COLUMNAS_DESC[0];
+  const v = c[2];
+  return [...filas].sort((a, b) => {
+    const x = v(a); const y = v(b);
+    const r = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'es', { sensitivity: 'base', numeric: true });
+    return r * ordenDesc.dir || b.fecha.localeCompare(a.fecha) || b.id - a.id;
+  });
+}
+
+function tablaDescuentos(filasSinOrden) {
+  if (!filasSinOrden.length) return '<div class="tabla-contenedor"><p class="vacio">No hay descuentos con estos filtros.</p></div>';
+  const filas = ordenarDescuentos(filasSinOrden);
   const total = filas.reduce((a, x) => a + x.importe, 0);
+  const th = ([col, titulo, , clase]) => {
+    const activa = ordenDesc.col === col;
+    return `<th class="${clase || ''} ordenable"${activa ? ` aria-sort="${ordenDesc.dir > 0 ? 'ascending' : 'descending'}"` : ''}><button type="button" data-ordenar="${col}" title="Ordenar por ${titulo.toLowerCase()}">${titulo}<span class="flecha">${activa ? (ordenDesc.dir > 0 ? '▲' : '▼') : '↕'}</span></button></th>`;
+  };
   return `<div class="tabla-contenedor"><table class="tabla-ret">
-    <thead><tr><th>Fecha</th><th>Colaborador</th><th>Retención</th><th>Tipo</th><th>Empresa</th>
-      <th class="num">Importe</th><th class="num">Saldo luego</th><th class="num">Saldo pendiente</th><th>Descontó</th><th></th></tr></thead>
+    <thead><tr>${COLUMNAS_DESC.map(th).join('')}<th></th></tr></thead>
     <tbody>${filas.map((d) => `<tr>
       <td>${fecha(d.fecha)}</td>
       <td>${esc(d.colaborador)}<span class="sec">CI ${esc(cedula(d.cedula))}</span></td>

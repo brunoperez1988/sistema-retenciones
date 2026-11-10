@@ -492,3 +492,12 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
 .resumen-ret .cifra { font-weight: 700; font-variant-numeric: tabular-nums; }
 #h-colab-q { min-width: 220px; }
 #h-ret { max-width: 340px; }
+th.ordenable { padding: 0; }
+th.ordenable button { all: unset; box-sizing: border-box; display: flex; gap: 6px; align-items: center; width: 100%; padding: 10px 8px; cursor: pointer; font: inherit; color: inherit; text-transform: inherit; letter-spacing: inherit; }
+th.ordenable.num button { justify-content: flex-end; }
+th.ordenable button:hover { background: var(--verde-suave); }
+th.ordenable button:focus-visible { outline: 2px solid var(--verde); outline-offset: -2px; }
+th.ordenable .flecha { font-size: .72rem; opacity: .35; }
+th.ordenable[aria-sort] .flecha { opacity: 1; color: var(--verde-oscuro); }
+th.ordenable[aria-sort] { background: var(--lima-claro); }
+#lista-desc [data-filtrar-ret] { text-align: left; }
