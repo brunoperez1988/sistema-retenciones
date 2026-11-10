@@ -791,6 +791,7 @@
       .filter((r) => !per || r.periodo === per || (f.con_saldo && r.periodo < per))
       .filter((r) => !TIPOS_ENTIDAD.includes(f.tipo) || ent.get(r.entidad_id).tipo === f.tipo)
       .filter((r) => !f.colaborador_id || r.colaborador_id === Number(f.colaborador_id))
+      .filter((r) => !f.entidad_id || r.entidad_id === Number(f.entidad_id))
       .map((r) => {
         const c = col.get(r.colaborador_id);
         const e = ent.get(r.entidad_id);

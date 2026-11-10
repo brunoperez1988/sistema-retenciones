@@ -509,6 +509,7 @@ th.ordenable .flecha { font-size: .72rem; opacity: .35; }
 th.ordenable[aria-sort] .flecha { opacity: 1; color: var(--verde-oscuro); }
 th.ordenable[aria-sort] { background: var(--lima-claro); }
 #lista-desc [data-filtrar-ret] { text-align: left; }
+.enlace-izq { text-align: left; }
 
 </style>
 </head>
@@ -1333,6 +1334,7 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
       .filter((r) => !per || r.periodo === per || (f.con_saldo && r.periodo < per))
       .filter((r) => !TIPOS_ENTIDAD.includes(f.tipo) || ent.get(r.entidad_id).tipo === f.tipo)
       .filter((r) => !f.colaborador_id || r.colaborador_id === Number(f.colaborador_id))
+      .filter((r) => !f.entidad_id || r.entidad_id === Number(f.entidad_id))
       .map((r) => {
         const c = col.get(r.colaborador_id);
         const e = ent.get(r.entidad_id);
@@ -3324,7 +3326,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
 
 // ── Retenciones recibidas ──
 
-const filtrosRet = { periodo: '', tipo: '', q: '' };
+const filtrosRet = { colaborador_id: '', periodo: '', tipo: '', entidad_id: '', q: '' };
 
 // Buscador de colaboradores: se escribe la cédula o parte del nombre y se elige de la lista.
 const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -3488,9 +3490,13 @@ async function vistaRetenciones(_params, vigente) {
       <section class="tarjeta">
         <h2>Listado</h2>
         <div class="filtros">
+          <div class="campo buscador"><label for="f-colab-q">Persona</label>
+            <input id="f-colab-q" type="search" autocomplete="off" spellcheck="false" placeholder="Cédula o nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="f-colab-lista">
+            <input type="hidden" id="f-colab"><ul class="sugerencias" id="f-colab-lista" role="listbox" hidden></ul></div>
           <div class="campo"><label for="f-periodo">Período</label><input type="month" id="f-periodo" value="${esc(filtrosRet.periodo)}"></div>
-          <div class="campo"><label for="f-tipo">Tipo</label><select id="f-tipo">
+          <div class="campo"><label for="f-tipo">Tipo de retención</label><select id="f-tipo">
             <option value="">Todas</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>
+          <div class="campo"><label for="f-entidad">Entidad</label><select id="f-entidad"><option value="">Todas</option>${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${esc(e.tipo)}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo ancho"><label for="f-q">Buscar</label><input id="f-q" type="search" placeholder="Nombre, CI, entidad, concepto, beneficiario" value="${esc(filtrosRet.q)}"></div>
         </div>
         <div id="lista-ret"><p class="cargando">Cargando…</p></div>
@@ -3498,6 +3504,15 @@ async function vistaRetenciones(_params, vigente) {
     </div>`;
 
   document.getElementById('f-tipo').value = filtrosRet.tipo;
+  document.getElementById('f-entidad').value = filtrosRet.entidad_id;
+  // La lista de entidades muestra solo las del tipo elegido.
+  const selFTipo = document.getElementById('f-tipo'); const selFEnt = document.getElementById('f-entidad');
+  const ajustarEntidadesRet = () => {
+    selFEnt.querySelectorAll('option[data-tipo]').forEach((o) => { o.hidden = Boolean(selFTipo.value) && o.dataset.tipo !== selFTipo.value; });
+    if (selFEnt.selectedOptions[0] && selFEnt.selectedOptions[0].hidden) { selFEnt.value = ''; filtrosRet.entidad_id = ''; }
+  };
+  selFTipo.addEventListener('change', ajustarEntidadesRet, true);
+  ajustarEntidadesRet();
   const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores);
   const selEnt = document.getElementById('r-ent');
   const chkMensual = document.getElementById('r-mensual');
@@ -3529,7 +3544,15 @@ async function vistaRetenciones(_params, vigente) {
   const recargar = () => cargarEn(lista, async () => {
     const qs = new URLSearchParams(Object.entries(filtrosRet).filter(([, v]) => v));
     const filas = await api(`/api/retenciones?${qs}`);
+    ultimasRet = filas;
+    pintarTablaRet();
+  });
+  let ultimasRet = [];
+  // Ordenar no vuelve a pedir los datos: reordena lo que ya está en pantalla.
+  function pintarTablaRet() {
+    const filas = ultimasRet;
     lista.innerHTML = tablaRetenciones(filas);
+    conectarOrden(lista, ordenRet, RET_MAYOR_PRIMERO, pintarTablaRet);
     conectarDefinirImporte(lista, recargar);
     conectarEditarBeneficiario(lista, filas, recargar);
     lista.querySelectorAll('[data-editar]').forEach((b) => b.addEventListener('click', () => {
@@ -3546,8 +3569,23 @@ async function vistaRetenciones(_params, vigente) {
       try { await api(`/api/retenciones/${b.dataset.eliminar}`, { metodo: 'DELETE' }); aviso('Retención eliminada.'); recargar(); }
       catch (e) { if (e.validacion) aviso(e.message); else fallaEnLinea(lista, recargar); }
     }));
+  }
+  // Filtro por persona, y tocar el nombre en la tabla filtra por esa persona.
+  const conRet = new Set((await api('/api/retenciones')).map((r) => String(r.colaborador_id)));
+  if (!vigente()) return;
+  const buscadorFiltro = conectarBuscadorColaborador(document.getElementById('f-colab-q'), document.getElementById('f-colab'), document.getElementById('f-colab-lista'),
+    cat.colaboradores.filter((c) => conRet.has(String(c.id))), {
+      sinResultado: 'No encontré a nadie con retenciones con eso.',
+      alElegir: (c) => { filtrosRet.colaborador_id = c ? String(c.id) : ''; recargar(); },
+    });
+  document.getElementById('f-colab-q').addEventListener('input', (ev) => { if (!ev.target.value && filtrosRet.colaborador_id) { filtrosRet.colaborador_id = ''; recargar(); } });
+  if (filtrosRet.colaborador_id) buscadorFiltro.elegirId(filtrosRet.colaborador_id);
+  lista.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-filtrar-colab]'); if (!b) return;
+    buscadorFiltro.elegirId(b.dataset.filtrarColab);
+    document.getElementById('f-colab-q').closest('.filtros').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
-  conectarFiltros({ periodo: 'f-periodo', tipo: 'f-tipo', q: 'f-q' }, filtrosRet, recargar);
+  conectarFiltros({ periodo: 'f-periodo', tipo: 'f-tipo', entidad_id: 'f-entidad', q: 'f-q' }, filtrosRet, recargar);
   recargar();
 
   const form = document.getElementById('form-ret');
@@ -3663,15 +3701,24 @@ async function vistaRetenciones(_params, vigente) {
   });
 }
 
-function tablaRetenciones(filas) {
-  if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
+const ordenRet = { col: 'colaborador', dir: 1 };
+const COLUMNAS_RET = [
+  ['periodo', 'Período', (r) => r.periodo], ['colaborador', 'Colaborador', (r) => r.colaborador], ['entidad', 'Entidad', (r) => r.entidad],
+  ['concepto', 'Concepto / Expediente', (r) => r.concepto || r.expediente || ''], ['beneficiario', 'Beneficiario', (r) => (r.tipo === 'judicial' ? r.beneficiario || '' : '')],
+  ['total', 'Total', (r) => r.importe_total ?? -1, 'num'], ['descontado', 'Descontado', (r) => r.descontado || 0, 'num'],
+  ['pendiente', 'Falta descontar', (r) => (r.a_definir || r.sin_tope ? -1 : r.pendiente), 'num'], ['cargado_por', 'Cargó', (r) => r.cargado_por || ''],
+];
+const RET_MAYOR_PRIMERO = ['periodo', 'total', 'descontado', 'pendiente'];
+
+function tablaRetenciones(filasSinOrden) {
+  if (!filasSinOrden.length) return '<div class="tabla-contenedor"><p class="vacio">No hay retenciones con estos filtros.</p></div>';
+  const filas = ordenarFilas(filasSinOrden, COLUMNAS_RET, ordenRet, (a, b) => a.colaborador.localeCompare(b.colaborador, 'es') || b.periodo.localeCompare(a.periodo) || a.id - b.id);
   const suma = (k) => filas.reduce((a, x) => a + (x[k] || 0), 0);
   return `<div class="tabla-contenedor"><table class="tabla-ret">
-    <thead><tr><th>Período</th><th>Colaborador</th><th>Entidad</th><th>Concepto / Expediente</th><th>Beneficiario</th>
-      <th class="num">Total</th><th class="num">Descontado</th><th class="num">Falta descontar</th><th>Cargó</th><th></th></tr></thead>
+    <thead><tr>${COLUMNAS_RET.map((c) => thOrdenable(c, ordenRet)).join('')}<th></th></tr></thead>
     <tbody>${filas.map((r) => `<tr>
       <td>${esc(mesCorto(r.periodo))}</td>
-      <td>${esc(r.colaborador)}<span class="sec">CI ${esc(cedula(r.cedula))}</span></td>
+      <td><button class="enlace enlace-izq" type="button" data-filtrar-colab="${r.colaborador_id}" title="Ver solo las retenciones de esta persona">${esc(r.colaborador)}</button><span class="sec">CI ${esc(cedula(r.cedula))}</span></td>
       <td>${esc(r.entidad)}<span class="sec">${etiquetaTipo(r.tipo)}${r.repite ? ' <span class="etiqueta-tipo mensual">Mensual</span>' : ''}</span></td>
       <td>${esc(r.concepto) || '—'}${r.expediente ? `<span class="sec">${esc(r.expediente)}</span>` : ''}</td>
       <td>${r.tipo === 'judicial' ? `${r.beneficiario === 'A completar' ? '<span class="etiqueta-tipo a-definir">A completar</span>' : esc(r.beneficiario)}${detalleBeneficiario(r) ? `<span class="sec">${detalleBeneficiario(r)}</span>` : ''}
@@ -3873,13 +3920,7 @@ async function vistaDescuentos(params, vigente) {
   // Ordenar no vuelve a pedir los datos: reordena lo que ya está en pantalla.
   function pintarTablaDesc() {
     lista.innerHTML = tablaDescuentos(ultimasFilasDesc);
-    lista.querySelectorAll('[data-ordenar]').forEach((b) => b.addEventListener('click', () => {
-      const col = b.dataset.ordenar;
-      if (ordenDesc.col === col) ordenDesc.dir *= -1;
-      else { ordenDesc.col = col; ordenDesc.dir = ['fecha', 'importe', 'saldo_despues', 'saldo_actual'].includes(col) ? -1 : 1; }
-      pintarTablaDesc();
-      const nuevo = lista.querySelector(`[data-ordenar="${col}"]`); if (nuevo) nuevo.focus();
-    }));
+    conectarOrden(lista, ordenDesc, DESC_MAYOR_PRIMERO, pintarTablaDesc);
     conectarEliminarDesc();
   }
   const recargarLista = () => cargarEn(lista, async () => {
@@ -3988,33 +4029,45 @@ async function vistaDescuentos(params, vigente) {
   });
 }
 
-// Orden del histórico: se cambia tocando el título de la columna (una vez de la A a la Z, otra vez al revés).
+// Tablas que se ordenan tocando el título de la columna (una vez de la A a la Z, otra vez al revés).
+// Cada columna: [clave, título, valor(fila), clase]. Las de fechas y montos empiezan de mayor a menor.
+function ordenarFilas(filas, columnas, orden, desempate) {
+  const c = columnas.find((x) => x[0] === orden.col) || columnas[0];
+  const v = c[2];
+  return [...filas].sort((a, b) => {
+    const x = v(a); const y = v(b);
+    const r = typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''), 'es', { sensitivity: 'base', numeric: true });
+    return r * orden.dir || desempate(a, b);
+  });
+}
+function thOrdenable([col, titulo, , clase], orden) {
+  const activa = orden.col === col;
+  return `<th class="${clase || ''} ordenable"${activa ? ` aria-sort="${orden.dir > 0 ? 'ascending' : 'descending'}"` : ''}><button type="button" data-ordenar="${col}" title="Ordenar por ${titulo.toLowerCase()}">${titulo}<span class="flecha">${activa ? (orden.dir > 0 ? '▲' : '▼') : '↕'}</span></button></th>`;
+}
+function conectarOrden(contenedor, orden, deMayorAMenor, repintar) {
+  contenedor.querySelectorAll('[data-ordenar]').forEach((b) => b.addEventListener('click', () => {
+    const col = b.dataset.ordenar;
+    if (orden.col === col) orden.dir *= -1;
+    else { orden.col = col; orden.dir = deMayorAMenor.includes(col) ? -1 : 1; }
+    repintar();
+    const nuevo = contenedor.querySelector(`[data-ordenar="${col}"]`); if (nuevo) nuevo.focus();
+  }));
+}
+
 const ordenDesc = { col: 'fecha', dir: -1 };
 const COLUMNAS_DESC = [
   ['fecha', 'Fecha', (d) => d.fecha], ['colaborador', 'Colaborador', (d) => d.colaborador], ['retencion', 'Retención', (d) => `${d.entidad} ${d.periodo}`],
   ['tipo', 'Tipo', (d) => d.tipo], ['empresa', 'Empresa', (d) => d.empresa], ['importe', 'Importe', (d) => d.importe, 'num'],
   ['saldo_despues', 'Saldo luego', (d) => d.saldo_despues ?? -1, 'num'], ['saldo_actual', 'Saldo pendiente', (d) => d.saldo_actual ?? -1, 'num'], ['descontado_por', 'Descontó', (d) => d.descontado_por || ''],
 ];
-function ordenarDescuentos(filas) {
-  const c = COLUMNAS_DESC.find((x) => x[0] === ordenDesc.col) || COLUMNAS_DESC[0];
-  const v = c[2];
-  return [...filas].sort((a, b) => {
-    const x = v(a); const y = v(b);
-    const r = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), 'es', { sensitivity: 'base', numeric: true });
-    return r * ordenDesc.dir || b.fecha.localeCompare(a.fecha) || b.id - a.id;
-  });
-}
+const DESC_MAYOR_PRIMERO = ['fecha', 'importe', 'saldo_despues', 'saldo_actual'];
 
 function tablaDescuentos(filasSinOrden) {
   if (!filasSinOrden.length) return '<div class="tabla-contenedor"><p class="vacio">No hay descuentos con estos filtros.</p></div>';
-  const filas = ordenarDescuentos(filasSinOrden);
+  const filas = ordenarFilas(filasSinOrden, COLUMNAS_DESC, ordenDesc, (a, b) => b.fecha.localeCompare(a.fecha) || b.id - a.id);
   const total = filas.reduce((a, x) => a + x.importe, 0);
-  const th = ([col, titulo, , clase]) => {
-    const activa = ordenDesc.col === col;
-    return `<th class="${clase || ''} ordenable"${activa ? ` aria-sort="${ordenDesc.dir > 0 ? 'ascending' : 'descending'}"` : ''}><button type="button" data-ordenar="${col}" title="Ordenar por ${titulo.toLowerCase()}">${titulo}<span class="flecha">${activa ? (ordenDesc.dir > 0 ? '▲' : '▼') : '↕'}</span></button></th>`;
-  };
   return `<div class="tabla-contenedor"><table class="tabla-ret">
-    <thead><tr>${COLUMNAS_DESC.map(th).join('')}<th></th></tr></thead>
+    <thead><tr>${COLUMNAS_DESC.map((c) => thOrdenable(c, ordenDesc)).join('')}<th></th></tr></thead>
     <tbody>${filas.map((d) => `<tr>
       <td>${fecha(d.fecha)}</td>
       <td>${esc(d.colaborador)}<span class="sec">CI ${esc(cedula(d.cedula))}</span></td>

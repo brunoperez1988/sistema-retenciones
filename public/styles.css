@@ -501,3 +501,4 @@ th.ordenable .flecha { font-size: .72rem; opacity: .35; }
 th.ordenable[aria-sort] .flecha { opacity: 1; color: var(--verde-oscuro); }
 th.ordenable[aria-sort] { background: var(--lima-claro); }
 #lista-desc [data-filtrar-ret] { text-align: left; }
+.enlace-izq { text-align: left; }
