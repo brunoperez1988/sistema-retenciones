@@ -1780,6 +1780,70 @@
     ]);
   }
 
+  // ── Archivo para Mi Dinero ──
+  // Planilla de pagos masivos de Mi Dinero, con las judiciales que se cobran por Mi Dinero y todavía no se pagaron.
+  // Mismo formato que el ejemplo del banco: una sola hoja, encabezado en la fila 1, sin títulos.
+  const esMiDinero = (x) => /^mi\s*dinero$/i.test(String(x.banco || '').trim());
+
+  function partirNombre(completo) {
+    const p = String(completo || '').trim().split(/\s+/).filter(Boolean);
+    if (p.length <= 1) return { nombre: p[0] || '', apellido: '' };
+    if (p.length === 2) return { nombre: p[0], apellido: p[1] };
+    // "Nombre Segundo Apellido" o "Nombre Segundo Apellido1 Apellido2": nombre y primer apellido, como en el ejemplo.
+    return { nombre: p[0], apellido: p[2] };
+  }
+
+  function itemsMiDinero(f = {}) {
+    const d = listarPagos({ periodo: f.periodo });
+    const elegidos = f.items ? new Set(String(f.items).split(',').filter(Boolean)) : null;
+    const filas = [];
+    for (const g of d.grupos.filter((y) => y.tipo === 'judicial')) {
+      for (const x of g.detalle) {
+        if (x.pago || x.sin_beneficiario || !esMiDinero(x)) continue;
+        if (elegidos && !elegidos.has(`${x.retencion_id}|${x.mes_origen}`)) continue;
+        filas.push(x);
+      }
+    }
+    return { mes: d.mes, filas: filas.sort((a, b) => a.beneficiario.localeCompare(b.beneficiario, 'es')) };
+  }
+
+  const ESTILOS_MD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="mm-dd-yy"/><numFmt numFmtId="165" formatCode="###0"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+
+  // Días desde 1899-12-30, que es como Excel guarda las fechas.
+  const serialExcel = (iso) => { const [a, m, d] = String(iso).split('-').map(Number); return Math.round((Date.UTC(a, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000); };
+
+  function archivoMiDinero(f = {}) {
+    const fechaAcred = /^\d{4}-\d{2}-\d{2}$/.test(f.fecha || '') ? f.fecha
+      : (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+    const { filas } = itemsMiDinero(f);
+    if (!filas.length) throw new ErrorValidacion('No hay judiciales de Mi Dinero pendientes de pago para armar el archivo.');
+    const columnas = [['Nombre', 17], ['Apellido', 10.6], ['País del Documento', 17.25], ['Tipo Documento', 14.75], ['Documento', 11.5], ['Tipo Pago', 10.6],
+      ['Moneda', 9.25], ['Importe', 9.1], ['Fecha Acreditación', 16.6], ['Destino Recarga', 14.75], ['Referencia', 24.25]];
+    const cT = (ref, v, s = 0) => `<c r="${ref}" t="inlineStr"${s ? ` s="${s}"` : ''}><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
+    const cN = (ref, v, s = 3) => `<c r="${ref}" s="${s}"><v>${v}</v></c>`;
+    const filasXml = [`<row r="1">${columnas.map(([t], i) => cT(`${columna(i)}1`, t, 1)).join('')}</row>`];
+    const fecha = serialExcel(fechaAcred);
+    filas.forEach((x, k) => {
+      const r = k + 2;
+      const { nombre, apellido } = partirNombre(x.beneficiario);
+      const doc = String(x.beneficiario_doc || x.cuenta || '').replace(/\D/g, '');
+      const celdas = [cT(`A${r}`, nombre), cT(`B${r}`, apellido), cN(`C${r}`, 858), cN(`D${r}`, 1),
+        doc ? cN(`E${r}`, doc) : cT(`E${r}`, ''), cN(`F${r}`, 1), cN(`G${r}`, 1), cN(`H${r}`, (x.importe / 100).toFixed(2), 4),
+        cN(`I${r}`, fecha, 2), cN(`J${r}`, 1), cT(`K${r}`, 'Retenciones Judiciales MD')];
+      filasXml.push(`<row r="${r}">${celdas.join('')}</row>`);
+    });
+    const hoja = 'exportaci_n_de_pagos_de_bancos_';
+    const hojaXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><cols>${columnas.map(([, w], i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${filasXml.join('')}</sheetData></worksheet>`;
+    return zip([
+      { nombre: '[Content_Types].xml', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { nombre: '_rels/.rels', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { nombre: 'xl/workbook.xml', texto: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${hoja}" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+      { nombre: 'xl/_rels/workbook.xml.rels', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { nombre: 'xl/styles.xml', texto: ESTILOS_MD },
+      { nombre: 'xl/worksheets/sheet1.xml', texto: hojaXml },
+    ]);
+  }
+
   function textoFiltros(f) {
     const p = [];
     if (f.periodo) p.push(`Período ${f.periodo}`);
@@ -1949,6 +2013,7 @@
     await iniciar();
     const url = new URL(rutaCompleta, 'http://local');
     const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
+    if (url.pathname === '/api/pagos/mi-dinero') return archivoMiDinero(f);
     const rep = url.pathname.endsWith('planilla') ? armarPlanilla(f) : url.pathname.endsWith('entidades') ? armarPorEntidad(f) : armarAbonar(f);
     if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
     return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });

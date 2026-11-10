@@ -100,7 +100,10 @@ async function api(ruta, { metodo = 'GET', cuerpo } = {}) {
 async function descargarArchivo(url, nombre) {
   let blob;
   if (LOCAL) {
-    try { blob = await window.backendLocal.descargar(url); } catch (e) { console.error(e); throw new ErrorConexion(); }
+    try { blob = await window.backendLocal.descargar(url); } catch (e) {
+      if (e instanceof window.backendLocal.ErrorValidacion) { const x = new Error(e.message); x.validacion = true; throw x; }
+      console.error(e); throw new ErrorConexion();
+    }
   } else {
     let res;
     try { res = await fetch(url, { cache: 'no-store' }); } catch { throw new ErrorConexion(); }
@@ -1365,6 +1368,10 @@ async function vistaPagos(_params, vigente) {
     marcas.forEach((m) => m.addEventListener('change', actualizar));
     const todas = fila.querySelector('[data-marcar-todas]');
     if (todas) todas.addEventListener('change', () => { marcas.forEach((m) => { m.checked = todas.checked; }); actualizar(); });
+    const marcarMD = fila.querySelector('[data-marcar-md]');
+    if (marcarMD) marcarMD.addEventListener('click', () => { marcas.forEach((m) => { m.checked = m.hasAttribute('data-md'); }); actualizar(); });
+    const bajarMD = fila.querySelector('[data-descargar-md]');
+    if (bajarMD) bajarMD.addEventListener('click', () => dialogoMiDinero(d.mes, marcas));
     const boton = fila.querySelector('[data-pagar-sel]');
     if (boton) boton.addEventListener('click', () => {
       const elegidos = marcas.filter((m) => m.checked);
@@ -1395,6 +1402,42 @@ async function vistaPagos(_params, vigente) {
   }));
 }
 
+const esMiDinero = (x) => /^mi\s*dinero$/i.test(String(x.banco || '').trim());
+
+// Pide la fecha de acreditación y baja la planilla para cargar en Mi Dinero.
+function dialogoMiDinero(mes, marcas) {
+  const elegidas = marcas.filter((m) => m.checked && m.hasAttribute('data-md'));
+  const todas = marcas.filter((m) => m.hasAttribute('data-md'));
+  const usar = elegidas.length ? elegidas : todas;
+  const suma = usar.reduce((a, m) => a + Number(m.dataset.importe), 0);
+  const dlg = document.createElement('dialog');
+  dlg.className = 'dialogo';
+  dlg.innerHTML = `<form class="formulario" id="md-form" novalidate>
+    <h2>Archivo para Mi Dinero</h2>
+    <p>${usar.length} ${usar.length === 1 ? 'persona' : 'personas'} · <strong>${moneda(suma)}</strong>
+      <span class="sec">${elegidas.length ? 'Las marcadas que cobran por Mi Dinero.' : 'Todas las de Mi Dinero que faltan pagar (no marcaste ninguna).'}</span></p>
+    <div class="campo"><label for="md-fecha">Fecha de acreditación</label><input type="date" id="md-fecha" value="${hoy()}"></div>
+    <p class="ayuda">Después de subirlo a Mi Dinero, registrá el pago de esas personas con el número de transferencia.</p>
+    <p class="mensaje error" id="md-error" role="alert" hidden></p>
+    <div class="acciones"><button class="boton" type="submit">Descargar</button><button class="boton secundario" type="button" id="md-cancelar">Cancelar</button></div>
+  </form>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector('#md-cancelar').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.querySelector('#md-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fechaAcred = dlg.querySelector('#md-fecha').value;
+    const items = usar.map((m) => m.dataset.item).join(',');
+    try {
+      await descargarArchivo(`/api/pagos/mi-dinero?${new URLSearchParams({ periodo: mes, fecha: fechaAcred, items })}`, `Mi Dinero retenciones ${mes}.xlsx`);
+      dlg.close();
+    } catch (e) {
+      const err = dlg.querySelector('#md-error'); err.textContent = e.validacion ? e.message : MENSAJE_FALLA; err.hidden = false;
+    }
+  });
+  dlg.showModal();
+}
+
 function celdaComprobante(p) {
   return p.comprobante ? `<button class="enlace" type="button" data-ver-comp="${p.id}" title="${esc(p.comprobante.nombre)}">Ver comprobante</button>`
     : `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>`;
@@ -1423,13 +1466,14 @@ function filaPago(g, mes) {
       : `<button class="boton chico" type="button" data-pagar="${g.entidad_id}">Registrar pago</button>`}</td>`}
   </tr>`;
   const pendientesMarcables = g.detalle.filter((x) => !x.pago && !x.sin_beneficiario).length;
+  const pendientesMD = g.detalle.filter((x) => !x.pago && !x.sin_beneficiario && esMiDinero(x)).length;
   const detalle = judicial ? `
   <tr class="detalle-pago" data-detalle="${g.entidad_id}"><td colspan="9">
     <table class="mini"><thead><tr>
       <th class="marca">${pendientesMarcables ? '<input type="checkbox" data-marcar-todas title="Marcar todas las que se pueden depositar" aria-label="Marcar todas">' : ''}</th>
       <th>Colaborador</th><th>Mes</th><th>Beneficiario</th><th>Banco / medio</th><th>Cuenta</th><th class="num">Importe</th><th>Estado</th></tr></thead>
     <tbody>${g.detalle.map((x) => `<tr class="${x.pago ? 'pagado' : x.sin_beneficiario ? 'bloqueado' : ''}">
-      <td class="marca">${!x.pago && !x.sin_beneficiario ? `<input type="checkbox" data-item="${x.retencion_id}|${esc(x.mes_origen)}" data-importe="${x.importe}" aria-label="Pagar a ${esc(x.colaborador)}">` : ''}</td>
+      <td class="marca">${!x.pago && !x.sin_beneficiario ? `<input type="checkbox" data-item="${x.retencion_id}|${esc(x.mes_origen)}" data-importe="${x.importe}"${esMiDinero(x) ? ' data-md' : ''} aria-label="Pagar a ${esc(x.colaborador)}">` : ''}</td>
       <td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td>
       <td>${esc(mesCorto(x.mes_origen))}${x.de_otro_mes ? `<span class="etiqueta-tipo de-antes">de ${esc(nombreMes(x.mes_origen).split(' ')[0].toLowerCase())}</span>` : ''}</td>
       <td>${x.sin_beneficiario ? '<span class="etiqueta-tipo a-definir">A completar</span>' : `${esc(x.beneficiario)}${x.beneficiario_doc ? `<span class="sec">Doc. ${esc(x.beneficiario_doc)}</span>` : ''}`}</td>
@@ -1438,7 +1482,9 @@ function filaPago(g, mes) {
       <td>${x.pago ? `<span class="etiqueta-tipo completa">Pagado</span><span class="sec">Transf. ${esc(x.pago.transferencia)} · ${fecha(x.pago.fecha_pago)}${x.pago.mes !== mes ? ` (en ${esc(nombreMes(x.pago.mes).toLowerCase())})` : ''}</span>`
         : x.sin_beneficiario ? '<span class="sec aviso-cambio">No se puede depositar: falta el beneficiario. Completalo en Retenciones recibidas.</span>' : '<span class="sec">Sin pagar</span>'}</td>
     </tr>`).join('')}</tbody></table>
-    ${pendientesMarcables ? `<div class="barra-seleccion"><span class="suma-seleccion"></span><button class="boton" type="button" data-pagar-sel disabled>Registrar pago de las marcadas</button></div>` : ''}
+    ${pendientesMarcables ? `<div class="barra-seleccion"><span class="suma-seleccion"></span>${pendientesMD ? `<span class="acciones-md"><button class="boton chico secundario" type="button" data-marcar-md>Marcar las de Mi Dinero (${pendientesMD})</button>
+      <button class="boton chico secundario" type="button" data-descargar-md>Descargar archivo Mi Dinero</button></span>` : ''}
+      <button class="boton" type="button" data-pagar-sel disabled>Registrar pago de las marcadas</button></div>` : ''}
     ${g.pagos.length ? `<h3 class="pagos-titulo">Pagos registrados este mes</h3><table class="mini"><thead><tr><th>N° de transferencia</th><th>Fecha</th><th class="num">Personas</th><th class="num">Importe</th><th>Comprobante</th><th></th></tr></thead>
       <tbody>${g.pagos.map((p) => `<tr><td>${esc(p.transferencia)}</td><td>${fecha(p.fecha_pago)}<span class="sec">por ${esc(p.registrado_por || '—')}</span></td>
         <td class="num">${(p.items || []).length || p.retenciones || ''}</td><td class="num">${moneda(p.importe)}</td><td>${celdaComprobante(p)}</td>

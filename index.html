@@ -421,6 +421,7 @@ table.mini tr.pagado td { opacity: .75; }
 table.mini tr.bloqueado td { color: var(--texto-suave, #777); }
 table.mini .marca { width: 34px; text-align: center; }
 table.mini input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+.acciones-md { display: inline-flex; gap: 8px; flex-wrap: wrap; margin-right: auto; }
 .barra-seleccion { display: flex; gap: 14px; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 12px 4px 4px; }
 .pagos-titulo { margin: 18px 0 6px; font-size: .95rem; }
 table.mini td.marca, table.mini th.marca { background: inherit; position: static; box-shadow: none; }
@@ -2237,6 +2238,70 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
     ]);
   }
 
+  // ── Archivo para Mi Dinero ──
+  // Planilla de pagos masivos de Mi Dinero, con las judiciales que se cobran por Mi Dinero y todavía no se pagaron.
+  // Mismo formato que el ejemplo del banco: una sola hoja, encabezado en la fila 1, sin títulos.
+  const esMiDinero = (x) => /^mi\s*dinero$/i.test(String(x.banco || '').trim());
+
+  function partirNombre(completo) {
+    const p = String(completo || '').trim().split(/\s+/).filter(Boolean);
+    if (p.length <= 1) return { nombre: p[0] || '', apellido: '' };
+    if (p.length === 2) return { nombre: p[0], apellido: p[1] };
+    // "Nombre Segundo Apellido" o "Nombre Segundo Apellido1 Apellido2": nombre y primer apellido, como en el ejemplo.
+    return { nombre: p[0], apellido: p[2] };
+  }
+
+  function itemsMiDinero(f = {}) {
+    const d = listarPagos({ periodo: f.periodo });
+    const elegidos = f.items ? new Set(String(f.items).split(',').filter(Boolean)) : null;
+    const filas = [];
+    for (const g of d.grupos.filter((y) => y.tipo === 'judicial')) {
+      for (const x of g.detalle) {
+        if (x.pago || x.sin_beneficiario || !esMiDinero(x)) continue;
+        if (elegidos && !elegidos.has(`${x.retencion_id}|${x.mes_origen}`)) continue;
+        filas.push(x);
+      }
+    }
+    return { mes: d.mes, filas: filas.sort((a, b) => a.beneficiario.localeCompare(b.beneficiario, 'es')) };
+  }
+
+  const ESTILOS_MD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="mm-dd-yy"/><numFmt numFmtId="165" formatCode="###0"/></numFmts><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="2" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>';
+
+  // Días desde 1899-12-30, que es como Excel guarda las fechas.
+  const serialExcel = (iso) => { const [a, m, d] = String(iso).split('-').map(Number); return Math.round((Date.UTC(a, m - 1, d) - Date.UTC(1899, 11, 30)) / 86400000); };
+
+  function archivoMiDinero(f = {}) {
+    const fechaAcred = /^\d{4}-\d{2}-\d{2}$/.test(f.fecha || '') ? f.fecha
+      : (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+    const { filas } = itemsMiDinero(f);
+    if (!filas.length) throw new ErrorValidacion('No hay judiciales de Mi Dinero pendientes de pago para armar el archivo.');
+    const columnas = [['Nombre', 17], ['Apellido', 10.6], ['País del Documento', 17.25], ['Tipo Documento', 14.75], ['Documento', 11.5], ['Tipo Pago', 10.6],
+      ['Moneda', 9.25], ['Importe', 9.1], ['Fecha Acreditación', 16.6], ['Destino Recarga', 14.75], ['Referencia', 24.25]];
+    const cT = (ref, v, s = 0) => `<c r="${ref}" t="inlineStr"${s ? ` s="${s}"` : ''}><is><t xml:space="preserve">${xml(v)}</t></is></c>`;
+    const cN = (ref, v, s = 3) => `<c r="${ref}" s="${s}"><v>${v}</v></c>`;
+    const filasXml = [`<row r="1">${columnas.map(([t], i) => cT(`${columna(i)}1`, t, 1)).join('')}</row>`];
+    const fecha = serialExcel(fechaAcred);
+    filas.forEach((x, k) => {
+      const r = k + 2;
+      const { nombre, apellido } = partirNombre(x.beneficiario);
+      const doc = String(x.beneficiario_doc || x.cuenta || '').replace(/\D/g, '');
+      const celdas = [cT(`A${r}`, nombre), cT(`B${r}`, apellido), cN(`C${r}`, 858), cN(`D${r}`, 1),
+        doc ? cN(`E${r}`, doc) : cT(`E${r}`, ''), cN(`F${r}`, 1), cN(`G${r}`, 1), cN(`H${r}`, (x.importe / 100).toFixed(2), 4),
+        cN(`I${r}`, fecha, 2), cN(`J${r}`, 1), cT(`K${r}`, 'Retenciones Judiciales MD')];
+      filasXml.push(`<row r="${r}">${celdas.join('')}</row>`);
+    });
+    const hoja = 'exportaci_n_de_pagos_de_bancos_';
+    const hojaXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><cols>${columnas.map(([, w], i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${filasXml.join('')}</sheetData></worksheet>`;
+    return zip([
+      { nombre: '[Content_Types].xml', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>' },
+      { nombre: '_rels/.rels', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
+      { nombre: 'xl/workbook.xml', texto: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${hoja}" sheetId="1" r:id="rId1"/></sheets></workbook>` },
+      { nombre: 'xl/_rels/workbook.xml.rels', texto: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>' },
+      { nombre: 'xl/styles.xml', texto: ESTILOS_MD },
+      { nombre: 'xl/worksheets/sheet1.xml', texto: hojaXml },
+    ]);
+  }
+
   function textoFiltros(f) {
     const p = [];
     if (f.periodo) p.push(`Período ${f.periodo}`);
@@ -2406,6 +2471,7 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
     await iniciar();
     const url = new URL(rutaCompleta, 'http://local');
     const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
+    if (url.pathname === '/api/pagos/mi-dinero') return archivoMiDinero(f);
     const rep = url.pathname.endsWith('planilla') ? armarPlanilla(f) : url.pathname.endsWith('entidades') ? armarPorEntidad(f) : armarAbonar(f);
     if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
     return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });
@@ -2532,7 +2598,10 @@ async function api(ruta, { metodo = 'GET', cuerpo } = {}) {
 async function descargarArchivo(url, nombre) {
   let blob;
   if (LOCAL) {
-    try { blob = await window.backendLocal.descargar(url); } catch (e) { console.error(e); throw new ErrorConexion(); }
+    try { blob = await window.backendLocal.descargar(url); } catch (e) {
+      if (e instanceof window.backendLocal.ErrorValidacion) { const x = new Error(e.message); x.validacion = true; throw x; }
+      console.error(e); throw new ErrorConexion();
+    }
   } else {
     let res;
     try { res = await fetch(url, { cache: 'no-store' }); } catch { throw new ErrorConexion(); }
@@ -3797,6 +3866,10 @@ async function vistaPagos(_params, vigente) {
     marcas.forEach((m) => m.addEventListener('change', actualizar));
     const todas = fila.querySelector('[data-marcar-todas]');
     if (todas) todas.addEventListener('change', () => { marcas.forEach((m) => { m.checked = todas.checked; }); actualizar(); });
+    const marcarMD = fila.querySelector('[data-marcar-md]');
+    if (marcarMD) marcarMD.addEventListener('click', () => { marcas.forEach((m) => { m.checked = m.hasAttribute('data-md'); }); actualizar(); });
+    const bajarMD = fila.querySelector('[data-descargar-md]');
+    if (bajarMD) bajarMD.addEventListener('click', () => dialogoMiDinero(d.mes, marcas));
     const boton = fila.querySelector('[data-pagar-sel]');
     if (boton) boton.addEventListener('click', () => {
       const elegidos = marcas.filter((m) => m.checked);
@@ -3827,6 +3900,42 @@ async function vistaPagos(_params, vigente) {
   }));
 }
 
+const esMiDinero = (x) => /^mi\s*dinero$/i.test(String(x.banco || '').trim());
+
+// Pide la fecha de acreditación y baja la planilla para cargar en Mi Dinero.
+function dialogoMiDinero(mes, marcas) {
+  const elegidas = marcas.filter((m) => m.checked && m.hasAttribute('data-md'));
+  const todas = marcas.filter((m) => m.hasAttribute('data-md'));
+  const usar = elegidas.length ? elegidas : todas;
+  const suma = usar.reduce((a, m) => a + Number(m.dataset.importe), 0);
+  const dlg = document.createElement('dialog');
+  dlg.className = 'dialogo';
+  dlg.innerHTML = `<form class="formulario" id="md-form" novalidate>
+    <h2>Archivo para Mi Dinero</h2>
+    <p>${usar.length} ${usar.length === 1 ? 'persona' : 'personas'} · <strong>${moneda(suma)}</strong>
+      <span class="sec">${elegidas.length ? 'Las marcadas que cobran por Mi Dinero.' : 'Todas las de Mi Dinero que faltan pagar (no marcaste ninguna).'}</span></p>
+    <div class="campo"><label for="md-fecha">Fecha de acreditación</label><input type="date" id="md-fecha" value="${hoy()}"></div>
+    <p class="ayuda">Después de subirlo a Mi Dinero, registrá el pago de esas personas con el número de transferencia.</p>
+    <p class="mensaje error" id="md-error" role="alert" hidden></p>
+    <div class="acciones"><button class="boton" type="submit">Descargar</button><button class="boton secundario" type="button" id="md-cancelar">Cancelar</button></div>
+  </form>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector('#md-cancelar').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.querySelector('#md-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const fechaAcred = dlg.querySelector('#md-fecha').value;
+    const items = usar.map((m) => m.dataset.item).join(',');
+    try {
+      await descargarArchivo(`/api/pagos/mi-dinero?${new URLSearchParams({ periodo: mes, fecha: fechaAcred, items })}`, `Mi Dinero retenciones ${mes}.xlsx`);
+      dlg.close();
+    } catch (e) {
+      const err = dlg.querySelector('#md-error'); err.textContent = e.validacion ? e.message : MENSAJE_FALLA; err.hidden = false;
+    }
+  });
+  dlg.showModal();
+}
+
 function celdaComprobante(p) {
   return p.comprobante ? `<button class="enlace" type="button" data-ver-comp="${p.id}" title="${esc(p.comprobante.nombre)}">Ver comprobante</button>`
     : `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>`;
@@ -3855,13 +3964,14 @@ function filaPago(g, mes) {
       : `<button class="boton chico" type="button" data-pagar="${g.entidad_id}">Registrar pago</button>`}</td>`}
   </tr>`;
   const pendientesMarcables = g.detalle.filter((x) => !x.pago && !x.sin_beneficiario).length;
+  const pendientesMD = g.detalle.filter((x) => !x.pago && !x.sin_beneficiario && esMiDinero(x)).length;
   const detalle = judicial ? `
   <tr class="detalle-pago" data-detalle="${g.entidad_id}"><td colspan="9">
     <table class="mini"><thead><tr>
       <th class="marca">${pendientesMarcables ? '<input type="checkbox" data-marcar-todas title="Marcar todas las que se pueden depositar" aria-label="Marcar todas">' : ''}</th>
       <th>Colaborador</th><th>Mes</th><th>Beneficiario</th><th>Banco / medio</th><th>Cuenta</th><th class="num">Importe</th><th>Estado</th></tr></thead>
     <tbody>${g.detalle.map((x) => `<tr class="${x.pago ? 'pagado' : x.sin_beneficiario ? 'bloqueado' : ''}">
-      <td class="marca">${!x.pago && !x.sin_beneficiario ? `<input type="checkbox" data-item="${x.retencion_id}|${esc(x.mes_origen)}" data-importe="${x.importe}" aria-label="Pagar a ${esc(x.colaborador)}">` : ''}</td>
+      <td class="marca">${!x.pago && !x.sin_beneficiario ? `<input type="checkbox" data-item="${x.retencion_id}|${esc(x.mes_origen)}" data-importe="${x.importe}"${esMiDinero(x) ? ' data-md' : ''} aria-label="Pagar a ${esc(x.colaborador)}">` : ''}</td>
       <td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td>
       <td>${esc(mesCorto(x.mes_origen))}${x.de_otro_mes ? `<span class="etiqueta-tipo de-antes">de ${esc(nombreMes(x.mes_origen).split(' ')[0].toLowerCase())}</span>` : ''}</td>
       <td>${x.sin_beneficiario ? '<span class="etiqueta-tipo a-definir">A completar</span>' : `${esc(x.beneficiario)}${x.beneficiario_doc ? `<span class="sec">Doc. ${esc(x.beneficiario_doc)}</span>` : ''}`}</td>
@@ -3870,7 +3980,9 @@ function filaPago(g, mes) {
       <td>${x.pago ? `<span class="etiqueta-tipo completa">Pagado</span><span class="sec">Transf. ${esc(x.pago.transferencia)} · ${fecha(x.pago.fecha_pago)}${x.pago.mes !== mes ? ` (en ${esc(nombreMes(x.pago.mes).toLowerCase())})` : ''}</span>`
         : x.sin_beneficiario ? '<span class="sec aviso-cambio">No se puede depositar: falta el beneficiario. Completalo en Retenciones recibidas.</span>' : '<span class="sec">Sin pagar</span>'}</td>
     </tr>`).join('')}</tbody></table>
-    ${pendientesMarcables ? `<div class="barra-seleccion"><span class="suma-seleccion"></span><button class="boton" type="button" data-pagar-sel disabled>Registrar pago de las marcadas</button></div>` : ''}
+    ${pendientesMarcables ? `<div class="barra-seleccion"><span class="suma-seleccion"></span>${pendientesMD ? `<span class="acciones-md"><button class="boton chico secundario" type="button" data-marcar-md>Marcar las de Mi Dinero (${pendientesMD})</button>
+      <button class="boton chico secundario" type="button" data-descargar-md>Descargar archivo Mi Dinero</button></span>` : ''}
+      <button class="boton" type="button" data-pagar-sel disabled>Registrar pago de las marcadas</button></div>` : ''}
     ${g.pagos.length ? `<h3 class="pagos-titulo">Pagos registrados este mes</h3><table class="mini"><thead><tr><th>N° de transferencia</th><th>Fecha</th><th class="num">Personas</th><th class="num">Importe</th><th>Comprobante</th><th></th></tr></thead>
       <tbody>${g.pagos.map((p) => `<tr><td>${esc(p.transferencia)}</td><td>${fecha(p.fecha_pago)}<span class="sec">por ${esc(p.registrado_por || '—')}</span></td>
         <td class="num">${(p.items || []).length || p.retenciones || ''}</td><td class="num">${moneda(p.importe)}</td><td>${celdaComprobante(p)}</td>
