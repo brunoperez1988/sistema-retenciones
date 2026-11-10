@@ -350,7 +350,7 @@ async function vistaPanel(_params, vigente) {
       <div class="indicador disponible"><div class="titulo">Disponible</div><div class="valor">${moneda(d.disponible)}</div><div class="detalle">Falta descontar${d.sinTope ? ' (sin contar las de porcentaje)' : ''}</div></div>
     </section>
 
-    ${seccionAvisos(d.avisos)}
+    ${d.no_habilitado ? `<div class="mensaje editando">${esc(nombreMes(d.periodo))} todavía no está habilitado: se está trabajando ${esc(nombreMes(d.no_habilitado).toLowerCase())}. Cuando lo cierres, se crean solas las retenciones que se repiten y ya se puede cargar este mes. <button class="boton chico secundario" type="button" data-ir-mes="${esc(d.no_habilitado)}">Ir a ${esc(nombreMes(d.no_habilitado).toLowerCase())}</button></div>` : seccionAvisos(d.avisos)}
 
     <div class="encabezado"><h2>Órdenes de ${esc(nombreMes(d.periodo).toLowerCase())}</h2>
       <a class="boton secundario" href="#/retenciones">+ Cargar retención</a></div>
@@ -806,7 +806,8 @@ async function vistaRetenciones(_params, vigente) {
             </select></div>
           <div class="fila">
             <div class="campo"><label for="r-periodo">Período <span class="obligatorio">*</span></label>
-              <input type="month" id="r-periodo" value="${mesActual()}" required></div>
+              <input type="month" id="r-periodo" value="${esc(cat.mes_trabajo || mesActual())}" max="${esc(cat.mes_trabajo || '')}" required>
+              <span class="ayuda">Se está trabajando ${esc(nombreMes(cat.mes_trabajo || mesActual()).toLowerCase())}. El mes siguiente se habilita al cerrarlo en el Panel.</span></div>
             <div class="campo"><label for="r-calculo">Cómo se calcula <span class="obligatorio">*</span></label>
               <select id="r-calculo"><option value="fijo">Importe fijo</option><option value="porcentaje">Porcentaje del sueldo</option><option value="otra">Otra regla (BPC, etc.)</option></select></div>
           </div>
@@ -955,7 +956,7 @@ async function vistaRetenciones(_params, vigente) {
     editando = null;
     limpiarFormulario();
     form.querySelector('#r-periodo').disabled = false;
-    poner('#r-periodo', mesActual());
+    poner('#r-periodo', cat.mes_trabajo || mesActual());
     document.getElementById('campo-cargo').hidden = false;
     selEnt.value = ''; selEnt.dispatchEvent(new Event('change'));
     document.getElementById('titulo-form-ret').textContent = 'Cargar retención';

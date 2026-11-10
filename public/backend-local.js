@@ -721,6 +721,7 @@
       colaboradores: [...estado.colaboradores].sort(porNombre),
       empresas: [...estado.empresas].sort(porNombre),
       tiposDescuento: TIPOS_DESCUENTO,
+      mes_trabajo: mesDeTrabajo(),
     };
   }
 
@@ -849,23 +850,35 @@
     return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.empresa]);
   }
 
-  // Mes en que conviene abrir el Panel: el más viejo que tiene retenciones y todavía no se cerró (hasta el mes de hoy).
-  // Así, mientras se descuenta lo de un mes en el siguiente, el Panel muestra ese mes hasta que se cierre.
-  function mesDeTrabajo() {
+  // Mes de trabajo: el más viejo que tiene retenciones cargadas a mano y todavía no se cerró (sin pasar el mes de hoy).
+  // Si no queda ninguno abierto, el mes siguiente al último cierre. Los meses posteriores no se habilitan hasta cerrarlo:
+  // no se crean las copias de las retenciones fijas ni se pueden cargar retenciones de esos meses.
+  function mesDeTrabajoDe(e) {
     const hoyMes = mesDeHoy();
-    const abiertos = [...new Set(estado.retenciones.map((r) => r.periodo))].filter((m) => m <= hoyMes && !cierreDe(m)).sort();
-    return abiertos[0] || hoyMes;
+    const cerrados = (e.cierres || []).map((x) => x.mes);
+    const abiertos = [...new Set(e.retenciones.filter((r) => !r.origen_id).map((r) => r.periodo))].filter((m) => m <= hoyMes && !cerrados.includes(m)).sort();
+    if (abiertos[0]) return abiertos[0];
+    const ultimo = cerrados.sort().pop();
+    return ultimo && mesSiguiente(ultimo) < hoyMes ? mesSiguiente(ultimo) : hoyMes;
+  }
+  const mesDeTrabajo = () => mesDeTrabajoDe(estado);
+  function exigirMesHabilitado(mes) {
+    const trabajo = mesDeTrabajo();
+    if (mes > trabajo) throw new ErrorValidacion(`Todavía se está trabajando ${nombreMesTxt(trabajo)}. Cuando lo cierres desde el Panel, se habilita ${nombreMesTxt(mesSiguiente(trabajo))}.`, 409);
+    return mes;
   }
 
   function panel(mes) {
-    const filas = listarRetenciones({ periodo: periodo(mes), con_saldo: true });
+    // Un mes posterior al de trabajo todavía no está habilitado: no se le pasan los saldos del mes anterior.
+    const noHabilitado = periodo(mes) > mesDeTrabajo();
+    const filas = listarRetenciones({ periodo: periodo(mes), con_saldo: true }).filter((x) => !noHabilitado || !x.arrastre);
     // De lo que viene de meses anteriores cuenta solo el saldo con que entró a este mes.
     const previo = new Map(filas.filter((x) => x.arrastre).map((x) => [x.id, x.descontado_antes]));
     const saldoAnterior = filas.filter((x) => x.arrastre).reduce((a, x) => a + (x.importe_total || 0) - previo.get(x.id), 0);
     const pactado = filas.reduce((a, x) => a + (x.importe_total || 0) - (previo.get(x.id) || 0), 0);
     const retenido = filas.reduce((a, x) => a + x.descontado_real - (previo.get(x.id) || 0), 0);
     const cierre = cierreDe(mes);
-    return { periodo: mes, cierre, avisos: avisosDelMes(mes, filas), sinTope: filas.filter((x) => x.sin_tope).length, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: filas.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - (retenido - filas.filter((x) => x.sin_tope).reduce((a, x) => a + x.descontado_real, 0)), retenciones: filas };
+    return { periodo: mes, cierre, no_habilitado: noHabilitado ? mesDeTrabajo() : null, avisos: avisosDelMes(mes, filas), sinTope: filas.filter((x) => x.sin_tope).length, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: filas.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - (retenido - filas.filter((x) => x.sin_tope).reduce((a, x) => a + x.descontado_real, 0)), retenciones: filas };
   }
 
   function reporteAbonar(f) {
@@ -1052,6 +1065,7 @@
     const entidad = estado.entidades.find((x) => x.id === entidad_id);
     if (!entidad) throw new ErrorValidacion('La entidad elegida no existe.');
     exigirAbierto(periodo(datos.periodo), 'cargar retenciones');
+    exigirMesHabilitado(periodo(datos.periodo));
     const fila = {
       colaborador_id, entidad_id,
       periodo: periodo(datos.periodo),
@@ -1090,7 +1104,7 @@
 
   // Copias mensuales que faltan crear hasta el mes actual.
   function mensualesFaltantes(e) {
-    const limite = mesDeHoy();
+    const limite = mesDeTrabajoDe(e);
     const hay = new Set(e.retenciones.filter((r) => r.origen_id).map((r) => `${r.origen_id}|${r.periodo}`));
     const faltan = [];
     const ent = new Map(e.entidades.map((x) => [x.id, x]));
@@ -1117,6 +1131,10 @@
 
   async function crearMensuales() {
     if (otrosComoComercial(estado).length) await modificar((e) => { otrosComoComercial(e).forEach((x) => { x.tipo = 'otros'; delete x.pasa_saldo; }); });
+    // Copias automáticas de meses todavía no habilitados (se crearon antes de esta regla): se quitan si no tienen
+    // descuentos ni cambios; se vuelven a crear solas cuando se cierre el mes de trabajo.
+    const deMas = (e) => { const lim = mesDeTrabajoDe(e); return e.retenciones.filter((r) => r.origen_id && r.periodo > lim && !r.editado_en && !e.descuentos.some((d) => d.retencion_id === r.id)); };
+    if (deMas(estado).length) await modificar((e) => { const ids = new Set(deMas(e).map((r) => r.id)); e.retenciones = e.retenciones.filter((r) => !ids.has(r.id)); });
     if (!mensualesFaltantes(estado).length) return;
     await modificar((e) => { for (const r of mensualesFaltantes(e)) e.retenciones.push({ id: e.sig++, ...r }); });
   }
@@ -1127,7 +1145,7 @@
     if (!r) throw new ErrorValidacion('La retención no existe.', 404);
     const tId = r.mensual ? r.id : r.origen_id;
     if (!tId || !repiteActiva(r)) throw new ErrorValidacion('Esta retención no se repite todos los meses.');
-    const desde = mesSiguiente(mesDeHoy());
+    const desde = mesSiguiente(mesDeTrabajo());
     return modificar((e) => { e.retenciones.find((x) => x.id === tId).baja = desde; return { ok: true, desde }; });
   }
 
@@ -1161,7 +1179,7 @@
     const entidad = estado.entidades.find((x) => x.id === entidad_id);
     if (!entidad) throw new ErrorValidacion('La entidad elegida no existe.');
     const nuevoPeriodo = periodo(datos.periodo);
-    if (nuevoPeriodo !== r.periodo) exigirAbierto(nuevoPeriodo, 'pasar la retención a ese mes');
+    if (nuevoPeriodo !== r.periodo) { exigirAbierto(nuevoPeriodo, 'pasar la retención a ese mes'); exigirMesHabilitado(nuevoPeriodo); }
     const seRepite = Boolean(r.mensual || r.origen_id);
     if (seRepite && nuevoPeriodo !== r.periodo) throw new ErrorValidacion('Esta retención se repite cada mes: no se le puede cambiar el período.');
     if (seRepite && !sePuedeRepetir(entidad)) throw new ErrorValidacion('Esta retención se repite cada mes: la entidad tiene que ser judicial.');
