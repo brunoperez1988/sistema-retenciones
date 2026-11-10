@@ -929,6 +929,11 @@
     return { mes, mes_trabajo: mesDeTrabajo(), grupos: lista, total, pagado, pendiente: lista.filter((g) => !g.pago).reduce((a, g) => a + g.importe, 0) };
   }
 
+  // Entidades del mes que todavía no tienen el pago registrado, o cuyo importe cambió después de pagar.
+  function pagosPendientes(mes) {
+    return listarPagos({ periodo: mes }).grupos.filter((g) => g.importe > 0 && (!g.pago || g.pago.importe !== g.importe));
+  }
+
   function nombreArchivoSeguro(n) {
     return String(n || 'comprobante').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.\-]+/g, '-').replace(/-+/g, '-').slice(-80) || 'comprobante';
   }
@@ -1013,6 +1018,10 @@
   function cerrarMes(datos) {
     const mes = periodo(datos.mes);
     if (cierreDe(mes)) throw new ErrorValidacion(`${nombreMesTxt(mes)} ya está cerrado.`, 409);
+    const sinPagar = pagosPendientes(mes);
+    if (sinPagar.length) {
+      throw new ErrorValidacion(`No se puede cerrar ${nombreMesTxt(mes)}: falta registrar el pago de ${sinPagar.map((g) => g.entidad).join(', ')}. Registralo en la pestaña Pagos.`, 409);
+    }
     return modificar((e) => {
       e.cierres = [...(e.cierres || []), { id: e.sig++, mes, cerrado_por: usuarioActual || '', fecha: ahora() }];
       return { ok: true, mes };
@@ -1041,6 +1050,8 @@
     if (!cierreDe(anterior) && estado.retenciones.some((r) => r.periodo === anterior)) {
       avisos.push({ clave: 'cierre', nivel: 'alerta', titulo: `${mayuscula(nombreMesTxt(anterior))} no está cerrado`, ayuda: 'Cuando esté todo cargado, cerralo para que nadie lo cambie por error.', cantidad: 0, items: [], mes: anterior });
     }
+    agregar('pagos', 'alerta', 'Pagos sin registrar', 'El mes no se puede cerrar hasta registrar todos los pagos en la pestaña Pagos.',
+      pagosPendientes(mes).map((g) => ({ id: g.entidad_id, texto: g.entidad, sub: g.pago ? `Se pagó ${pesosTxt(g.pago.importe)} y ahora da ${pesosTxt(g.importe)}` : `Falta pagar ${pesosTxt(g.importe)}` })));
     agregar('beneficiario', 'alerta', 'Judiciales sin datos del beneficiario', 'Completá el beneficiario para poder pagarle.',
       filas.filter((r) => r.tipo === 'judicial' && (!r.beneficiario || r.beneficiario === 'A completar')).map((r) => item(r)));
     agregar('a-definir', 'alerta', 'Importe a definir', 'Tienen una regla (por ejemplo BPC) pero falta el importe en pesos.',

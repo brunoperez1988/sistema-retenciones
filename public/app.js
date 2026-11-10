@@ -364,6 +364,17 @@ async function vistaPanel(_params, vigente) {
   const nombre = nombreMes(d.periodo).toLowerCase();
   const cerrar = document.getElementById('cerrar-mes');
   if (cerrar) cerrar.addEventListener('click', async () => {
+    const sinPagar = (d.avisos || []).find((a) => a.clave === 'pagos');
+    if (sinPagar) {
+      const ir = await confirmar({
+        titulo: `Todavía no se puede cerrar ${nombre}`,
+        html: `<p>Falta registrar el pago de:</p><ul>${sinPagar.items.map((i) => `<li><strong>${esc(i.texto)}</strong> · ${esc(i.sub)}</li>`).join('')}</ul>
+          <p>Cuando estén todos registrados en la pestaña Pagos, vas a poder cerrar el mes.</p>`,
+        boton: 'Ir a Pagos',
+      });
+      if (ir) { mesPagos = d.periodo; location.hash = '#/pagos'; }
+      return;
+    }
     const pendientes = (d.avisos || []).filter((a) => a.clave !== 'cierre' && a.cantidad);
     const ok = await confirmar({
       titulo: `¿Cerrar ${nombre}?`,
