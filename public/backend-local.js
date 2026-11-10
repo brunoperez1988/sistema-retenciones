@@ -849,6 +849,7 @@
       .filter((d) => !f.retencion_id || d.retencion_id === Number(f.retencion_id))
       .filter((d) => !f.tipo_retencion || (rets.get(d.retencion_id) || {}).tipo === f.tipo_retencion)
       .filter((d) => !f.entidad_id || (rets.get(d.retencion_id) || {}).entidad_id === Number(f.entidad_id))
+      .filter((d) => !f.colaborador_id || (rets.get(d.retencion_id) || {}).colaborador_id === Number(f.colaborador_id))
       .map((d) => {
         const r = rets.get(d.retencion_id);
         return {

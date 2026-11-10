@@ -1128,7 +1128,7 @@ function conectarFiltros(mapa, destino, recargar) {
 
 // ── Descuentos ──
 
-const filtrosDesc = { mes: '', tipo_retencion: '', entidad_id: '', tipo_descuento: '', empresa_id: '', q: '' };
+const filtrosDesc = { colaborador_id: '', retencion_id: '', mes: '', tipo_retencion: '', entidad_id: '', tipo_descuento: '', empresa_id: '', q: '' };
 
 async function vistaDescuentos(params, vigente) {
   const [cat, rets] = await Promise.all([api('/api/catalogos'), api('/api/retenciones')]);
@@ -1175,6 +1175,10 @@ async function vistaDescuentos(params, vigente) {
       <section class="tarjeta">
         <h2>Histórico de descuentos</h2>
         <div class="filtros">
+          <div class="campo buscador"><label for="h-colab-q">Persona</label>
+            <input id="h-colab-q" type="search" autocomplete="off" spellcheck="false" placeholder="Cédula o nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="h-colab-lista">
+            <input type="hidden" id="h-colab"><ul class="sugerencias" id="h-colab-lista" role="listbox" hidden></ul></div>
+          <div class="campo"><label for="h-ret">Retención</label><select id="h-ret" disabled><option value="">Elegí primero la persona</option></select></div>
           <div class="campo"><label for="h-mes">Mes del descuento</label><input type="month" id="h-mes" value="${esc(filtrosDesc.mes)}"></div>
           <div class="campo"><label for="h-tipo-ret">Tipo de retención</label><select id="h-tipo-ret"><option value="">Todas</option>${Object.entries(tipoTxt).map(([v, t]) => `<option value="${v}">${esc(t)}</option>`).join('')}</select></div>
           <div class="campo"><label for="h-entidad">Entidad</label><select id="h-entidad"><option value="">Todas</option>${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${esc(e.tipo)}">${esc(e.nombre)}</option>`).join('')}</select></div>
@@ -1182,6 +1186,7 @@ async function vistaDescuentos(params, vigente) {
           <div class="campo"><label for="h-empresa">Empresa</label><select id="h-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo ancho"><label for="h-q">Buscar</label><input id="h-q" type="search" placeholder="Nombre, CI, entidad, concepto" value="${esc(filtrosDesc.q)}"></div>
         </div>
+        <div id="resumen-ret"></div>
         <div id="lista-desc"><p class="cargando">Cargando…</p></div>
       </section>
     </div>`;
@@ -1301,6 +1306,54 @@ async function vistaDescuentos(params, vigente) {
     llenarRetenciones(elegida);
   }
 
+  // Filtro por una retención puntual: primero la persona, después cuál de sus retenciones.
+  const selHRet = document.getElementById('h-ret');
+  const hColab = document.getElementById('h-colab');
+  const resumenRet = document.getElementById('resumen-ret');
+  const etiquetaRet = (r) => `${r.entidad} · ${mesCorto(r.periodo)}${r.concepto ? ` · ${r.concepto}` : ''}${r.importe_total != null ? ` · ${moneda(r.importe_total)}` : ' · por porcentaje'}`;
+  const llenarRetHist = () => {
+    const id = filtrosDesc.colaborador_id;
+    const suyas = id ? retenciones.filter((r) => String(r.colaborador_id) === String(id)).sort((a, b) => b.periodo.localeCompare(a.periodo) || a.entidad.localeCompare(b.entidad, 'es')) : [];
+    selHRet.disabled = !id;
+    selHRet.innerHTML = id ? `<option value="">Todas las de la persona (${suyas.length})</option>${suyas.map((r) => `<option value="${r.id}">${esc(etiquetaRet(r))}</option>`).join('')}` : '<option value="">Elegí primero la persona</option>';
+    if (!suyas.some((r) => String(r.id) === String(filtrosDesc.retencion_id))) filtrosDesc.retencion_id = '';
+    selHRet.value = filtrosDesc.retencion_id;
+  };
+  const pintarResumenRet = () => {
+    const r = retenciones.find((x) => String(x.id) === String(filtrosDesc.retencion_id));
+    if (!r) { resumenRet.innerHTML = ''; return; }
+    const desc = r.descontado_real ?? r.descontado ?? 0;
+    resumenRet.innerHTML = `<div class="resumen-ret">
+      <div><strong>${esc(r.colaborador)}</strong><span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(etiquetaRet(r))}${r.beneficiario && r.beneficiario !== 'A completar' ? ` · Beneficiario: ${esc(r.beneficiario)}` : ''}</span></div>
+      <div class="cifra"><span class="sec">Total</span>${r.importe_total != null ? moneda(r.importe_total) : 'Por porcentaje'}</div>
+      <div class="cifra"><span class="sec">Descontado</span>${moneda(desc)}</div>
+      <div class="cifra"><span class="sec">Falta</span>${r.importe_total == null ? '—' : r.pendiente <= 0 ? '<span class="etiqueta-tipo completa">Completa</span>' : moneda(r.pendiente)}</div>
+      <button class="boton chico secundario" type="button" id="quitar-ret">Ver todas</button></div>`;
+    resumenRet.querySelector('#quitar-ret').addEventListener('click', () => { filtrosDesc.retencion_id = ''; selHRet.value = ''; pintarResumenRet(); recargarLista(); });
+  };
+  const conRetenciones = new Set(retenciones.map((r) => String(r.colaborador_id)));
+  const buscadorHist = conectarBuscadorColaborador(document.getElementById('h-colab-q'), hColab, document.getElementById('h-colab-lista'),
+    cat.colaboradores.filter((c) => conRetenciones.has(String(c.id))), {
+      sinResultado: 'No encontré a nadie con retenciones con eso.',
+      alElegir: (c) => { filtrosDesc.colaborador_id = c ? String(c.id) : ''; filtrosDesc.retencion_id = ''; llenarRetHist(); pintarResumenRet(); recargarLista(); },
+    });
+  document.getElementById('h-colab-q').addEventListener('input', (ev) => { if (!ev.target.value) { filtrosDesc.colaborador_id = ''; filtrosDesc.retencion_id = ''; llenarRetHist(); pintarResumenRet(); recargarLista(); } });
+  selHRet.addEventListener('change', () => { filtrosDesc.retencion_id = selHRet.value; pintarResumenRet(); recargarLista(); });
+  if (filtrosDesc.colaborador_id) {
+    const guardada = filtrosDesc.retencion_id;
+    buscadorHist.elegirId(filtrosDesc.colaborador_id);
+    filtrosDesc.retencion_id = guardada; llenarRetHist(); pintarResumenRet();
+  } else llenarRetHist();
+  // Desde la tabla: tocar la retención la filtra.
+  lista.addEventListener('click', (ev) => {
+    const b = ev.target.closest('[data-filtrar-ret]'); if (!b) return;
+    const r = retenciones.find((x) => String(x.id) === b.dataset.filtrarRet); if (!r) return;
+    filtrosDesc.retencion_id = String(r.id);
+    buscadorHist.elegirId(r.colaborador_id); filtrosDesc.retencion_id = String(r.id); selHRet.value = String(r.id);
+    pintarResumenRet(); recargarLista();
+    resumenRet.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+
   conectarFiltros({ mes: 'h-mes', tipo_retencion: 'h-tipo-ret', entidad_id: 'h-entidad', tipo_descuento: 'h-tipo', empresa_id: 'h-empresa', q: 'h-q' }, filtrosDesc, recargarLista);
   recargarLista();
 
@@ -1343,7 +1396,7 @@ function tablaDescuentos(filas) {
     <tbody>${filas.map((d) => `<tr>
       <td>${fecha(d.fecha)}</td>
       <td>${esc(d.colaborador)}<span class="sec">CI ${esc(cedula(d.cedula))}</span></td>
-      <td>${esc(d.entidad)} · ${esc(mesCorto(d.periodo))}<span class="sec">${esc(d.concepto)}${d.beneficiario ? ' · ' + esc(d.beneficiario) : ''}</span></td>
+      <td><button class="enlace" type="button" data-filtrar-ret="${d.retencion_id}" title="Ver solo los descuentos de esta retención">${esc(d.entidad)} · ${esc(mesCorto(d.periodo))}</button><span class="sec">${esc(d.concepto)}${d.beneficiario ? ' · ' + esc(d.beneficiario) : ''}</span></td>
       <td>${esc(d.tipo)}</td>
       <td>${esc(d.empresa)}</td>
       <td class="num">${moneda(d.importe)}</td>

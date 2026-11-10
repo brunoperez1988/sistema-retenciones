@@ -486,3 +486,9 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
   .animar .barra-avance span, .animar .avance-general span, .animar .barras .pista span, .animar .barras .pista em { animation: llenar 1.1s cubic-bezier(.2, .7, .2, 1) .35s both; }
   .animar .dona { animation: girar-dona 1.2s cubic-bezier(.2, .7, .2, 1) .3s both; }
 }
+.resumen-ret { display: flex; flex-wrap: wrap; gap: 12px 28px; align-items: center; background: var(--lima-claro); border: 1px solid var(--verde-suave); border-left: 4px solid var(--lima); border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; }
+.resumen-ret > div:first-child { flex: 1 1 280px; }
+.resumen-ret .sec { display: block; color: var(--texto-suave); font-size: .82rem; }
+.resumen-ret .cifra { font-weight: 700; font-variant-numeric: tabular-nums; }
+#h-colab-q { min-width: 220px; }
+#h-ret { max-width: 340px; }
