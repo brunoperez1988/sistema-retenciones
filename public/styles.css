@@ -82,7 +82,7 @@ h2 { font-size: 1.1rem; color: var(--verde-profundo); }
 
 /* ── Formularios ── */
 .formulario { display: grid; gap: 14px; }
-.formulario .fila { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.formulario .fila { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
 .campo { display: grid; gap: 5px; }
 .campo label, .etiqueta { font-weight: 600; font-size: .87rem; color: var(--verde-profundo); }
 .campo .ayuda { font-size: .82rem; color: var(--texto-suave); }
@@ -347,7 +347,7 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 .apilado > .tarjeta { margin-bottom: 20px; }
 @media (min-width: 1000px) {
   .form-ancho { grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 16px; align-items: start; }
-  .form-ancho > .fila { grid-column: span 2; }
+  .form-ancho > .fila { grid-column: span 2; column-gap: 16px; }
   .form-ancho > .ancho2 { grid-column: span 2; }
   .form-desc { grid-auto-flow: row dense; }
   .form-ancho > .grupo-benef, .form-ancho > .zona-mensaje, .form-ancho > .acciones, .form-ancho > .nota, .form-ancho > .mensaje { grid-column: 1 / -1; }
