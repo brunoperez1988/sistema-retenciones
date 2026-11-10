@@ -849,6 +849,14 @@
     return filtrarTexto(filas, f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario, x.empresa]);
   }
 
+  // Mes en que conviene abrir el Panel: el más viejo que tiene retenciones y todavía no se cerró (hasta el mes de hoy).
+  // Así, mientras se descuenta lo de un mes en el siguiente, el Panel muestra ese mes hasta que se cierre.
+  function mesDeTrabajo() {
+    const hoyMes = mesDeHoy();
+    const abiertos = [...new Set(estado.retenciones.map((r) => r.periodo))].filter((m) => m <= hoyMes && !cierreDe(m)).sort();
+    return abiertos[0] || hoyMes;
+  }
+
   function panel(mes) {
     const filas = listarRetenciones({ periodo: periodo(mes), con_saldo: true });
     // De lo que viene de meses anteriores cuenta solo el saldo con que entró a este mes.
@@ -1607,6 +1615,7 @@
       if (ruta === '/api/empresas') return listarEmpresas();
       if (ruta === '/api/retenciones') return listarRetenciones(f);
       if (ruta === '/api/descuentos') return listarDescuentos(f);
+      if (ruta === '/api/mes-de-trabajo') return { mes: mesDeTrabajo() };
       if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
       if (ruta === '/api/reportes/planilla') return listarRetenciones({ ...f, con_saldo: true });
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);

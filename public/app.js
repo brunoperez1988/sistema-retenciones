@@ -183,7 +183,7 @@ function errorLocal(mensaje) { const e = new Error(mensaje); e.local = true; ret
 
 // ── Navegación ──
 
-const estado = { mes: mesActual() };
+const estado = { mes: mesActual(), mesElegido: false };
 
 // Solapas que solo ve el administrador (cuando hay clave de administrador).
 const SOLO_ADMIN = ['empresas', 'entidades'];
@@ -247,7 +247,9 @@ if (LOCAL) {
   window.addEventListener('datos-actualizados', (ev) => {
     const mensaje = (ev.detail && ev.detail.mensaje) || 'Llegaron cambios nuevos de otra persona.';
     const activo = document.activeElement;
-    const escribiendo = activo && $app.contains(activo) && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activo.tagName) && activo.value;
+    // Solo se espera si la persona está llenando un formulario o escribiendo una búsqueda; el selector de mes del Panel no cuenta.
+    const escribiendo = activo && $app.contains(activo) && activo.value && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activo.tagName)
+      && (activo.closest('form') || ['text', 'search'].includes(activo.type));
     if (escribiendo || document.querySelector('dialog[open]')) { aviso(`${mensaje} Se van a ver cuando cambies de pantalla.`); return; }
     aviso(mensaje);
     navegar();
@@ -314,6 +316,8 @@ document.querySelector('.menu-boton').addEventListener('click', (ev) => {
 // ── Panel ──
 
 async function vistaPanel(_params, vigente) {
+  // Hasta que la persona elija un mes, el Panel abre en el mes más viejo sin cerrar.
+  if (!estado.mesElegido) { try { estado.mes = (await api('/api/mes-de-trabajo')).mes || estado.mes; } catch { /* queda el mes de hoy */ } }
   const d = await api(`/api/panel?periodo=${estado.mes}`);
   if (!vigente()) return;
   const avance = d.pactado ? Math.round((d.retenido / d.pactado) * 100) : 0;
@@ -355,7 +359,7 @@ async function vistaPanel(_params, vigente) {
 
   conectarDefinirImporte($app, navegar);
   conectarDetalle($app, d.retenciones, navegar);
-  $app.querySelectorAll('[data-ir-mes]').forEach((b) => b.addEventListener('click', () => { estado.mes = b.dataset.irMes; navegar(); }));
+  $app.querySelectorAll('[data-ir-mes]').forEach((b) => b.addEventListener('click', () => { estado.mes = b.dataset.irMes; estado.mesElegido = true; navegar(); }));
   const nombre = nombreMes(d.periodo).toLowerCase();
   const cerrar = document.getElementById('cerrar-mes');
   if (cerrar) cerrar.addEventListener('click', async () => {
@@ -371,6 +375,7 @@ async function vistaPanel(_params, vigente) {
     cerrar.disabled = true;
     try {
       await api('/api/cierres', { metodo: 'POST', cuerpo: { mes: d.periodo } });
+      estado.mes = d.periodo; estado.mesElegido = true; // se queda mostrando el mes recién cerrado
       aviso(`Listo: ${nombre} quedó cerrado.`);
       try { await descargarArchivo(`/api/reportes/abonar?periodo=${d.periodo}&formato=xlsx`, `a-abonar-${d.periodo}.xlsx`); } catch { aviso(`${nombreMes(d.periodo)} quedó cerrado, pero no se pudo descargar el Excel. Bajalo desde Reportes → A abonar.`); }
       navegar();
@@ -390,6 +395,7 @@ async function vistaPanel(_params, vigente) {
   document.getElementById('panel-mes').addEventListener('change', (ev) => {
     if (!ev.target.value) return;
     estado.mes = ev.target.value;
+    estado.mesElegido = true;
     navegar();
   });
 }
