@@ -1079,17 +1079,17 @@ async function vistaDescuentos(params, vigente) {
 
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Descuentos</h1><p>Lo que efectivamente se le descontó a cada colaborador. Nunca puede superar el total de la retención.</p></div></div>
-    <div class="columnas">
+    <div class="apilado">
       <section class="tarjeta">
         <h2>Registrar descuento</h2>
-        <form class="formulario" id="form-desc" novalidate>
+        <form class="formulario form-ancho form-desc" id="form-desc" novalidate>
           <div class="campo buscador"><label for="d-colab-q">Persona <span class="obligatorio">*</span></label>
             <input id="d-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="d-colab-lista">
             <input type="hidden" id="d-colab">
             <ul class="sugerencias" id="d-colab-lista" role="listbox" hidden></ul>
             <span class="ayuda">Aparecen solo las personas con retenciones pendientes.</span>
             <button type="button" class="enlace-boton" id="d-colab-nuevo">+ Agregar colaborador nuevo</button></div>
-          <div class="campo"><label for="d-ret">Retención <span class="obligatorio">*</span></label>
+          <div class="campo ancho2"><label for="d-ret">Retención <span class="obligatorio">*</span></label>
             <select id="d-ret" required disabled><option value="">Elegí primero la persona</option></select>
             <span class="ayuda" id="d-ret-ayuda"></span></div>
           <div class="fila">
@@ -1266,7 +1266,7 @@ async function vistaDescuentos(params, vigente) {
 function tablaDescuentos(filas) {
   if (!filas.length) return '<div class="tabla-contenedor"><p class="vacio">No hay descuentos con estos filtros.</p></div>';
   const total = filas.reduce((a, x) => a + x.importe, 0);
-  return `<div class="tabla-contenedor"><table>
+  return `<div class="tabla-contenedor"><table class="tabla-ret">
     <thead><tr><th>Fecha</th><th>Colaborador</th><th>Retención</th><th>Tipo</th><th>Empresa</th>
       <th class="num">Importe</th><th class="num">Saldo luego</th><th class="num">Saldo pendiente</th><th>Descontó</th><th></th></tr></thead>
     <tbody>${filas.map((d) => `<tr>
