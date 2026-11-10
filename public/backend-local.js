@@ -969,6 +969,19 @@
       }
       if (ruta === '/api/cierres') return { accion: 'Mes cerrado', detalle: c.mes ? nombreMesTxt(periodo(c.mes)) : '' };
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) { const r = ret(m[1]); return { accion: 'Importe definido', detalle: () => `${descRet(r)} · ${pesosTxt(importe(c.importe_total))}` }; }
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/editar$/))) {
+        const antes = { ...ret(m[1]) };
+        const txt = (r) => ({
+          Colaborador: nombreCol(r.colaborador_id), Entidad: nombreEnt(r.entidad_id), Período: r.periodo ? nombreMesTxt(r.periodo) : '',
+          Total: r.importe_total != null ? pesosTxt(r.importe_total) : (r.regla || 'a definir'), Concepto: r.concepto || '', Expediente: r.expediente || '',
+          Beneficiario: r.beneficiario || '', 'Doc. beneficiario': r.beneficiario_doc || '', 'Medio de cobro': r.beneficiario_cobro || '', Cuenta: r.beneficiario_cuenta || '',
+        });
+        return { accion: 'Retención editada', detalle: (res, e) => {
+          const a = txt(antes); const d = txt(e.retenciones.find((x) => x.id === res.id));
+          const dif = Object.keys(a).filter((k) => a[k] !== d[k]).map((k) => `${k}: ${a[k] || '—'} → ${d[k] || '—'}`);
+          return `${descRet(antes)} · ${dif.length ? dif.join(' · ') : 'sin cambios'}`;
+        } };
+      }
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return { accion: 'Dejó de repetirse', detalle: descRet(ret(m[1])) };
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/beneficiario$/))) return { accion: 'Beneficiario editado', detalle: `${descRet(ret(m[1]))} · ${String(c.beneficiario || '').trim()}` };
     }
@@ -1136,6 +1149,52 @@
   }
 
   // Define (o corrige) el importe total de una retención; nunca por debajo de lo ya descontado.
+  // Corregir una retención mal cargada. Se pueden cambiar todos sus datos menos quién la cargó y si se repite.
+  function editarRetencion(id, datos) {
+    const n = Number(id);
+    const r = estado.retenciones.find((x) => x.id === n);
+    if (!r) throw new ErrorValidacion('La retención no existe.', 404);
+    exigirAbierto(r.periodo, 'editar la retención');
+    const colaborador_id = entero(datos.colaborador_id, 'el colaborador');
+    const entidad_id = entero(datos.entidad_id, 'la entidad');
+    if (!estado.colaboradores.some((c) => c.id === colaborador_id)) throw new ErrorValidacion('El colaborador elegido no existe.');
+    const entidad = estado.entidades.find((x) => x.id === entidad_id);
+    if (!entidad) throw new ErrorValidacion('La entidad elegida no existe.');
+    const nuevoPeriodo = periodo(datos.periodo);
+    if (nuevoPeriodo !== r.periodo) exigirAbierto(nuevoPeriodo, 'pasar la retención a ese mes');
+    const seRepite = Boolean(r.mensual || r.origen_id);
+    if (seRepite && nuevoPeriodo !== r.periodo) throw new ErrorValidacion('Esta retención se repite cada mes: no se le puede cambiar el período.');
+    if (seRepite && !sePuedeRepetir(entidad)) throw new ErrorValidacion('Esta retención se repite cada mes: la entidad tiene que ser judicial.');
+    const cambios = {
+      colaborador_id, entidad_id, periodo: nuevoPeriodo,
+      regla: reglaCanonica(datos.regla),
+      importe_total: null,
+      concepto: texto(datos.concepto, 'concepto', { obligatorio: false }),
+      expediente: texto(datos.expediente, 'expediente / juzgado', { obligatorio: false }),
+      beneficiario: entidad.tipo === 'judicial' ? texto(datos.beneficiario, 'beneficiario') : null,
+      ...(entidad.tipo === 'judicial' ? datosBeneficiario(datos) : { beneficiario_doc: '', beneficiario_cobro: '', beneficiario_cuenta: '' }),
+    };
+    if (datos.importe_total == null || datos.importe_total === '') {
+      if (!cambios.regla) throw new ErrorValidacion('Ingresá el importe total, o la regla (por ejemplo "25% Nominal") si todavía no se sabe el importe.');
+    } else {
+      cambios.importe_total = importe(datos.importe_total, 'el importe total');
+      const ya = descontadoDe(estado, n);
+      if (cambios.importe_total < ya) throw new ErrorValidacion(`Ya se descontaron ${pesosTxt(ya)}: el importe total no puede ser menor.`, 409);
+    }
+    return modificar((e) => {
+      const x = e.retenciones.find((y) => y.id === n);
+      Object.assign(x, cambios, { editado_por: usuarioActual || '', editado_en: ahora() });
+      if (!sePuedeRepetir(entidad)) { delete x.mensual; delete x.hasta; }
+      // El beneficiario es el mismo para todos los meses de una retención que se repite.
+      const familia = x.mensual ? x.id : x.origen_id;
+      if (familia && entidad.tipo === 'judicial') {
+        const benef = { beneficiario: cambios.beneficiario, beneficiario_doc: cambios.beneficiario_doc, beneficiario_cobro: cambios.beneficiario_cobro, beneficiario_cuenta: cambios.beneficiario_cuenta };
+        e.retenciones.filter((y) => y.id !== n && (y.id === familia || y.origen_id === familia) && !cierreDe(y.periodo)).forEach((y) => Object.assign(y, benef));
+      }
+      return { ok: true, id: n };
+    });
+  }
+
   function definirImporte(id, datos) {
     const n = Number(id);
     const ret = estado.retenciones.find((r) => r.id === n);
@@ -1653,6 +1712,7 @@
       if (ruta === '/api/descuentos') return crearDescuento(cuerpo || {});
       if (ruta === '/api/importar') return importarRetenciones(cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) return definirImporte(m[1], cuerpo || {});
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/editar$/))) return editarRetencion(m[1], cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return darDeBaja(m[1]);
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/beneficiario$/))) return editarBeneficiario(m[1], cuerpo || {});
     }

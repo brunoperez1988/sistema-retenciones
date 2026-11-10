@@ -250,7 +250,7 @@ if (LOCAL) {
     // Solo se espera si la persona está llenando un formulario o escribiendo una búsqueda; el selector de mes del Panel no cuenta.
     const escribiendo = activo && $app.contains(activo) && activo.value && ['INPUT', 'SELECT', 'TEXTAREA'].includes(activo.tagName)
       && (activo.closest('form') || ['text', 'search'].includes(activo.type));
-    if (escribiendo || document.querySelector('dialog[open]')) { aviso(`${mensaje} Se van a ver cuando cambies de pantalla.`); return; }
+    if (escribiendo || document.querySelector('dialog[open]') || document.querySelector('.en-edicion')) { aviso(`${mensaje} Se van a ver cuando cambies de pantalla.`); return; }
     aviso(mensaje);
     navegar();
   });
@@ -790,8 +790,9 @@ async function vistaRetenciones(_params, vigente) {
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div></div>
     <div class="apilado">
-      <section class="tarjeta">
-        <h2>Cargar retención</h2>
+      <section class="tarjeta" id="tarjeta-form-ret">
+        <h2 id="titulo-form-ret">Cargar retención</h2>
+        <div class="mensaje editando" id="aviso-edicion" hidden></div>
         ${!cat.colaboradores.length || !cat.entidades.length
           ? `<p class="mensaje error">Primero cargá ${!cat.colaboradores.length ? '<a href="#/colaboradores">colaboradores</a>' : ''}${!cat.colaboradores.length && !cat.entidades.length ? ' y ' : ''}${!cat.entidades.length ? '<a href="#/entidades">entidades</a>' : ''}.</p>` : ''}
         <form class="formulario form-ancho" id="form-ret" novalidate>
@@ -832,10 +833,11 @@ async function vistaRetenciones(_params, vigente) {
             <legend>Beneficiario</legend>
             ${camposBeneficiario('r')}
           </fieldset>
-          <div class="campo"><label for="r-cargo">Cargada por <span class="obligatorio">*</span></label>
+          <div class="campo" id="campo-cargo"><label for="r-cargo">Cargada por <span class="obligatorio">*</span></label>
             <input id="r-cargo" maxlength="80" value="${esc(recordar.leer('cargo') || usuarioSesion())}" required></div>
           <div class="zona-mensaje"></div>
-          <div class="acciones"><button class="boton" type="submit">Guardar retención</button></div>
+          <div class="acciones"><button class="boton" type="submit" id="r-guardar">Guardar retención</button>
+            <button class="boton secundario" type="button" id="r-cancelar-edicion" hidden>Cancelar</button></div>
         </form>
       </section>
 
@@ -886,6 +888,10 @@ async function vistaRetenciones(_params, vigente) {
     lista.innerHTML = tablaRetenciones(filas);
     conectarDefinirImporte(lista, recargar);
     conectarEditarBeneficiario(lista, filas, recargar);
+    lista.querySelectorAll('[data-editar]').forEach((b) => b.addEventListener('click', () => {
+      const r = filas.find((x) => String(x.id) === b.dataset.editar);
+      if (r) empezarEdicion(r);
+    }));
     lista.querySelectorAll('[data-baja]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm('¿Dejar de repetir esta retención? Desde el mes que viene no se crea más. Lo ya cargado queda igual.')) return;
       try { await api(`/api/retenciones/${b.dataset.baja}/baja`, { metodo: 'POST', cuerpo: {} }); aviso('Listo: no se repite más desde el mes que viene.'); recargar(); }
@@ -901,6 +907,66 @@ async function vistaRetenciones(_params, vigente) {
   recargar();
 
   const form = document.getElementById('form-ret');
+  // ── Modo edición: el mismo formulario se llena con la retención elegida ──
+  let editando = null;
+  const poner = (sel, v) => { form.querySelector(sel).value = v ?? ''; };
+  function limpiarFormulario() {
+    ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-benef-doc', '#r-benef-cobro', '#r-benef-cuenta', '#r-hasta'].forEach((x) => poner(x, ''));
+    selCalculo.value = 'fijo'; mostrarCalculo();
+    chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
+    buscadorColab.limpiar();
+  }
+  function empezarEdicion(r) {
+    editando = r;
+    limpiarFormulario();
+    buscadorColab.elegirId(r.colaborador_id);
+    selEnt.value = String(r.entidad_id); selEnt.dispatchEvent(new Event('change'));
+    poner('#r-periodo', r.periodo);
+    const fija = Boolean(r.mensual || r.origen_id);
+    form.querySelector('#r-periodo').disabled = fija;
+    if (r.porcentaje != null) {
+      selCalculo.value = 'porcentaje';
+      poner('#r-pct', String(r.porcentaje).replace('.', ','));
+      poner('#r-base', r.base === 'liquido' ? 'Líquido' : r.base === 'nominal' ? 'Nominal' : '');
+    } else if (r.regla) { selCalculo.value = 'otra'; poner('#r-regla', r.regla); }
+    mostrarCalculo();
+    poner('#r-importe', r.importe_total != null ? numeroPlano(r.importe_total) : '');
+    poner('#r-concepto', r.concepto); poner('#r-exp', r.expediente);
+    if (r.tipo === 'judicial') {
+      poner('#r-benef', r.beneficiario === 'A completar' ? '' : r.beneficiario);
+      poner('#r-benef-doc', r.beneficiario_doc); poner('#r-benef-cobro', r.beneficiario_cobro); poner('#r-benef-cuenta', r.beneficiario_cuenta);
+    }
+    document.getElementById('fila-mensual').hidden = true;
+    document.getElementById('campo-cargo').hidden = true;
+    document.getElementById('titulo-form-ret').textContent = 'Editar retención';
+    const av = document.getElementById('aviso-edicion');
+    av.innerHTML = `Estás corrigiendo la retención de <strong>${esc(r.colaborador)}</strong> · ${esc(r.entidad)} · ${esc(nombreMes(r.periodo).toLowerCase())}.`
+      + (r.cantidad_descuentos ? ` Ya tiene ${r.cantidad_descuentos === 1 ? '1 descuento' : `${r.cantidad_descuentos} descuentos`}: siguen aplicados y el total no puede quedar por debajo de ${moneda(r.descontado_real)}.` : '')
+      + (fija ? ' Como se repite cada mes, el período no se puede cambiar.' : '');
+    av.hidden = false;
+    form.querySelector('#r-guardar').textContent = 'Guardar cambios';
+    form.querySelector('#r-cancelar-edicion').hidden = false;
+    form.querySelector('.zona-mensaje').innerHTML = '';
+    document.getElementById('tarjeta-form-ret').classList.add('en-edicion');
+    document.getElementById('tarjeta-form-ret').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    form.querySelector('#r-colab-q').focus({ preventScroll: true });
+  }
+  function terminarEdicion() {
+    editando = null;
+    limpiarFormulario();
+    form.querySelector('#r-periodo').disabled = false;
+    poner('#r-periodo', mesActual());
+    document.getElementById('campo-cargo').hidden = false;
+    selEnt.value = ''; selEnt.dispatchEvent(new Event('change'));
+    document.getElementById('titulo-form-ret').textContent = 'Cargar retención';
+    document.getElementById('aviso-edicion').hidden = true;
+    form.querySelector('#r-guardar').textContent = 'Guardar retención';
+    form.querySelector('#r-cancelar-edicion').hidden = true;
+    form.querySelector('.zona-mensaje').innerHTML = '';
+    document.getElementById('tarjeta-form-ret').classList.remove('en-edicion');
+  }
+  form.querySelector('#r-cancelar-edicion').addEventListener('click', terminarEdicion);
+
   manejarEnvio(form, {
     enviar: async () => {
       const textoImporte = form.querySelector('#r-importe').value.trim();
@@ -918,8 +984,8 @@ async function vistaRetenciones(_params, vigente) {
       if (importe == null && !regla) throw errorLocal('Ingresá el importe total.');
       if (importe != null && !(importe > 0)) throw errorLocal('Ingresá un importe total válido, por ejemplo 2.000 o 2.000,50.');
       if (esJudicial() && !form.querySelector('#r-benef').value.trim()) throw errorLocal('El beneficiario es obligatorio en las retenciones judiciales.');
-      if (!form.querySelector('#r-cargo').value.trim()) throw errorLocal('Indicá quién carga la retención.');
-      await api('/api/retenciones', { metodo: 'POST', cuerpo: {
+      if (!editando && !form.querySelector('#r-cargo').value.trim()) throw errorLocal('Indicá quién carga la retención.');
+      const cuerpo = {
         colaborador_id: Number(form.querySelector('#r-colab').value),
         entidad_id: Number(selEnt.value),
         periodo: form.querySelector('#r-periodo').value,
@@ -931,15 +997,22 @@ async function vistaRetenciones(_params, vigente) {
         expediente: form.querySelector('#r-exp').value,
         ...(esJudicial() ? leerBeneficiario(form, 'r') : { beneficiario: null }),
         cargado_por: form.querySelector('#r-cargo').value,
-      } });
+      };
+      if (editando) {
+        await api(`/api/retenciones/${editando.id}/editar`, { metodo: 'POST', cuerpo });
+        return;
+      }
+      await api('/api/retenciones', { metodo: 'POST', cuerpo });
       recordar.guardar('cargo', form.querySelector('#r-cargo').value.trim());
     },
     alTerminar: async () => {
-      aviso('Retención guardada.');
-      ['#r-importe', '#r-regla', '#r-pct', '#r-base', '#r-concepto', '#r-exp', '#r-benef', '#r-benef-doc', '#r-benef-cobro', '#r-benef-cuenta', '#r-hasta'].forEach((s) => { form.querySelector(s).value = ''; });
-      selCalculo.value = 'fijo'; mostrarCalculo();
-      chkMensual.checked = false; document.getElementById('campo-hasta').hidden = true;
-      buscadorColab.limpiar();
+      if (editando) {
+        aviso('Cambios guardados.');
+        terminarEdicion();
+      } else {
+        aviso('Retención guardada.');
+        limpiarFormulario();
+      }
       form.querySelector('#r-colab-q').focus();
       recargar();
     },
@@ -963,7 +1036,8 @@ function tablaRetenciones(filas) {
       <td class="num">${moneda(r.descontado)}</td>
       <td class="num">${celdaFalta(r)}</td>
       <td>${esc(r.cargado_por)}<span class="sec">${fecha(r.creado_en)}</span></td>
-      <td>${r.cantidad_descuentos === 0 ? `<button class="boton chico peligro" type="button" data-eliminar="${r.id}">Eliminar</button>`
+      <td><button class="boton chico secundario" type="button" data-editar="${r.id}">Editar</button>
+        ${r.cantidad_descuentos === 0 ? `<button class="boton chico peligro" type="button" data-eliminar="${r.id}">Eliminar</button>`
         : (r.completa || r.a_definir ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Descontar</a>`)}
         ${r.a_definir ? `<button class="boton chico ambar" type="button" ${atributosDefinir(r)}>Definir importe</button>` : ''}
         ${r.repite ? `<button class="boton chico secundario" type="button" data-baja="${r.id}" title="Dejar de repetir cada mes">Dar de baja</button>` : ''}</td>
