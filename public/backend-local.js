@@ -767,6 +767,16 @@
     return Boolean(t && !t.baja && (!t.hasta || t.hasta > mesDeHoy()));
   }
 
+  // A qué mes de trabajo corresponde un descuento: al de la retención, salvo que ese mes ya estuviera cerrado cuando
+  // se cargó el descuento (entonces va al primer mes que estaba abierto). Así lo descontado se cuenta una sola vez.
+  function mesImputado(d, r) {
+    const cierres = estado.cierres || [];
+    const cuando = d.creado_en || '';
+    let m = r.periodo;
+    while (cierres.some((c) => c.mes === m && c.fecha <= cuando)) m = mesSiguiente(m);
+    return m;
+  }
+
   function listarRetenciones(f = {}) {
     const ent = new Map(estado.entidades.map((x) => [x.id, x]));
     const col = new Map(estado.colaboradores.map((x) => [x.id, x]));
@@ -789,7 +799,7 @@
         const real = todos.reduce((a, d) => a + d.importe, 0);
         const filtrado = fil.reduce((a, d) => a + d.importe, 0);
         // Lo descontado antes del mes pedido: sirve para saber con qué saldo entró a ese mes.
-        const antes = per ? todos.filter((d) => d.fecha.slice(0, 7) < per).reduce((a, d) => a + d.importe, 0) : 0;
+        const antes = per ? todos.filter((d) => mesImputado(d, r) < per).reduce((a, d) => a + d.importe, 0) : 0;
         return {
           ...r,
           colaborador_id: c.id, cedula: c.cedula, colaborador: c.nombre,
@@ -901,37 +911,89 @@
   const TIPOS_COMPROBANTE = { 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
   const MAX_COMPROBANTE = 10 * 1024 * 1024;
 
+  // Las judiciales se pagan por persona: se eligen las que se depositan y cada pago guarda sus "items"
+  // (retención + mes de origen). Lo judicial que quedó sin pagar en un mes cerrado pasa a los Pagos de los meses siguientes.
+  const PASA_SALDO_JUDICIAL = true;
+  const sinBeneficiario = (x) => !String(x.beneficiario || '').trim() || x.beneficiario === 'A completar';
+
+  function itemsDelMes(mes) {
+    const crudas = new Map(estado.retenciones.map((r) => [r.id, r]));
+    const suma = new Map();
+    for (const d of estado.descuentos) {
+      const r = crudas.get(d.retencion_id);
+      if (r && mesImputado(d, r) === mes) suma.set(r.id, (suma.get(r.id) || 0) + d.importe);
+    }
+    if (!suma.size) return [];
+    const items = [];
+    for (const x of listarRetenciones().filter((y) => suma.has(y.id))) {
+      const importe = suma.get(x.id);
+      if (importe <= 0) continue;
+      const judicial = x.tipo === 'judicial';
+      items.push({ retencion_id: x.id, mes_origen: mes, entidad_id: x.entidad_id, colaborador: x.colaborador, cedula: x.cedula, periodo: x.periodo, importe,
+        beneficiario: judicial ? (x.beneficiario === 'A completar' ? '' : x.beneficiario || '') : '', beneficiario_doc: x.beneficiario_doc || '',
+        sin_beneficiario: judicial && sinBeneficiario(x),
+        ...(judicial && !sinBeneficiario(x) ? cobroBeneficiario(x) : { banco: '', cuenta: '' }) });
+    }
+    return items;
+  }
+
+  // Qué pago cubre cada item ("retención|mes de origen"). Un pago viejo sin items cubre todo lo de su entidad en su mes.
+  function mapaPagados() {
+    const mapa = new Map();
+    for (const p of estado.pagos || []) for (const it of p.items || []) mapa.set(`${it.retencion_id}|${it.mes_origen}`, p);
+    return mapa;
+  }
+
   function listarPagos(f = {}) {
     const mes = periodo(f.periodo || mesDeTrabajo());
+    const ents = new Map(estado.entidades.map((x) => [x.id, x]));
+    const pagados = mapaPagados();
+    const pagosSinItems = (estado.pagos || []).filter((p) => !p.items);
+    let items = itemsDelMes(mes);
+    if (PASA_SALDO_JUDICIAL) {
+      // Saldos judiciales de meses anteriores ya cerrados que todavía no se depositaron.
+      const meses = (estado.cierres || []).map((c) => c.mes).filter((m) => m < mes).sort();
+      for (const m of meses) {
+        items = items.concat(itemsDelMes(m).filter((it) => ents.get(it.entidad_id).tipo === 'judicial' && !pagados.has(`${it.retencion_id}|${m}`)
+          && !pagosSinItems.some((p) => p.mes === m && p.entidad_id === it.entidad_id)));
+      }
+    }
     const grupos = new Map();
     const grupo = (ent) => {
-      if (!grupos.has(ent.id)) grupos.set(ent.id, { entidad_id: ent.id, entidad: ent.nombre, tipo: ent.tipo, importe: 0, detalle: [], pago: null });
+      if (!grupos.has(ent.id)) grupos.set(ent.id, { entidad_id: ent.id, entidad: ent.nombre, tipo: ent.tipo, importe: 0, pagado: 0, detalle: [], pago: null, pagos: [] });
       return grupos.get(ent.id);
     };
-    const ents = new Map(estado.entidades.map((x) => [x.id, x]));
-    for (const x of listarRetenciones({ periodo: mes, con_saldo: true })) {
-      const importe = x.descontado_real - (x.arrastre ? x.descontado_antes : 0);
-      if (importe <= 0) continue;
-      const g = grupo(ents.get(x.entidad_id));
-      g.importe += importe;
-      g.detalle.push({ retencion_id: x.id, colaborador: x.colaborador, cedula: x.cedula, periodo: x.periodo, importe,
-        beneficiario: x.tipo === 'judicial' ? x.beneficiario || '' : '', beneficiario_doc: x.beneficiario_doc || '',
-        ...(x.tipo === 'judicial' && x.beneficiario ? cobroBeneficiario(x) : { banco: '', cuenta: '' }) });
+    for (const it of items) {
+      const g = grupo(ents.get(it.entidad_id));
+      const p = pagados.get(`${it.retencion_id}|${it.mes_origen}`) || pagosSinItems.find((y) => y.mes === it.mes_origen && y.entidad_id === it.entidad_id) || null;
+      const pagoItem = p && p.items ? p.items.find((y) => y.retencion_id === it.retencion_id && y.mes_origen === it.mes_origen) : null;
+      g.importe += it.importe;
+      g.detalle.push({ ...it, de_otro_mes: it.mes_origen !== mes, pago: p ? { id: p.id, mes: p.mes, transferencia: p.transferencia, fecha_pago: p.fecha_pago, importe: pagoItem ? pagoItem.importe : null } : null });
     }
     for (const p of (estado.pagos || []).filter((y) => y.mes === mes)) {
       const ent = ents.get(p.entidad_id);
-      if (ent) grupo(ent).pago = p;
+      if (!ent) continue;
+      const g = grupo(ent);
+      g.pagos.push(p);
+      if (ent.tipo !== 'judicial') g.pago = p;
+    }
+    for (const g of grupos.values()) {
+      g.pagado = g.tipo === 'judicial'
+        ? g.detalle.filter((x) => x.pago).reduce((a, x) => a + (x.pago.importe ?? x.importe), 0)
+        : (g.pago ? g.pago.importe : 0);
+      g.pendiente = g.tipo === 'judicial' ? g.detalle.filter((x) => !x.pago).reduce((a, x) => a + x.importe, 0) : (g.pago ? 0 : g.importe);
+      g.sin_beneficiario = g.detalle.filter((x) => x.sin_beneficiario && !x.pago).length;
+      g.detalle.sort((a, b) => a.mes_origen.localeCompare(b.mes_origen) || a.colaborador.localeCompare(b.colaborador, 'es'));
     }
     const lista = [...grupos.values()].sort((a, b) => a.entidad.localeCompare(b.entidad, 'es'));
-    lista.forEach((g) => g.detalle.sort((a, b) => a.colaborador.localeCompare(b.colaborador, 'es')));
-    const total = lista.reduce((a, g) => a + g.importe, 0);
-    const pagado = lista.filter((g) => g.pago).reduce((a, g) => a + g.pago.importe, 0);
-    return { mes, mes_trabajo: mesDeTrabajo(), grupos: lista, total, pagado, pendiente: lista.filter((g) => !g.pago).reduce((a, g) => a + g.importe, 0) };
+    return { mes, mes_trabajo: mesDeTrabajo(), grupos: lista,
+      total: lista.reduce((a, g) => a + g.importe, 0), pagado: lista.reduce((a, g) => a + g.pagado, 0), pendiente: lista.reduce((a, g) => a + g.pendiente, 0) };
   }
 
   // Entidades del mes que todavía no tienen el pago registrado, o cuyo importe cambió después de pagar.
   function pagosPendientes(mes) {
-    return listarPagos({ periodo: mes }).grupos.filter((g) => g.importe > 0 && (!g.pago || g.pago.importe !== g.importe));
+    // Las judiciales no frenan el cierre: lo que no se depositó pasa a los Pagos del mes siguiente.
+    return listarPagos({ periodo: mes }).grupos.filter((g) => g.tipo !== 'judicial' && g.importe > 0 && (!g.pago || g.pago.importe !== g.importe));
   }
 
   function nombreArchivoSeguro(n) {
@@ -961,16 +1023,30 @@
   async function registrarPago(datos) {
     const mes = periodo(datos.mes);
     const entidad_id = entero(datos.entidad_id, 'la entidad');
-    const lista = listarPagos({ periodo: mes });
-    const g = lista.grupos.find((x) => x.entidad_id === entidad_id);
+    const g = listarPagos({ periodo: mes }).grupos.find((x) => x.entidad_id === entidad_id);
     if (!g || !g.importe) throw new ErrorValidacion('Esa entidad no tiene nada para abonar en el mes.');
-    if (g.pago) throw new ErrorValidacion('El pago de esa entidad ya está registrado. Si hay que corregirlo, anulalo y registralo de nuevo.', 409);
+    let items;
+    if (g.tipo === 'judicial') {
+      const pedidos = Array.isArray(datos.items) ? datos.items : [];
+      if (!pedidos.length) throw new ErrorValidacion('Marcá a quiénes se les deposita.');
+      items = pedidos.map((q) => {
+        const x = g.detalle.find((y) => y.retencion_id === Number(q.retencion_id) && y.mes_origen === String(q.mes_origen));
+        if (!x) throw new ErrorValidacion('Una de las personas marcadas ya no tiene importe para pagar. Actualizá la página.');
+        if (x.pago) throw new ErrorValidacion(`A ${x.colaborador} ya se le registró el pago.`, 409);
+        if (x.sin_beneficiario) throw new ErrorValidacion(`No se le puede depositar a ${x.colaborador}: falta completar el beneficiario.`);
+        return { retencion_id: x.retencion_id, mes_origen: x.mes_origen, importe: x.importe };
+      });
+    } else {
+      if (g.pago) throw new ErrorValidacion('El pago de esa entidad ya está registrado. Si hay que corregirlo, anulalo y registralo de nuevo.', 409);
+      items = g.detalle.map((x) => ({ retencion_id: x.retencion_id, mes_origen: x.mes_origen, importe: x.importe }));
+    }
+    const importeTotal = items.reduce((a, x) => a + x.importe, 0);
     const transferencia = texto(datos.transferencia, 'número de transferencia', { max: 60 });
     const fecha_pago = fecha(datos.fecha_pago);
     const comprobante = datos.archivo ? await subirComprobante(mes, datos.archivo, `${g.entidad} · ${nombreMesTxt(mes)}`) : null;
     return modificar((e) => {
       const id = e.sig++;
-      e.pagos = [...(e.pagos || []), { id, mes, entidad_id, importe: g.importe, retenciones: g.detalle.length, transferencia, fecha_pago, comprobante,
+      e.pagos = [...(e.pagos || []), { id, mes, entidad_id, importe: importeTotal, retenciones: items.length, items, transferencia, fecha_pago, comprobante,
         registrado_por: usuarioActual || '', registrado_en: ahora() }];
       return { id };
     });

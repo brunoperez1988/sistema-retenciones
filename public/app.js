@@ -1320,37 +1320,61 @@ async function archivoComprobante(input) {
 async function vistaPagos(_params, vigente) {
   const d = await api(`/api/pagos${mesPagos ? `?periodo=${mesPagos}` : ''}`);
   if (!vigente()) return;
-  const pagados = d.grupos.filter((g) => g.pago).length;
+  const completos = d.grupos.filter((g) => g.pendiente <= 0).length;
+  const sinDatos = d.grupos.reduce((a, g) => a + g.detalle.filter((x) => x.sin_beneficiario && !x.pago).reduce((b, x) => b + x.importe, 0), 0);
+  const deAntes = d.grupos.reduce((a, g) => a + g.detalle.filter((x) => x.de_otro_mes && !x.pago).reduce((b, x) => b + x.importe, 0), 0);
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Pagos</h1><p>Lo que hay que abonarle a cada entidad por lo descontado en el mes, con el número de transferencia y el comprobante.</p></div>
       <div class="campo"><label for="pg-mes">Mes</label><input type="month" id="pg-mes" value="${esc(d.mes)}"></div></div>
     <section class="indicadores" aria-label="Resumen de pagos">
-      <div class="indicador pactado"><div class="titulo">A abonar</div><div class="valor">${moneda(d.total)}</div><div class="detalle">${d.grupos.length} ${d.grupos.length === 1 ? 'entidad' : 'entidades'}</div></div>
-      <div class="indicador retenido"><div class="titulo">Pagado</div><div class="valor">${moneda(d.pagado)}</div><div class="detalle">${pagados} de ${d.grupos.length}</div></div>
-      <div class="indicador disponible"><div class="titulo">Falta pagar</div><div class="valor">${moneda(d.pendiente)}</div><div class="detalle">${d.grupos.length - pagados} ${d.grupos.length - pagados === 1 ? 'entidad' : 'entidades'}</div></div>
+      <div class="indicador pactado"><div class="titulo">A abonar</div><div class="valor">${moneda(d.total)}</div><div class="detalle">${d.grupos.length} ${d.grupos.length === 1 ? 'entidad' : 'entidades'}${deAntes ? ` · incluye ${moneda(deAntes)} judiciales sin depositar de meses anteriores` : ''}</div></div>
+      <div class="indicador retenido"><div class="titulo">Pagado</div><div class="valor">${moneda(d.pagado)}</div><div class="detalle">${completos} de ${d.grupos.length} completas</div></div>
+      <div class="indicador disponible"><div class="titulo">Falta pagar</div><div class="valor">${moneda(d.pendiente)}</div><div class="detalle">${sinDatos ? `${moneda(sinDatos)} no se pueden depositar: falta el beneficiario` : 'Las judiciales que queden pasan al mes siguiente'}</div></div>
     </section>
     <section class="tarjeta">
       <h2>Entidades de ${esc(nombreMes(d.mes).toLowerCase())}</h2>
       ${!d.grupos.length ? '<p class="vacio">No hay importes descontados para abonar en este mes.</p>' : `<div class="tabla-contenedor"><table class="tabla-ret tabla-pagos">
-        <thead><tr><th>Entidad</th><th class="num">Retenciones</th><th class="num">A abonar</th><th>Estado</th><th>N° de transferencia</th><th>Fecha de pago</th><th>Comprobante</th><th></th></tr></thead>
-        <tbody>${d.grupos.map((g) => filaPago(g)).join('')}</tbody>
-        <tfoot><tr><td>Total (${d.grupos.length})</td><td class="num">${d.grupos.reduce((a, g) => a + g.detalle.length, 0)}</td><td class="num">${moneda(d.total)}</td><td colspan="5"></td></tr></tfoot>
+        <thead><tr><th>Entidad</th><th class="num">Retenciones</th><th class="num">A abonar</th><th class="num">Falta pagar</th><th>Estado</th><th>N° de transferencia</th><th>Fecha de pago</th><th>Comprobante</th><th></th></tr></thead>
+        <tbody>${d.grupos.map((g) => filaPago(g, d.mes)).join('')}</tbody>
+        <tfoot><tr><td>Total (${d.grupos.length})</td><td class="num">${d.grupos.reduce((a, g) => a + g.detalle.length, 0)}</td><td class="num">${moneda(d.total)}</td><td class="num">${moneda(d.pendiente)}</td><td colspan="5"></td></tr></tfoot>
       </table></div>`}
     </section>`;
 
   document.getElementById('pg-mes').addEventListener('change', (ev) => { if (ev.target.value) { mesPagos = ev.target.value; navegar(); } });
+  const grupoDe = (id) => d.grupos.find((x) => String(x.entidad_id) === String(id));
+  const pagoDe = (id) => d.grupos.flatMap((g) => g.pagos.map((p) => ({ g, p }))).find((x) => String(x.p.id) === String(id));
   $app.querySelectorAll('[data-ver-detalle]').forEach((b) => b.addEventListener('click', () => {
     const fila = $app.querySelector(`tr[data-detalle="${b.dataset.verDetalle}"]`);
-    fila.hidden = !fila.hidden; b.textContent = fila.hidden ? 'Ver detalle' : 'Ocultar detalle';
+    fila.hidden = !fila.hidden;
+    $app.querySelectorAll(`[data-ver-detalle="${b.dataset.verDetalle}"]`).forEach((x) => { x.textContent = fila.hidden ? x.dataset.textoVer : 'Ocultar detalle'; });
   }));
-  $app.querySelectorAll('[data-pagar]').forEach((b) => b.addEventListener('click', () => {
-    const g = d.grupos.find((x) => String(x.entidad_id) === b.dataset.pagar);
-    dialogoPago(d.mes, g);
-  }));
-  $app.querySelectorAll('[data-adjuntar]').forEach((b) => b.addEventListener('click', () => {
-    const g = d.grupos.find((x) => String(x.pago && x.pago.id) === b.dataset.adjuntar);
-    dialogoPago(d.mes, g, { soloComprobante: true });
-  }));
+  // Selección de personas en las judiciales: va sumando el saldo a pagar.
+  $app.querySelectorAll('tr.detalle-pago').forEach((fila) => {
+    const g = grupoDe(fila.dataset.detalle);
+    if (g.tipo !== 'judicial') return;
+    const marcas = [...fila.querySelectorAll('input[data-item]')];
+    const actualizar = () => {
+      const elegidos = marcas.filter((m) => m.checked);
+      const suma = elegidos.reduce((a, m) => a + Number(m.dataset.importe), 0);
+      fila.querySelector('.suma-seleccion').innerHTML = elegidos.length
+        ? `Saldo a pagar: <strong>${moneda(suma)}</strong> · ${elegidos.length} ${elegidos.length === 1 ? 'persona' : 'personas'}` : 'Marcá a quiénes se les deposita.';
+      fila.querySelector('[data-pagar-sel]').disabled = !elegidos.length;
+      const todas = fila.querySelector('[data-marcar-todas]');
+      if (todas) todas.checked = elegidos.length === marcas.length && marcas.length > 0;
+    };
+    marcas.forEach((m) => m.addEventListener('change', actualizar));
+    const todas = fila.querySelector('[data-marcar-todas]');
+    if (todas) todas.addEventListener('change', () => { marcas.forEach((m) => { m.checked = todas.checked; }); actualizar(); });
+    const boton = fila.querySelector('[data-pagar-sel]');
+    if (boton) boton.addEventListener('click', () => {
+      const elegidos = marcas.filter((m) => m.checked);
+      const items = elegidos.map((m) => { const [retencion_id, mes_origen] = m.dataset.item.split('|'); return { retencion_id: Number(retencion_id), mes_origen }; });
+      dialogoPago(d.mes, g, { items, importe: elegidos.reduce((a, m) => a + Number(m.dataset.importe), 0) });
+    });
+    actualizar();
+  });
+  $app.querySelectorAll('[data-pagar]').forEach((b) => b.addEventListener('click', () => dialogoPago(d.mes, grupoDe(b.dataset.pagar))));
+  $app.querySelectorAll('[data-adjuntar]').forEach((b) => b.addEventListener('click', () => { const x = pagoDe(b.dataset.adjuntar); dialogoPago(d.mes, x.g, { pago: x.p }); }));
   $app.querySelectorAll('[data-ver-comp]').forEach((b) => b.addEventListener('click', async () => {
     const ventana = window.open('', '_blank');
     try {
@@ -1362,45 +1386,80 @@ async function vistaPagos(_params, vigente) {
     } catch (e) { if (ventana) ventana.close(); aviso(e.validacion ? e.message : MENSAJE_FALLA); }
   }));
   $app.querySelectorAll('[data-anular]').forEach((b) => b.addEventListener('click', async () => {
-    const g = d.grupos.find((x) => String(x.pago && x.pago.id) === b.dataset.anular);
+    const { g, p } = pagoDe(b.dataset.anular);
     const ok = await confirmar({ titulo: `¿Anular el pago a ${g.entidad}?`, boton: 'Anular pago',
-      html: `<p>El pago de ${moneda(g.pago.importe)} (transferencia ${esc(g.pago.transferencia)}) vuelve a quedar pendiente. El comprobante sigue guardado en GitHub.</p>` });
+      html: `<p>El pago de ${moneda(p.importe)} (transferencia ${esc(p.transferencia)}) vuelve a quedar pendiente. El comprobante sigue guardado en GitHub.</p>` });
     if (!ok) return;
-    try { await api(`/api/pagos/${g.pago.id}`, { metodo: 'DELETE' }); aviso('Pago anulado.'); navegar(); }
+    try { await api(`/api/pagos/${p.id}`, { metodo: 'DELETE' }); aviso('Pago anulado.'); navegar(); }
     catch (e) { aviso(e.validacion ? e.message : MENSAJE_FALLA); }
   }));
 }
 
-function filaPago(g) {
-  const p = g.pago;
-  const cambio = p && p.importe !== g.importe;
-  return `<tr class="${p ? 'pagado' : ''}">
-    <td><strong>${esc(g.entidad)}</strong><span class="sec">${etiquetaTipo(g.tipo)}</span>
-      <button class="enlace" type="button" data-ver-detalle="${g.entidad_id}">Ver detalle</button></td>
-    <td class="num">${g.detalle.length}</td>
-    <td class="num">${moneda(g.importe)}${cambio ? `<span class="sec aviso-cambio">Se pagó ${moneda(p.importe)}: cambiaron los descuentos después del pago</span>` : ''}</td>
-    <td>${p ? '<span class="etiqueta-tipo completa">Pagado</span>' : '<span class="etiqueta-tipo a-definir">Pendiente</span>'}</td>
-    <td>${p ? esc(p.transferencia) : '<span class="sec">—</span>'}</td>
-    <td>${p ? `${fecha(p.fecha_pago)}<span class="sec">por ${esc(p.registrado_por || '—')}</span>` : '<span class="sec">—</span>'}</td>
-    <td>${p && p.comprobante ? `<button class="enlace" type="button" data-ver-comp="${p.id}" title="${esc(p.comprobante.nombre)}">Ver comprobante</button>`
-      : p ? `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>` : '<span class="sec">—</span>'}</td>
-    <td>${p ? `<button class="boton chico peligro" type="button" data-anular="${p.id}">Anular</button>`
-      : `<button class="boton chico" type="button" data-pagar="${g.entidad_id}">Registrar pago</button>`}</td>
-  </tr>
-  <tr class="detalle-pago" data-detalle="${g.entidad_id}" hidden><td colspan="8">
-    <table class="mini"><thead><tr><th>Colaborador</th><th>Período</th>${g.tipo === 'judicial' ? '<th>Beneficiario</th><th>Banco / medio</th><th>Cuenta</th>' : ''}<th class="num">Importe</th></tr></thead>
-    <tbody>${g.detalle.map((x) => `<tr><td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td><td>${esc(mesCorto(x.periodo))}</td>
-      ${g.tipo === 'judicial' ? `<td>${esc(x.beneficiario)}${x.beneficiario_doc ? `<span class="sec">Doc. ${esc(x.beneficiario_doc)}</span>` : ''}</td><td>${esc(x.banco)}</td><td>${esc(x.cuenta)}</td>` : ''}
-      <td class="num">${moneda(x.importe)}</td></tr>`).join('')}</tbody></table>
-  </td></tr>`;
+function celdaComprobante(p) {
+  return p.comprobante ? `<button class="enlace" type="button" data-ver-comp="${p.id}" title="${esc(p.comprobante.nombre)}">Ver comprobante</button>`
+    : `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>`;
 }
 
-function dialogoPago(mes, g, { soloComprobante = false } = {}) {
+function filaPago(g, mes) {
+  const judicial = g.tipo === 'judicial';
+  const p = g.pago;
+  const estadoTxt = g.pendiente <= 0 ? '<span class="etiqueta-tipo completa">Pagado</span>'
+    : g.pagado > 0 ? '<span class="etiqueta-tipo parcial">Pago parcial</span>' : '<span class="etiqueta-tipo a-definir">Pendiente</span>';
+  const cambio = !judicial && p && p.importe !== g.importe;
+  const textoVer = judicial ? 'Elegir a quién pagar' : 'Ver detalle';
+  const principal = `<tr class="${g.pendiente <= 0 ? 'pagado' : ''}">
+    <td><strong>${esc(g.entidad)}</strong><span class="sec">${etiquetaTipo(g.tipo)}</span>
+      <button class="enlace" type="button" data-ver-detalle="${g.entidad_id}" data-texto-ver="${textoVer}">${judicial ? 'Ocultar detalle' : textoVer}</button></td>
+    <td class="num">${g.detalle.length}</td>
+    <td class="num">${moneda(g.importe)}${cambio ? `<span class="sec aviso-cambio">Se pagó ${moneda(p.importe)}: cambiaron los descuentos después del pago</span>` : ''}</td>
+    <td class="num">${moneda(g.pendiente)}${judicial && g.sin_beneficiario ? `<span class="sec aviso-cambio">${g.sin_beneficiario} sin beneficiario</span>` : ''}</td>
+    <td>${estadoTxt}</td>
+    ${judicial
+      ? `<td colspan="3">${g.pagos.length ? `${g.pagos.length} ${g.pagos.length === 1 ? 'pago registrado' : 'pagos registrados'} este mes (abajo)` : '<span class="sec">Marcá abajo a quiénes se les deposita</span>'}</td><td></td>`
+      : `<td>${p ? esc(p.transferencia) : '<span class="sec">—</span>'}</td>
+    <td>${p ? `${fecha(p.fecha_pago)}<span class="sec">por ${esc(p.registrado_por || '—')}</span>` : '<span class="sec">—</span>'}</td>
+    <td>${p ? celdaComprobante(p) : '<span class="sec">—</span>'}</td>
+    <td>${p ? `<button class="boton chico peligro" type="button" data-anular="${p.id}">Anular</button>`
+      : `<button class="boton chico" type="button" data-pagar="${g.entidad_id}">Registrar pago</button>`}</td>`}
+  </tr>`;
+  const pendientesMarcables = g.detalle.filter((x) => !x.pago && !x.sin_beneficiario).length;
+  const detalle = judicial ? `
+  <tr class="detalle-pago" data-detalle="${g.entidad_id}"><td colspan="9">
+    <table class="mini"><thead><tr>
+      <th class="marca">${pendientesMarcables ? '<input type="checkbox" data-marcar-todas title="Marcar todas las que se pueden depositar" aria-label="Marcar todas">' : ''}</th>
+      <th>Colaborador</th><th>Mes</th><th>Beneficiario</th><th>Banco / medio</th><th>Cuenta</th><th class="num">Importe</th><th>Estado</th></tr></thead>
+    <tbody>${g.detalle.map((x) => `<tr class="${x.pago ? 'pagado' : x.sin_beneficiario ? 'bloqueado' : ''}">
+      <td class="marca">${!x.pago && !x.sin_beneficiario ? `<input type="checkbox" data-item="${x.retencion_id}|${esc(x.mes_origen)}" data-importe="${x.importe}" aria-label="Pagar a ${esc(x.colaborador)}">` : ''}</td>
+      <td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td>
+      <td>${esc(mesCorto(x.mes_origen))}${x.de_otro_mes ? `<span class="etiqueta-tipo de-antes">de ${esc(nombreMes(x.mes_origen).split(' ')[0].toLowerCase())}</span>` : ''}</td>
+      <td>${x.sin_beneficiario ? '<span class="etiqueta-tipo a-definir">A completar</span>' : `${esc(x.beneficiario)}${x.beneficiario_doc ? `<span class="sec">Doc. ${esc(x.beneficiario_doc)}</span>` : ''}`}</td>
+      <td>${esc(x.banco)}</td><td>${esc(x.cuenta)}</td>
+      <td class="num">${moneda(x.importe)}</td>
+      <td>${x.pago ? `<span class="etiqueta-tipo completa">Pagado</span><span class="sec">Transf. ${esc(x.pago.transferencia)} · ${fecha(x.pago.fecha_pago)}${x.pago.mes !== mes ? ` (en ${esc(nombreMes(x.pago.mes).toLowerCase())})` : ''}</span>`
+        : x.sin_beneficiario ? '<span class="sec aviso-cambio">No se puede depositar: falta el beneficiario. Completalo en Retenciones recibidas.</span>' : '<span class="sec">Sin pagar</span>'}</td>
+    </tr>`).join('')}</tbody></table>
+    ${pendientesMarcables ? `<div class="barra-seleccion"><span class="suma-seleccion"></span><button class="boton" type="button" data-pagar-sel disabled>Registrar pago de las marcadas</button></div>` : ''}
+    ${g.pagos.length ? `<h3 class="pagos-titulo">Pagos registrados este mes</h3><table class="mini"><thead><tr><th>N° de transferencia</th><th>Fecha</th><th class="num">Personas</th><th class="num">Importe</th><th>Comprobante</th><th></th></tr></thead>
+      <tbody>${g.pagos.map((p) => `<tr><td>${esc(p.transferencia)}</td><td>${fecha(p.fecha_pago)}<span class="sec">por ${esc(p.registrado_por || '—')}</span></td>
+        <td class="num">${(p.items || []).length || p.retenciones || ''}</td><td class="num">${moneda(p.importe)}</td><td>${celdaComprobante(p)}</td>
+        <td><button class="boton chico peligro" type="button" data-anular="${p.id}">Anular</button></td></tr>`).join('')}</tbody></table>` : ''}
+  </td></tr>` : `
+  <tr class="detalle-pago" data-detalle="${g.entidad_id}" hidden><td colspan="9">
+    <table class="mini"><thead><tr><th>Colaborador</th><th>Período</th><th class="num">Importe</th></tr></thead>
+    <tbody>${g.detalle.map((x) => `<tr><td>${esc(x.colaborador)}<span class="sec">CI ${esc(cedula(x.cedula))}</span></td><td>${esc(mesCorto(x.periodo))}</td>
+      <td class="num">${moneda(x.importe)}</td></tr>`).join('')}</tbody></table>
+  </td></tr>`;
+  return principal + detalle;
+}
+
+function dialogoPago(mes, g, { pago = null, items = null, importe = null } = {}) {
+  const soloComprobante = Boolean(pago);
+  const monto = soloComprobante ? pago.importe : importe ?? g.importe;
   const dlg = document.createElement('dialog');
   dlg.className = 'dialogo';
   dlg.innerHTML = `<form id="pg-form" class="formulario" novalidate>
     <h2>${soloComprobante ? 'Adjuntar comprobante' : 'Registrar pago'}</h2>
-    <p><strong>${esc(g.entidad)}</strong> · ${esc(nombreMes(mes).toLowerCase())} · ${moneda(soloComprobante ? g.pago.importe : g.importe)}</p>
+    <p><strong>${esc(g.entidad)}</strong> · ${esc(nombreMes(mes).toLowerCase())} · ${moneda(monto)}${items ? ` · ${items.length} ${items.length === 1 ? 'persona' : 'personas'}` : ''}</p>
     ${soloComprobante ? '' : `
     <div class="campo"><label for="pg-transf">N° de transferencia <span class="obligatorio">*</span></label><input id="pg-transf" maxlength="60" autocomplete="off"></div>
     <div class="campo"><label for="pg-fecha">Fecha de pago <span class="obligatorio">*</span></label><input type="date" id="pg-fecha" value="${hoy()}"></div>`}
@@ -1424,11 +1483,11 @@ function dialogoPago(mes, g, { soloComprobante = false } = {}) {
       const archivo = await archivoComprobante(form.querySelector('#pg-archivo'));
       if (soloComprobante) {
         if (!archivo) throw errorLocal('Elegí el archivo del comprobante.');
-        await api(`/api/pagos/${g.pago.id}/comprobante`, { metodo: 'POST', cuerpo: { archivo } });
+        await api(`/api/pagos/${pago.id}/comprobante`, { metodo: 'POST', cuerpo: { archivo } });
       } else {
         const transferencia = form.querySelector('#pg-transf').value.trim();
         if (!transferencia) throw errorLocal('Ingresá el número de transferencia.');
-        await api('/api/pagos', { metodo: 'POST', cuerpo: { mes, entidad_id: g.entidad_id, transferencia, fecha_pago: form.querySelector('#pg-fecha').value, archivo } });
+        await api('/api/pagos', { metodo: 'POST', cuerpo: { mes, entidad_id: g.entidad_id, transferencia, fecha_pago: form.querySelector('#pg-fecha').value, archivo, ...(items ? { items } : {}) } });
       }
       dlg.close();
       aviso(soloComprobante ? 'Comprobante adjuntado.' : `Pago a ${g.entidad} registrado.`);

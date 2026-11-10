@@ -405,3 +405,14 @@ td .enlace { display: block; margin-top: 4px; font-size: .82rem; }
 table.mini { width: 100%; font-size: .9rem; }
 table.mini th { text-transform: none; font-size: .82rem; }
 .encabezado > .campo { min-width: 170px; }
+.etiqueta-tipo.parcial { background: #fff1d6; color: #8a5a00; }
+.etiqueta-tipo.de-antes { background: #e8eefc; color: #2c4a8a; margin-left: 6px; }
+:root[data-tema="oscuro"] .etiqueta-tipo.parcial { background: #3a2f12; color: #f3cf7a; }
+:root[data-tema="oscuro"] .etiqueta-tipo.de-antes { background: #1f2a44; color: #a9c0f0; }
+table.mini tr.pagado td { opacity: .75; }
+table.mini tr.bloqueado td { color: var(--texto-suave, #777); }
+table.mini .marca { width: 34px; text-align: center; }
+table.mini input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+.barra-seleccion { display: flex; gap: 14px; align-items: center; justify-content: flex-end; flex-wrap: wrap; padding: 12px 4px 4px; }
+.pagos-titulo { margin: 18px 0 6px; font-size: .95rem; }
+table.mini td.marca, table.mini th.marca { background: inherit; position: static; box-shadow: none; }
