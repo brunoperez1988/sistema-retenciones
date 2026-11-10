@@ -847,6 +847,8 @@
       .filter((d) => !TIPOS_DESCUENTO.includes(f.tipo_descuento) || d.tipo === f.tipo_descuento)
       .filter((d) => !f.empresa_id || d.empresa_id === Number(f.empresa_id))
       .filter((d) => !f.retencion_id || d.retencion_id === Number(f.retencion_id))
+      .filter((d) => !f.tipo_retencion || (rets.get(d.retencion_id) || {}).tipo === f.tipo_retencion)
+      .filter((d) => !f.entidad_id || (rets.get(d.retencion_id) || {}).entidad_id === Number(f.entidad_id))
       .map((d) => {
         const r = rets.get(d.retencion_id);
         return {

@@ -1128,7 +1128,7 @@ function conectarFiltros(mapa, destino, recargar) {
 
 // ── Descuentos ──
 
-const filtrosDesc = { mes: '', tipo_descuento: '', empresa_id: '', q: '' };
+const filtrosDesc = { mes: '', tipo_retencion: '', entidad_id: '', tipo_descuento: '', empresa_id: '', q: '' };
 
 async function vistaDescuentos(params, vigente) {
   const [cat, rets] = await Promise.all([api('/api/catalogos'), api('/api/retenciones')]);
@@ -1176,7 +1176,9 @@ async function vistaDescuentos(params, vigente) {
         <h2>Histórico de descuentos</h2>
         <div class="filtros">
           <div class="campo"><label for="h-mes">Mes del descuento</label><input type="month" id="h-mes" value="${esc(filtrosDesc.mes)}"></div>
-          <div class="campo"><label for="h-tipo">Tipo</label><select id="h-tipo"><option value="">Todos</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
+          <div class="campo"><label for="h-tipo-ret">Tipo de retención</label><select id="h-tipo-ret"><option value="">Todas</option>${Object.entries(tipoTxt).map(([v, t]) => `<option value="${v}">${esc(t)}</option>`).join('')}</select></div>
+          <div class="campo"><label for="h-entidad">Entidad</label><select id="h-entidad"><option value="">Todas</option>${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${esc(e.tipo)}">${esc(e.nombre)}</option>`).join('')}</select></div>
+          <div class="campo"><label for="h-tipo">Quincena / tipo</label><select id="h-tipo"><option value="">Todos</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
           <div class="campo"><label for="h-empresa">Empresa</label><select id="h-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo ancho"><label for="h-q">Buscar</label><input id="h-q" type="search" placeholder="Nombre, CI, entidad, concepto" value="${esc(filtrosDesc.q)}"></div>
         </div>
@@ -1185,6 +1187,16 @@ async function vistaDescuentos(params, vigente) {
     </div>`;
 
   document.getElementById('h-tipo').value = filtrosDesc.tipo_descuento;
+  document.getElementById('h-tipo-ret').value = filtrosDesc.tipo_retencion;
+  document.getElementById('h-entidad').value = filtrosDesc.entidad_id;
+  // La lista de entidades muestra solo las del tipo de retención elegido.
+  const selTipoRet = document.getElementById('h-tipo-ret'); const selEnt = document.getElementById('h-entidad');
+  const ajustarEntidades = () => {
+    selEnt.querySelectorAll('option[data-tipo]').forEach((o) => { o.hidden = Boolean(selTipoRet.value) && o.dataset.tipo !== selTipoRet.value; });
+    if (selEnt.selectedOptions[0] && selEnt.selectedOptions[0].hidden) { selEnt.value = ''; filtrosDesc.entidad_id = ''; }
+  };
+  selTipoRet.addEventListener('change', ajustarEntidades, true);
+  ajustarEntidades();
   document.getElementById('h-empresa').value = filtrosDesc.empresa_id;
 
   const form = document.getElementById('form-desc');
@@ -1289,7 +1301,7 @@ async function vistaDescuentos(params, vigente) {
     llenarRetenciones(elegida);
   }
 
-  conectarFiltros({ mes: 'h-mes', tipo_descuento: 'h-tipo', empresa_id: 'h-empresa', q: 'h-q' }, filtrosDesc, recargarLista);
+  conectarFiltros({ mes: 'h-mes', tipo_retencion: 'h-tipo-ret', entidad_id: 'h-entidad', tipo_descuento: 'h-tipo', empresa_id: 'h-empresa', q: 'h-q' }, filtrosDesc, recargarLista);
   recargarLista();
 
   manejarEnvio(form, {
