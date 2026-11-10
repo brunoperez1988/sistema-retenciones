@@ -337,7 +337,7 @@ async function vistaPanel(_params, vigente) {
         </div>
         ${d.cierre
           ? '<button class="boton secundario" type="button" id="reabrir-mes">Reabrir mes</button>'
-          : '<button class="boton ambar" type="button" id="cerrar-mes">Cerrar mes</button>'}
+          : d.no_habilitado ? '' : '<button class="boton ambar" type="button" id="cerrar-mes">Cerrar mes</button>'}
       </div>
     </section>
 
