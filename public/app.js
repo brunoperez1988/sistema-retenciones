@@ -209,9 +209,15 @@ const vistas = {
   ...(LOCAL ? { respaldo: vistaRespaldo } : {}),
 };
 
-// ── Modo claro / oscuro (se recuerda en este navegador) ──
+// ── Tema: claro, rosado u oscuro (se recuerda en este navegador) ──
+const TEMAS = ['claro', 'rosado', 'oscuro'];
+const SIGUIENTE_TEMA = {
+  claro: { icono: '✿', titulo: 'Pasar al tema rosado' },
+  rosado: { icono: '☾', titulo: 'Pasar a modo oscuro' },
+  oscuro: { icono: '☀', titulo: 'Pasar a modo claro' },
+};
 function leerTema() {
-  try { const t = localStorage.getItem('ret.tema'); if (t === 'oscuro' || t === 'claro') return t; } catch { /* sin almacenamiento */ }
+  try { const t = localStorage.getItem('ret.tema'); if (TEMAS.includes(t)) return t; } catch { /* sin almacenamiento */ }
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro';
 }
 const botonTema = document.createElement('button');
@@ -220,12 +226,13 @@ botonTema.id = 'boton-tema';
 botonTema.className = 'boton-tema';
 function aplicarTema(t) {
   document.documentElement.dataset.tema = t;
-  botonTema.textContent = t === 'oscuro' ? '☀' : '☾';
-  botonTema.title = t === 'oscuro' ? 'Pasar a modo claro' : 'Pasar a modo oscuro';
+  botonTema.textContent = SIGUIENTE_TEMA[t].icono;
+  botonTema.title = SIGUIENTE_TEMA[t].titulo;
   botonTema.setAttribute('aria-label', botonTema.title);
 }
 botonTema.addEventListener('click', () => {
-  const t = document.documentElement.dataset.tema === 'oscuro' ? 'claro' : 'oscuro';
+  const actual = TEMAS.indexOf(document.documentElement.dataset.tema);
+  const t = TEMAS[(actual + 1) % TEMAS.length];
   try { localStorage.setItem('ret.tema', t); } catch { /* sin almacenamiento */ }
   aplicarTema(t);
 });

@@ -511,6 +511,35 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
 #lista-desc [data-filtrar-ret] { text-align: left; }
 .enlace-izq { text-align: left; }
 
+/* ── Tema rosado: rosa con el lima de QGLH (se elige con el botón de tema) ── */
+:root[data-tema="rosado"] {
+  --verde: #c43c74; --verde-oscuro: #9a2557; --verde-profundo: #2b2c2e; --verde-claro: #fbe7f0; --verde-suave: #f3c6d9;
+  --lima: #9abb0d; --lima-claro: #eef5d3; --grafito: #2b2c2e; --grafito-2: #46484c;
+  --fondo: #f6f0f2; --cabecera: #ede5e8; --pista: #ebe1e6; --borde: #eadde3; --fila-hover: #f7eef2; --subtotal: #f8eef3; --borde-campo: #d8c6cf;
+}
+:root[data-tema="rosado"] .barra { background: linear-gradient(180deg, #f6f0f2, #ede5e8); border-bottom-color: #9abb0d; }
+:root[data-tema="rosado"] .estado-nube { border-color: #cfe08c; }
+:root[data-tema="rosado"] .boton.ambar { background: #9abb0d; color: #fff; border-color: #9abb0d; }
+:root[data-tema="rosado"] .boton.ambar:hover { background: #9a2557; }
+:root[data-tema="rosado"] .etiqueta-tipo.mensual, :root[data-tema="rosado"] .etiqueta-tipo.abierto { background: #eef5d3; color: #4b6409; }
+:root[data-tema="rosado"] .panel-cabecera { background: linear-gradient(120deg, #2b2c2e 0%, #46484c 60%, #9a2557 100%); }
+:root[data-tema="rosado"] .panel-cabecera::after { background: #9abb0d55; }
+:root[data-tema="rosado"] .indicadores .indicador.ordenes { background: linear-gradient(135deg, #2b2c2e, #4a4c50); }
+:root[data-tema="rosado"] .indicadores .indicador.pactado { background: linear-gradient(135deg, #9a2557, #c43c74); }
+:root[data-tema="rosado"] .indicadores .indicador.retenido { background: linear-gradient(135deg, #6f8f0e, #9abb0d); }
+:root[data-tema="rosado"] .indicadores .indicador.disponible { background: linear-gradient(135deg, #d6588c, #f29abd); }
+:root[data-tema="rosado"] .orden.judicial { --borde-orden: #2b2c2e; --tinte: #efe9ec; }
+:root[data-tema="rosado"] .orden.comercial { --borde-orden: #c43c74; --tinte: #fbe7f0; }
+:root[data-tema="rosado"] .orden.otros { --borde-orden: #6f8f0e; --tinte: #eef5d3; }
+:root[data-tema="rosado"] .orden.judicial .barra-avance span { background: linear-gradient(90deg, #2b2c2e, #63666a); }
+:root[data-tema="rosado"] .orden.comercial .barra-avance span { background: linear-gradient(90deg, #c43c74, #ec7aa9); }
+:root[data-tema="rosado"] .orden.otros .barra-avance span { background: linear-gradient(90deg, #6f8f0e, #9abb0d); }
+:root[data-tema="rosado"] .barras .comercial { --c-barra: #c43c74; } :root[data-tema="rosado"] .barras .judicial { --c-barra: #2b2c2e; } :root[data-tema="rosado"] .barras .otros { --c-barra: #6f8f0e; }
+:root[data-tema="rosado"] .dona { background: conic-gradient(var(--verde) 0 calc(var(--pct-v) * 1%), #ec7aa9 calc(var(--pct-v) * 1%) 100%); }
+:root[data-tema="rosado"] .ley i.falta { background: #ec7aa9; }
+:root[data-tema="rosado"] .falla-en-linea { background: #fbe7f0; border-color: #f3c6d9; color: #9a2557; }
+
+
 </style>
 </head>
 <body>
@@ -2796,9 +2825,15 @@ const vistas = {
   ...(LOCAL ? { respaldo: vistaRespaldo } : {}),
 };
 
-// ── Modo claro / oscuro (se recuerda en este navegador) ──
+// ── Tema: claro, rosado u oscuro (se recuerda en este navegador) ──
+const TEMAS = ['claro', 'rosado', 'oscuro'];
+const SIGUIENTE_TEMA = {
+  claro: { icono: '✿', titulo: 'Pasar al tema rosado' },
+  rosado: { icono: '☾', titulo: 'Pasar a modo oscuro' },
+  oscuro: { icono: '☀', titulo: 'Pasar a modo claro' },
+};
 function leerTema() {
-  try { const t = localStorage.getItem('ret.tema'); if (t === 'oscuro' || t === 'claro') return t; } catch { /* sin almacenamiento */ }
+  try { const t = localStorage.getItem('ret.tema'); if (TEMAS.includes(t)) return t; } catch { /* sin almacenamiento */ }
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'oscuro' : 'claro';
 }
 const botonTema = document.createElement('button');
@@ -2807,12 +2842,13 @@ botonTema.id = 'boton-tema';
 botonTema.className = 'boton-tema';
 function aplicarTema(t) {
   document.documentElement.dataset.tema = t;
-  botonTema.textContent = t === 'oscuro' ? '☀' : '☾';
-  botonTema.title = t === 'oscuro' ? 'Pasar a modo claro' : 'Pasar a modo oscuro';
+  botonTema.textContent = SIGUIENTE_TEMA[t].icono;
+  botonTema.title = SIGUIENTE_TEMA[t].titulo;
   botonTema.setAttribute('aria-label', botonTema.title);
 }
 botonTema.addEventListener('click', () => {
-  const t = document.documentElement.dataset.tema === 'oscuro' ? 'claro' : 'oscuro';
+  const actual = TEMAS.indexOf(document.documentElement.dataset.tema);
+  const t = TEMAS[(actual + 1) % TEMAS.length];
   try { localStorage.setItem('ret.tema', t); } catch { /* sin almacenamiento */ }
   aplicarTema(t);
 });
