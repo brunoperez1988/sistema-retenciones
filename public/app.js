@@ -1539,12 +1539,15 @@ function leerArchivoBase64(archivo) {
     lector.readAsDataURL(archivo);
   });
 }
-async function archivoComprobante(input) {
-  const a = input.files && input.files[0];
-  if (!a) return null;
-  if (a.size > 10 * 1024 * 1024) throw errorLocal('El comprobante es muy grande: el máximo es 10 MB.');
-  return { nombre: a.name, tipo: a.type, base64: await leerArchivoBase64(a) };
+async function archivosComprobante(input) {
+  const lista = [...(input.files || [])];
+  if (lista.length > 10) throw errorLocal('Podés adjuntar hasta 10 comprobantes por vez.');
+  const grande = lista.find((a) => a.size > 10 * 1024 * 1024);
+  if (grande) throw errorLocal(`El comprobante ${grande.name} es muy grande: el máximo es 10 MB por archivo.`);
+  return Promise.all(lista.map(async (a) => ({ nombre: a.name, tipo: a.type, base64: await leerArchivoBase64(a) })));
 }
+// Los pagos viejos tenían un solo comprobante en "comprobante".
+const comprobantesDe = (p) => p.comprobantes || (p.comprobante ? [p.comprobante] : []);
 
 async function vistaPagos(_params, vigente) {
   const d = await api(`/api/pagos${mesPagos ? `?periodo=${mesPagos}` : ''}`);
@@ -1611,7 +1614,7 @@ async function vistaPagos(_params, vigente) {
   $app.querySelectorAll('[data-ver-comp]').forEach((b) => b.addEventListener('click', async () => {
     const ventana = window.open('', '_blank');
     try {
-      const c = await api(`/api/pagos/${b.dataset.verComp}/comprobante`);
+      const c = await api(`/api/pagos/${b.dataset.verComp}/comprobante/${b.dataset.n || 0}`);
       const url = URL.createObjectURL(c.blob);
       if (ventana) ventana.location.href = url;
       else { const a = document.createElement('a'); a.href = url; a.download = c.nombre; a.click(); }
@@ -1665,8 +1668,10 @@ function dialogoMiDinero(mes, marcas) {
 }
 
 function celdaComprobante(p) {
-  return p.comprobante ? `<button class="enlace" type="button" data-ver-comp="${p.id}" title="${esc(p.comprobante.nombre)}">Ver comprobante</button>`
-    : `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>`;
+  const lista = comprobantesDe(p);
+  if (!lista.length) return `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>`;
+  const enlaces = lista.map((c, i) => `<button class="enlace" type="button" data-ver-comp="${p.id}" data-n="${i}" title="${esc(c.nombre)}">${lista.length === 1 ? 'Ver comprobante' : `Comprobante ${i + 1}`}</button>`);
+  return `<div class="comprobantes">${enlaces.join('')}<button class="enlace mas-comp" type="button" data-adjuntar="${p.id}" title="Adjuntar otro comprobante a este pago">+ Agregar otro</button></div>`;
 }
 
 function filaPago(g, mes) {
@@ -1730,14 +1735,16 @@ function dialogoPago(mes, g, { pago = null, items = null, importe = null } = {})
   const dlg = document.createElement('dialog');
   dlg.className = 'dialogo';
   dlg.innerHTML = `<form id="pg-form" class="formulario" novalidate>
-    <h2>${soloComprobante ? 'Adjuntar comprobante' : 'Registrar pago'}</h2>
+    <h2>${soloComprobante ? 'Adjuntar comprobantes' : 'Registrar pago'}</h2>
+    ${soloComprobante && comprobantesDe(pago).length ? `<p class="sec">Ya tiene ${comprobantesDe(pago).length === 1 ? '1 comprobante' : `${comprobantesDe(pago).length} comprobantes`}. Los que elijas se suman, no se reemplaza ninguno.</p>` : ''}
     <p><strong>${esc(g.entidad)}</strong> · ${esc(nombreMes(mes).toLowerCase())} · ${moneda(monto)}${items ? ` · ${items.length} ${items.length === 1 ? 'persona' : 'personas'}` : ''}</p>
     ${soloComprobante ? '' : `
     <div class="campo"><label for="pg-transf">N° de transferencia <span class="obligatorio">*</span></label><input id="pg-transf" maxlength="60" autocomplete="off"></div>
     <div class="campo"><label for="pg-fecha">Fecha de pago <span class="obligatorio">*</span></label><input type="date" id="pg-fecha" value="${hoy()}"></div>`}
-    <div class="campo"><label for="pg-archivo">Comprobante${soloComprobante ? ' <span class="obligatorio">*</span>' : ' (opcional)'}</label>
-      <input type="file" id="pg-archivo" accept="application/pdf,image/png,image/jpeg,image/webp">
-      <span class="ayuda">PDF o foto, hasta 10 MB. Se guarda en el repositorio privado de GitHub.</span></div>
+    <div class="campo"><label for="pg-archivo">Comprobantes${soloComprobante ? ' <span class="obligatorio">*</span>' : ' (opcional)'}</label>
+      <input type="file" id="pg-archivo" accept="application/pdf,image/png,image/jpeg,image/webp" multiple>
+      <span class="ayuda">Podés elegir varios archivos a la vez (PDF o foto, hasta 10 MB cada uno). Se guardan en el repositorio privado de GitHub.</span>
+      <ul class="lista-archivos" id="pg-lista" hidden></ul></div>
     <p class="mensaje error" id="pg-error" role="alert" hidden></p>
     <div class="acciones"><button class="boton" type="submit" id="pg-guardar">Guardar</button><button class="boton secundario" type="button" id="pg-cancelar">Cancelar</button></div>
   </form>`;
@@ -1746,23 +1753,29 @@ function dialogoPago(mes, g, { pago = null, items = null, importe = null } = {})
   const error = dlg.querySelector('#pg-error');
   dlg.querySelector('#pg-cancelar').addEventListener('click', () => dlg.close());
   dlg.addEventListener('close', () => dlg.remove());
+  const inputArchivo = form.querySelector('#pg-archivo'); const listaArch = form.querySelector('#pg-lista');
+  inputArchivo.addEventListener('change', () => {
+    const fs = [...inputArchivo.files];
+    listaArch.hidden = fs.length < 2;
+    listaArch.innerHTML = fs.map((f) => `<li>${esc(f.name)}</li>`).join('');
+  });
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     error.hidden = true;
     const boton = form.querySelector('#pg-guardar');
     boton.disabled = true; boton.textContent = 'Guardando…';
     try {
-      const archivo = await archivoComprobante(form.querySelector('#pg-archivo'));
+      const archivos = await archivosComprobante(inputArchivo);
       if (soloComprobante) {
-        if (!archivo) throw errorLocal('Elegí el archivo del comprobante.');
-        await api(`/api/pagos/${pago.id}/comprobante`, { metodo: 'POST', cuerpo: { archivo } });
+        if (!archivos.length) throw errorLocal('Elegí el archivo del comprobante.');
+        await api(`/api/pagos/${pago.id}/comprobante`, { metodo: 'POST', cuerpo: { archivos } });
       } else {
         const transferencia = form.querySelector('#pg-transf').value.trim();
         if (!transferencia) throw errorLocal('Ingresá el número de transferencia.');
-        await api('/api/pagos', { metodo: 'POST', cuerpo: { mes, entidad_id: g.entidad_id, transferencia, fecha_pago: form.querySelector('#pg-fecha').value, archivo, ...(items ? { items } : {}) } });
+        await api('/api/pagos', { metodo: 'POST', cuerpo: { mes, entidad_id: g.entidad_id, transferencia, fecha_pago: form.querySelector('#pg-fecha').value, archivos, ...(items ? { items } : {}) } });
       }
       dlg.close();
-      aviso(soloComprobante ? 'Comprobante adjuntado.' : `Pago a ${g.entidad} registrado.`);
+      aviso(soloComprobante ? (archivos.length === 1 ? 'Comprobante adjuntado.' : `${archivos.length} comprobantes adjuntados.`) : `Pago a ${g.entidad} registrado.`);
       navegar();
     } catch (e) {
       error.textContent = e.validacion || e.local ? e.message : MENSAJE_FALLA; error.hidden = false;

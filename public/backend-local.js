@@ -1004,6 +1004,20 @@
     return String(n || 'comprobante').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.\-]+/g, '-').replace(/-+/g, '-').slice(-80) || 'comprobante';
   }
 
+  // Un pago puede tener varios comprobantes. Los pagos viejos tenían uno solo en "comprobante".
+  const comprobantesDe = (p) => p.comprobantes || (p.comprobante ? [p.comprobante] : []);
+  const MAX_COMPROBANTES_POR_VEZ = 10;
+  function archivosDe(datos) {
+    const lista = Array.isArray(datos.archivos) ? datos.archivos.filter(Boolean) : datos.archivo ? [datos.archivo] : [];
+    if (lista.length > MAX_COMPROBANTES_POR_VEZ) throw new ErrorValidacion(`Podés adjuntar hasta ${MAX_COMPROBANTES_POR_VEZ} comprobantes por vez.`);
+    return lista;
+  }
+  async function subirComprobantes(mes, archivos, etiqueta) {
+    const subidos = [];
+    for (const a of archivos) subidos.push(await subirComprobante(mes, a, etiqueta));
+    return subidos;
+  }
+
   async function subirComprobante(mes, archivo, etiqueta) {
     const c = configNube();
     if (!c) throw new ErrorValidacion('Para adjuntar comprobantes tenés que tener conectado GitHub (en Respaldo).');
@@ -1047,10 +1061,11 @@
     const importeTotal = items.reduce((a, x) => a + x.importe, 0);
     const transferencia = texto(datos.transferencia, 'número de transferencia', { max: 60 });
     const fecha_pago = fecha(datos.fecha_pago);
-    const comprobante = datos.archivo ? await subirComprobante(mes, datos.archivo, `${g.entidad} · ${nombreMesTxt(mes)}`) : null;
+    const archivos = archivosDe(datos);
+    const comprobantes = await subirComprobantes(mes, archivos, `${g.entidad} · ${nombreMesTxt(mes)}`);
     return modificar((e) => {
       const id = e.sig++;
-      e.pagos = [...(e.pagos || []), { id, mes, entidad_id, importe: importeTotal, retenciones: items.length, items, transferencia, fecha_pago, comprobante,
+      e.pagos = [...(e.pagos || []), { id, mes, entidad_id, importe: importeTotal, retenciones: items.length, items, transferencia, fecha_pago, comprobantes,
         registrado_por: usuarioActual || '', registrado_en: ahora() }];
       return { id };
     });
@@ -1060,9 +1075,15 @@
     const n = Number(id);
     const p = (estado.pagos || []).find((x) => x.id === n);
     if (!p) throw new ErrorValidacion('El pago no existe.', 404);
-    if (!datos.archivo) throw new ErrorValidacion('Elegí el archivo del comprobante.');
-    const comprobante = await subirComprobante(p.mes, datos.archivo, `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}`);
-    return modificar((e) => { e.pagos.find((x) => x.id === n).comprobante = comprobante; return { ok: true }; });
+    const archivos = archivosDe(datos);
+    if (!archivos.length) throw new ErrorValidacion('Elegí el archivo del comprobante.');
+    const nuevos = await subirComprobantes(p.mes, archivos, `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}`);
+    // Se suman a los que ya tenía: no se reemplaza ninguno.
+    return modificar((e) => {
+      const x = e.pagos.find((y) => y.id === n);
+      x.comprobantes = [...comprobantesDe(x), ...nuevos]; delete x.comprobante;
+      return { ok: true, agregados: nuevos.length };
+    });
   }
 
   function anularPago(id) {
@@ -1072,16 +1093,17 @@
     return modificar((e) => { e.pagos = e.pagos.filter((x) => x.id !== n); return { ok: true }; });
   }
 
-  async function verComprobante(id) {
+  async function verComprobante(id, n = 0) {
     const p = (estado.pagos || []).find((x) => x.id === Number(id));
-    if (!p || !p.comprobante) throw new ErrorValidacion('Ese pago no tiene comprobante.', 404);
+    const comp = p && comprobantesDe(p)[Number(n)];
+    if (!comp) throw new ErrorValidacion('Ese pago no tiene ese comprobante.', 404);
     const c = configNube();
     if (!c) throw new ErrorValidacion('Para ver el comprobante tenés que tener conectado GitHub (en Respaldo).');
     let res;
-    try { res = await github(c, 'GET', `/repos/${c.repo}/contents/${p.comprobante.ruta.split('/').map(encodeURIComponent).join('/')}`, null, 'application/vnd.github.raw'); }
+    try { res = await github(c, 'GET', `/repos/${c.repo}/contents/${comp.ruta.split('/').map(encodeURIComponent).join('/')}`, null, 'application/vnd.github.raw'); }
     catch (err) { throw new ErrorValidacion(`No se pudo traer el comprobante: ${err.message}`); }
     if (!res.ok) throw new ErrorValidacion(`No se pudo traer el comprobante (GitHub respondió ${res.status}).`);
-    return { nombre: p.comprobante.nombre, tipo: p.comprobante.tipo, blob: new Blob([await res.arrayBuffer()], { type: p.comprobante.tipo }) };
+    return { nombre: comp.nombre, tipo: comp.tipo, blob: new Blob([await res.arrayBuffer()], { type: comp.tipo }) };
   }
 
   // ── Cierre de mes ──
@@ -1177,9 +1199,9 @@
         return { accion: 'Importación de archivo', detalle: (res) => [res.retenciones ? `${res.retenciones} retenciones` : '', res.colaboradores ? `${res.colaboradores} colaboradores` : '', res.empresas ? `${res.empresas} empresas` : ''].filter(Boolean).join(', ') || 'Sin datos nuevos' };
       }
       if (ruta === '/api/pagos') {
-        return { accion: 'Pago registrado', detalle: (res, e) => { const p = e.pagos.find((x) => x.id === res.id); return `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia} · ${fechaTxt(p.fecha_pago)}${p.comprobante ? ' · con comprobante' : ''}`; } };
+        return { accion: 'Pago registrado', detalle: (res, e) => { const p = e.pagos.find((x) => x.id === res.id); return `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia} · ${fechaTxt(p.fecha_pago)}${(() => { const k = comprobantesDe(p).length; return k ? ` · con ${k === 1 ? 'comprobante' : `${k} comprobantes`}` : ''; })()}`; } };
       }
-      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Comprobante adjuntado', detalle: p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}` : '' }; }
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Comprobante adjuntado', detalle: (res) => (p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}${res && res.agregados > 1 ? ` · ${res.agregados} archivos` : ''}` : '') }; }
       if (ruta === '/api/cierres') return { accion: 'Mes cerrado', detalle: c.mes ? nombreMesTxt(periodo(c.mes)) : '' };
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) { const r = ret(m[1]); return { accion: 'Importe definido', detalle: () => `${descRet(r)} · ${pesosTxt(importe(c.importe_total))}` }; }
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/editar$/))) {
@@ -1979,7 +2001,7 @@
       if (ruta === '/api/datos') return infoDatos();
       if (ruta === '/api/historial') return listarHistorial(f);
       if (ruta === '/api/pagos') return listarPagos(f);
-      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) return verComprobante(m[1]);
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante(?:\/(\d+))?$/))) return verComprobante(m[1], m[2] || 0);
       if (ruta === '/api/constancia') return constancia(f);
     }
     registroPendiente = metodo === 'GET' ? null : (() => { try { return describir(metodo, ruta, cuerpo || {}); } catch { return null; } })();
