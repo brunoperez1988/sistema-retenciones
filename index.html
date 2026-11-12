@@ -2776,7 +2776,6 @@ function errorLocal(mensaje) { const e = new Error(mensaje); e.local = true; ret
 const estado = { mes: mesActual(), mesElegido: false };
 
 // Solapas que solo ve el administrador (cuando hay clave de administrador).
-const SOLO_ADMIN = ['empresas', 'entidades'];
 let permisosActuales = { configurado: false, admin: true };
 
 const vistas = {
@@ -2883,8 +2882,7 @@ async function navegar() {
   let seccion = vistas[ruta] ? ruta : 'panel';
   if (LOCAL) {
     permisosActuales = await window.backendLocal.permisos().catch(() => ({ configurado: false, admin: true }));
-    document.querySelectorAll('.menu a[data-seccion="empresas"], .menu a[data-seccion="entidades"]').forEach((a) => { a.hidden = !permisosActuales.admin; });
-    if (!permisosActuales.admin && SOLO_ADMIN.includes(seccion)) seccion = 'solo-admin';
+    // Empresas y Entidades las ven todos; agregar o borrar sigue siendo solo del administrador.
   }
   document.querySelectorAll('.menu a').forEach((a) => a.classList.toggle('activo', a.dataset.seccion === seccion));
   // Las animaciones de entrada solo se ven al llegar a una pantalla, no cuando se refresca por cambios de otra persona.
@@ -4626,20 +4624,26 @@ function tablaAbonar(rep) {
 
 // ── Altas simples: empresas, colaboradores y entidades ──
 
-async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, exito, borrable }, vigente) {
+async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, exito, borrable, soloAdmin }, vigente) {
+  const sinPermiso = Boolean(soloAdmin) && LOCAL && !permisosActuales.admin;
+  if (sinPermiso) borrable = null;
   const filas = await api(ruta);
   if (!vigente()) return;
   $app.innerHTML = `
     <div class="encabezado"><div><h1>${titulo}</h1><p>${descripcion}</p></div></div>
     <div class="columnas">
-      <section class="tarjeta">
+      ${sinPermiso ? `<section class="tarjeta">
+        <h2>Solo lectura</h2>
+        <p>Podés ver el listado, pero solo el administrador puede agregar o borrar.</p>
+        <p class="sec">Si sos el administrador, ingresá tu clave en <a href="#/respaldo">Respaldo → Administrador</a>.</p>
+      </section>` : `<section class="tarjeta">
         <h2>Nuevo registro</h2>
         <form class="formulario" id="form-alta" novalidate>
           ${campos.map((c) => c.html).join('')}
           <div class="zona-mensaje"></div>
           <div class="acciones"><button class="boton" type="submit">Guardar</button></div>
         </form>
-      </section>
+      </section>`}
       <section class="tarjeta"><h2>Listado</h2><div id="lista-alta"></div></section>
     </div>`;
 
@@ -4658,6 +4662,7 @@ async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, e
     }));
   };
   pintar(filas);
+  if (sinPermiso) return;
 
   const form = document.getElementById('form-alta');
   manejarEnvio(form, {
@@ -4684,6 +4689,7 @@ function vistaEmpresas(_p, vigente) {
   titulo: 'Empresas',
   descripcion: 'Empresas del grupo donde se retiene a los colaboradores.',
   ruta: '/api/empresas',
+  soloAdmin: true,
   borrable: (f) => f.descuentos === 0,
   campos: [{ clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200" placeholder="Ej.: Sucursal Oeste"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() }],
   columnas: [
@@ -4722,6 +4728,7 @@ function vistaEntidades(_p, vigente) {
   titulo: 'Entidades acreedoras',
   descripcion: 'Quienes envían las retenciones: juzgados, cooperativas, comercios, etc.',
   ruta: '/api/entidades',
+  soloAdmin: true,
   campos: [
     { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
     { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>', leer: (f) => f.querySelector('#a-tipo').value },
@@ -5059,7 +5066,7 @@ function seccionAdmin() {
   }
   if (p.admin) {
     return `<section class="tarjeta" id="sec-admin"><h2>Administrador</h2>
-      <div class="mensaje ok" style="margin-bottom:12px">En esta computadora sos el administrador: ves y modificás Empresas y Entidades.</div>
+      <div class="mensaje ok" style="margin-bottom:12px">En esta computadora sos el administrador: podés agregar y borrar empresas y entidades.</div>
       <details><summary><strong>Cambiar la clave de administrador</strong></summary>
       ${form('form-admin-crear', `<div class="fila"><div class="campo"><label for="ad-clave">Clave nueva</label><input id="ad-clave" type="password" autocomplete="new-password"></div>
         <div class="campo"><label for="ad-clave2">Repetí la clave nueva</label><input id="ad-clave2" type="password" autocomplete="new-password"></div></div>`, 'Cambiar clave')}
@@ -5068,7 +5075,7 @@ function seccionAdmin() {
     </section>`;
   }
   return `<section class="tarjeta" id="sec-admin"><h2>Administrador</h2>
-    <p>Empresas y Entidades las administra otra persona. Si sos el administrador, ingresá la clave para habilitarlas en esta computadora.</p>
+    <p>Empresas y Entidades las podés ver, pero agregar o borrar lo hace el administrador. Si sos el administrador, ingresá la clave para habilitarlo en esta computadora.</p>
     ${form('form-admin-ingresar', '<div class="campo"><label for="ad-clave">Clave de administrador</label><input id="ad-clave" type="password" autocomplete="current-password"></div>', 'Ingresar como administrador')}
   </section>`;
 }
@@ -5090,11 +5097,11 @@ function conectarSeccionAdmin() {
     });
   };
   enviar('form-admin-crear', (f) => window.backendLocal.configurarAdmin({ clave: f.querySelector('#ad-clave').value, clave2: f.querySelector('#ad-clave2').value }),
-    'Listo: la clave de administrador quedó guardada. Empresas y Entidades ahora son solo tuyas.');
+    'Listo: la clave de administrador quedó guardada. Ahora solo vos podés agregar o borrar empresas y entidades.');
   enviar('form-admin-ingresar', (f) => window.backendLocal.ingresarAdmin({ clave: f.querySelector('#ad-clave').value }), 'Listo: en esta computadora sos el administrador.');
   const salirAd = document.getElementById('ad-salir');
   if (salirAd) salirAd.addEventListener('click', async () => {
-    if (!(await confirmar({ titulo: '¿Dejar de ser administrador acá?', html: '<p>En esta computadora se van a ocultar Empresas y Entidades. Podés volver a habilitarlas ingresando la clave.</p>', boton: 'Sí, dejar de ser administrador' }))) return;
+    if (!(await confirmar({ titulo: '¿Dejar de ser administrador acá?', html: '<p>En esta computadora vas a poder ver Empresas y Entidades, pero no agregar ni borrar. Podés volver a habilitarlo ingresando la clave.</p>', boton: 'Sí, dejar de ser administrador' }))) return;
     await window.backendLocal.salirAdmin();
     aviso('Listo: en esta computadora ya no sos administrador.');
     navegar();
