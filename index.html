@@ -4242,6 +4242,8 @@ async function vistaPagos(_params, vigente) {
     const g = grupoDe(fila.dataset.detalle);
     if (g.tipo !== 'judicial') return;
     const marcas = [...fila.querySelectorAll('input[data-item]')];
+    // Si ya se le pagó a todos no hay barra de selección: no hay nada que conectar.
+    if (!fila.querySelector('.suma-seleccion')) return;
     const actualizar = () => {
       const elegidos = marcas.filter((m) => m.checked);
       const suma = elegidos.reduce((a, m) => a + Number(m.dataset.importe), 0);
