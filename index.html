@@ -3069,7 +3069,6 @@ async function vistaPanel(_params, vigente) {
     const ok = await confirmar({
       titulo: `¿Cerrar ${nombre}?`,
       html: `<p>Después de cerrarlo, <strong>nadie va a poder cargar, cambiar ni borrar</strong> retenciones o descuentos de ${esc(nombre)}. Si hace falta, se puede reabrir.</p>
-        <p>Se va a descargar el Excel <strong>“A abonar”</strong> del mes.</p>
         ${pendientes.length ? `<div class="mensaje error"><strong>Todavía hay pendientes:</strong><ul>${pendientes.map((a) => `<li>${esc(a.titulo)}: ${a.cantidad}</li>`).join('')}</ul></div>` : '<div class="mensaje ok">No hay pendientes para revisar.</div>'}`,
       boton: `Sí, cerrar ${nombre}`,
     });
@@ -3079,7 +3078,6 @@ async function vistaPanel(_params, vigente) {
       await api('/api/cierres', { metodo: 'POST', cuerpo: { mes: d.periodo } });
       estado.mes = d.periodo; estado.mesElegido = true; // se queda mostrando el mes recién cerrado
       aviso(`Listo: ${nombre} quedó cerrado.`);
-      try { await descargarArchivo(`/api/reportes/abonar?periodo=${d.periodo}&formato=xlsx`, `a-abonar-${d.periodo}.xlsx`); } catch { aviso(`${nombreMes(d.periodo)} quedó cerrado, pero no se pudo descargar el Excel. Bajalo desde Reportes → A abonar.`); }
       navegar();
     } catch (e) { cerrar.disabled = false; aviso(e.validacion ? e.message : MENSAJE_FALLA); }
   });
