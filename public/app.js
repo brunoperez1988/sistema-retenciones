@@ -1623,6 +1623,15 @@ async function vistaPagos(_params, vigente) {
       setTimeout(() => URL.revokeObjectURL(url), 60000);
     } catch (e) { if (ventana) ventana.close(); aviso(e.validacion ? e.message : MENSAJE_FALLA); }
   }));
+  $app.querySelectorAll('[data-quitar-comp]').forEach((b) => b.addEventListener('click', async () => {
+    const { g, p } = pagoDe(b.dataset.quitarComp);
+    const c = comprobantesDe(p)[Number(b.dataset.n)];
+    const ok = await confirmar({ titulo: '¿Quitar este comprobante?', boton: 'Quitar comprobante',
+      html: `<p><strong>${esc(c.nombre)}</strong> deja de figurar en el pago a ${esc(g.entidad)} (transferencia ${esc(p.transferencia)}). El pago sigue registrado y podés adjuntar el correcto con “+ Agregar otro”.</p>` });
+    if (!ok) return;
+    try { await api(`/api/pagos/${p.id}/comprobante/${b.dataset.n}`, { metodo: 'DELETE' }); aviso('Comprobante quitado.'); navegar(); }
+    catch (e) { aviso(e.validacion ? e.message : MENSAJE_FALLA); }
+  }));
   $app.querySelectorAll('[data-anular]').forEach((b) => b.addEventListener('click', async () => {
     const { g, p } = pagoDe(b.dataset.anular);
     const ok = await confirmar({ titulo: `¿Anular el pago a ${g.entidad}?`, boton: 'Anular pago',
@@ -1672,7 +1681,7 @@ function dialogoMiDinero(mes, marcas) {
 function celdaComprobante(p) {
   const lista = comprobantesDe(p);
   if (!lista.length) return `<button class="boton chico secundario" type="button" data-adjuntar="${p.id}">Adjuntar</button>`;
-  const enlaces = lista.map((c, i) => `<button class="enlace" type="button" data-ver-comp="${p.id}" data-n="${i}" title="${esc(c.nombre)}">${lista.length === 1 ? 'Ver comprobante' : `Comprobante ${i + 1}`}</button>`);
+  const enlaces = lista.map((c, i) => `<span class="comp-item"><button class="enlace" type="button" data-ver-comp="${p.id}" data-n="${i}" title="${esc(c.nombre)}">${lista.length === 1 ? 'Ver comprobante' : `Comprobante ${i + 1}`}</button><button class="quitar-comp" type="button" data-quitar-comp="${p.id}" data-n="${i}" title="Quitar ${esc(c.nombre)}" aria-label="Quitar ${esc(c.nombre)}">×</button></span>`);
   return `<div class="comprobantes">${enlaces.join('')}<button class="enlace mas-comp" type="button" data-adjuntar="${p.id}" title="Adjuntar otro comprobante a este pago">+ Agregar otro</button></div>`;
 }
 

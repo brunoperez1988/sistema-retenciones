@@ -997,7 +997,8 @@
   // Entidades del mes que todavía no tienen el pago registrado, o cuyo importe cambió después de pagar.
   function pagosPendientes(mes) {
     // Las judiciales no frenan el cierre: lo que no se depositó pasa a los Pagos del mes siguiente.
-    return listarPagos({ periodo: mes }).grupos.filter((g) => g.tipo !== 'judicial' && g.importe > 0 && (!g.pago || g.pago.importe !== g.importe));
+    // "Otros descuentos" tampoco: se puede registrar el pago, pero no hace falta para cerrar.
+    return listarPagos({ periodo: mes }).grupos.filter((g) => g.tipo === 'comercial' && g.importe > 0 && (!g.pago || g.pago.importe !== g.importe));
   }
 
   function nombreArchivoSeguro(n) {
@@ -1083,6 +1084,19 @@
       const x = e.pagos.find((y) => y.id === n);
       x.comprobantes = [...comprobantesDe(x), ...nuevos]; delete x.comprobante;
       return { ok: true, agregados: nuevos.length };
+    });
+  }
+
+  // Quita un comprobante subido por error. El archivo queda guardado en GitHub, como al anular un pago.
+  function quitarComprobante(id, n) {
+    const pid = Number(id); const i = Number(n);
+    const p = (estado.pagos || []).find((x) => x.id === pid);
+    if (!p) throw new ErrorValidacion('El pago no existe.', 404);
+    if (!comprobantesDe(p)[i]) throw new ErrorValidacion('Ese comprobante ya no está.', 404);
+    return modificar((e) => {
+      const x = e.pagos.find((y) => y.id === pid);
+      x.comprobantes = comprobantesDe(x).filter((_, k) => k !== i); delete x.comprobante;
+      return { ok: true };
     });
   }
 
@@ -1224,6 +1238,7 @@
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) { const r = ret(m[1]); return { accion: 'Retención eliminada', detalle: r ? `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}` : '' }; }
       if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) { const d = estado.descuentos.find((x) => x.id === Number(m[1])); return { accion: 'Descuento eliminado', detalle: d ? `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${fechaTxt(d.fecha)}` : '' }; }
       if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return { accion: 'Empresa eliminada', detalle: (estado.empresas.find((x) => x.id === Number(m[1])) || {}).nombre || '' };
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante\/(\d+)$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); const c = p && comprobantesDe(p)[Number(m[2])]; return { accion: 'Comprobante quitado', detalle: p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${c ? c.nombre : ''}` : '' }; }
       if ((m = ruta.match(/^\/api\/pagos\/(\d+)$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Pago anulado', detalle: p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia}` : '' }; }
       if ((m = ruta.match(/^\/api\/cierres\/(\d{4}-\d{2})$/))) return { accion: 'Mes reabierto', detalle: nombreMesTxt(m[1]) };
     }
@@ -2044,6 +2059,7 @@
       if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) return eliminarDescuento(m[1]);
       if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return eliminarEmpresa(m[1]);
       if ((m = ruta.match(/^\/api\/cierres\/(\d{4}-\d{2})$/))) return reabrirMes(m[1]);
+      if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante\/(\d+)$/))) return quitarComprobante(m[1], m[2]);
       if ((m = ruta.match(/^\/api\/pagos\/(\d+)$/))) return anularPago(m[1]);
     }
     throw new ErrorValidacion('Ruta no encontrada.', 404);
