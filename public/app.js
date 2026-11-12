@@ -2054,6 +2054,10 @@ function tablaAbonar(rep) {
 async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, exito, borrable, soloAdmin }, vigente) {
   const sinPermiso = Boolean(soloAdmin) && LOCAL && !permisosActuales.admin;
   if (sinPermiso) borrable = null;
+  const editable = !sinPermiso && campos.every((c) => c.poner);
+  const conAcciones = Boolean(borrable) || editable;
+  let ultimos = [];
+  let editando = null;
   const filas = await api(ruta);
   if (!vigente()) return;
   $app.innerHTML = `
@@ -2064,11 +2068,13 @@ async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, e
         <p>Podés ver el listado, pero solo el administrador puede agregar o borrar.</p>
         <p class="sec">Si sos el administrador, ingresá tu clave en <a href="#/respaldo">Respaldo → Administrador</a>.</p>
       </section>` : `<section class="tarjeta">
-        <h2>Nuevo registro</h2>
+        <h2 id="titulo-alta">Nuevo registro</h2>
+        <p class="mensaje editando" id="aviso-edicion-alta" hidden></p>
         <form class="formulario" id="form-alta" novalidate>
           ${campos.map((c) => c.html).join('')}
           <div class="zona-mensaje"></div>
-          <div class="acciones"><button class="boton" type="submit">Guardar</button></div>
+          <div class="acciones"><button class="boton" type="submit" id="alta-guardar">Guardar</button>
+            <button class="boton secundario" type="button" id="alta-cancelar" hidden>Cancelar edición</button></div>
         </form>
       </section>`}
       <section class="tarjeta"><h2>Listado</h2><div id="lista-alta"></div></section>
@@ -2077,11 +2083,15 @@ async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, e
   const lista = document.getElementById('lista-alta');
   const pintar = (datos) => {
     lista.innerHTML = datos.length
-      ? `<div class="tabla-contenedor"><table><thead><tr>${columnas.map((c) => `<th class="${c.num ? 'num' : ''}">${c.titulo}</th>`).join('')}${borrable ? '<th></th>' : ''}</tr></thead>
-         <tbody>${datos.map((f) => `<tr>${columnas.map((c) => `<td class="${c.num ? 'num' : ''}">${c.valor(f)}</td>`).join('')}${borrable ? `<td>${borrable(f)
+      ? `<div class="tabla-contenedor"><table><thead><tr>${columnas.map((c) => `<th class="${c.num ? 'num' : ''}">${c.titulo}</th>`).join('')}${conAcciones ? '<th></th>' : ''}</tr></thead>
+         <tbody>${datos.map((f) => `<tr>${columnas.map((c) => `<td class="${c.num ? 'num' : ''}">${c.valor(f)}</td>`).join('')}${conAcciones ? `<td class="acciones-fila">${editable ? `<button class="boton chico secundario" type="button" data-editar-alta="${f.id}">Editar</button>` : ''}${borrable ? (borrable(f)
            ? `<button class="boton chico peligro" type="button" data-borrar="${f.id}" data-nombre="${esc(f.nombre)}">Eliminar</button>`
-           : '<span class="sec" title="Tiene descuentos registrados">No se puede borrar</span>'}</td>` : ''}</tr>`).join('')}</tbody></table></div>`
+           : '<span class="sec" title="Tiene descuentos registrados">No se puede borrar</span>') : ''}</td>` : ''}</tr>`).join('')}</tbody></table></div>`
       : `<div class="tabla-contenedor"><p class="vacio">${vacio}</p></div>`;
+    ultimos = datos;
+    lista.querySelectorAll('[data-editar-alta]').forEach((b) => b.addEventListener('click', () => {
+      const f = ultimos.find((x) => String(x.id) === b.dataset.editarAlta); if (f) empezarEdicionAlta(f);
+    }));
     lista.querySelectorAll('[data-borrar]').forEach((b) => b.addEventListener('click', async () => {
       if (!confirm(`¿Eliminar “${b.dataset.nombre}”?`)) return;
       try { await api(`${ruta}/${b.dataset.borrar}`, { metodo: 'DELETE' }); aviso('Eliminada.'); await cargarEn(lista, async () => pintar(await api(ruta))); }
@@ -2092,6 +2102,31 @@ async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, e
   if (sinPermiso) return;
 
   const form = document.getElementById('form-alta');
+  const tarjetaForm = form.closest('.tarjeta');
+  function empezarEdicionAlta(f) {
+    editando = f;
+    for (const c of campos) c.poner(form, f);
+    document.getElementById('titulo-alta').textContent = 'Editar registro';
+    const av = document.getElementById('aviso-edicion-alta'); av.textContent = `Estás editando “${f.nombre}”.`; av.hidden = false;
+    document.getElementById('alta-guardar').textContent = 'Guardar cambios';
+    document.getElementById('alta-cancelar').hidden = false;
+    tarjetaForm.classList.add('en-edicion');
+    tarjetaForm.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    form.querySelector('input, select').focus({ preventScroll: true });
+  }
+  function terminarEdicionAlta() {
+    editando = null;
+    form.reset();
+    form.querySelectorAll('[disabled]').forEach((x) => { x.disabled = false; });
+    form.querySelectorAll('[data-ayuda-edicion]').forEach((x) => { x.hidden = true; });
+    document.getElementById('titulo-alta').textContent = 'Nuevo registro';
+    document.getElementById('aviso-edicion-alta').hidden = true;
+    document.getElementById('alta-guardar').textContent = 'Guardar';
+    document.getElementById('alta-cancelar').hidden = true;
+    tarjetaForm.classList.remove('en-edicion');
+    form.querySelector('.zona-mensaje').innerHTML = '';
+  }
+  document.getElementById('alta-cancelar').addEventListener('click', terminarEdicionAlta);
   manejarEnvio(form, {
     enviar: async () => {
       const cuerpo = {};
@@ -2100,10 +2135,12 @@ async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, e
         if (!v) throw errorLocal(`Falta completar: ${c.nombre}.`);
         cuerpo[c.clave] = v;
       }
-      await api(ruta, { metodo: 'POST', cuerpo });
+      if (editando) await api(`${ruta}/${editando.id}/editar`, { metodo: 'POST', cuerpo });
+      else await api(ruta, { metodo: 'POST', cuerpo });
     },
     alTerminar: async () => {
-      aviso(exito);
+      aviso(editando ? 'Cambios guardados.' : exito);
+      terminarEdicionAlta();
       form.reset();
       form.querySelector('input, select').focus();
       await cargarEn(lista, async () => pintar(await api(ruta)));
@@ -2118,7 +2155,7 @@ function vistaEmpresas(_p, vigente) {
   ruta: '/api/empresas',
   soloAdmin: true,
   borrable: (f) => f.descuentos === 0,
-  campos: [{ clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200" placeholder="Ej.: Sucursal Oeste"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() }],
+  campos: [{ clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200" placeholder="Ej.: Sucursal Oeste"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim(), poner: (f, x) => { f.querySelector('#a-nombre').value = x.nombre; } }],
   columnas: [
     { titulo: 'Empresa', valor: (f) => esc(f.nombre) },
     { titulo: 'Descuentos', num: true, valor: (f) => f.descuentos },
@@ -2135,8 +2172,8 @@ function vistaColaboradores(_p, vigente) {
   descripcion: 'Personas a las que se les aplican retenciones. La cédula no se puede repetir.',
   ruta: '/api/colaboradores',
   campos: [
-    { clave: 'cedula', nombre: 'cédula', html: '<div class="campo"><label for="a-ci">Cédula <span class="obligatorio">*</span></label><input id="a-ci" inputmode="numeric" maxlength="12" placeholder="12345672"><span class="ayuda">Solo números, con el dígito verificador al final.</span></div>', leer: (f) => f.querySelector('#a-ci').value.trim() },
-    { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre completo <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
+    { clave: 'cedula', nombre: 'cédula', html: '<div class="campo"><label for="a-ci">Cédula <span class="obligatorio">*</span></label><input id="a-ci" inputmode="numeric" maxlength="12" placeholder="12345672"><span class="ayuda">Solo números, con el dígito verificador al final.</span></div>', leer: (f) => f.querySelector('#a-ci').value.trim(), poner: (f, x) => { f.querySelector('#a-ci').value = x.cedula; } },
+    { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre completo <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim(), poner: (f, x) => { f.querySelector('#a-nombre').value = x.nombre; } },
   ],
   columnas: [
     { titulo: 'Cédula', valor: (f) => esc(cedula(f.cedula)) },
@@ -2157,8 +2194,9 @@ function vistaEntidades(_p, vigente) {
   ruta: '/api/entidades',
   soloAdmin: true,
   campos: [
-    { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim() },
-    { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select></div>', leer: (f) => f.querySelector('#a-tipo').value },
+    { clave: 'nombre', nombre: 'nombre', html: '<div class="campo"><label for="a-nombre">Nombre <span class="obligatorio">*</span></label><input id="a-nombre" maxlength="200"></div>', leer: (f) => f.querySelector('#a-nombre').value.trim(), poner: (f, x) => { f.querySelector('#a-nombre').value = x.nombre; } },
+    { clave: 'tipo', nombre: 'tipo', html: '<div class="campo"><label for="a-tipo">Tipo <span class="obligatorio">*</span></label><select id="a-tipo"><option value="">Elegí…</option><option value="judicial">Judicial</option><option value="comercial">Comercial</option><option value="otros">Otros descuentos</option></select><span class="ayuda" data-ayuda-edicion hidden>Tiene retenciones cargadas: el tipo ya no se puede cambiar.</span></div>', leer: (f) => f.querySelector('#a-tipo').value,
+      poner: (f, x) => { const sel = f.querySelector('#a-tipo'); sel.value = x.tipo; sel.disabled = x.retenciones > 0; f.querySelector('[data-ayuda-edicion]').hidden = !(x.retenciones > 0); } },
   ],
   columnas: [
     { titulo: 'Entidad', valor: (f) => esc(f.nombre) },

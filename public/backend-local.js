@@ -1167,6 +1167,22 @@
       if (ruta === '/api/entidades') return { accion: 'Alta de entidad', detalle: String(c.nombre || '').trim() };
       if (ruta === '/api/colaboradores') return { accion: 'Alta de colaborador', detalle: `${String(c.nombre || '').trim()} · CI ${String(c.cedula || '').replace(/\D/g, '')}` };
       if (ruta === '/api/empresas') return { accion: 'Alta de empresa', detalle: String(c.nombre || '').trim() };
+      if ((m = ruta.match(/^\/api\/colaboradores\/(\d+)\/editar$/))) {
+        const a = estado.colaboradores.find((x) => x.id === Number(m[1])) || {};
+        return { accion: 'Colaborador editado', detalle: (res, e) => { const d = e.colaboradores.find((x) => x.id === res.id);
+          const dif = [a.nombre !== d.nombre ? `Nombre: ${a.nombre} → ${d.nombre}` : '', a.cedula !== d.cedula ? `CI: ${a.cedula} → ${d.cedula}` : ''].filter(Boolean);
+          return `${a.nombre} · CI ${a.cedula} · ${dif.join(' · ') || 'sin cambios'}`; } };
+      }
+      if ((m = ruta.match(/^\/api\/empresas\/(\d+)\/editar$/))) {
+        const a = estado.empresas.find((x) => x.id === Number(m[1])) || {};
+        return { accion: 'Empresa editada', detalle: (res, e) => `${a.nombre} → ${e.empresas.find((x) => x.id === res.id).nombre}` };
+      }
+      if ((m = ruta.match(/^\/api\/entidades\/(\d+)\/editar$/))) {
+        const a = { ...(estado.entidades.find((x) => x.id === Number(m[1])) || {}) };
+        return { accion: 'Entidad editada', detalle: (res, e) => { const d = e.entidades.find((x) => x.id === res.id);
+          const dif = [a.nombre !== d.nombre ? `Nombre: ${a.nombre} → ${d.nombre}` : '', a.tipo !== d.tipo ? `Tipo: ${TIPO_TXT[a.tipo]} → ${TIPO_TXT[d.tipo]}` : ''].filter(Boolean);
+          return `${a.nombre} · ${dif.join(' · ') || 'sin cambios'}`; } };
+      }
       if (ruta === '/api/retenciones') {
         return { accion: 'Alta de retención', detalle: (res, e) => { const r = e.retenciones.find((x) => x.id === res.id); return `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}`; } };
       }
@@ -1257,6 +1273,35 @@
     const nombre = texto(datos.nombre, 'nombre de la empresa');
     if (estado.empresas.some((x) => mismoNombre(x.nombre, nombre))) throw new ErrorValidacion('Ya existe una empresa con ese nombre.', 409);
     return modificar((e) => { const id = e.sig++; e.empresas.push({ id, nombre }); return { id }; });
+  }
+
+  // ── Edición de colaboradores, empresas y entidades ──
+  function editarColaborador(id, datos) {
+    const n = Number(id);
+    if (!estado.colaboradores.some((x) => x.id === n)) throw new ErrorValidacion('El colaborador no existe.', 404);
+    const ci = cedula(datos.cedula);
+    const nombre = texto(datos.nombre, 'nombre del colaborador');
+    if (estado.colaboradores.some((x) => x.id !== n && x.cedula === ci)) throw new ErrorValidacion('Ya existe otro colaborador con esa cédula.', 409);
+    return modificar((e) => { const c = e.colaboradores.find((x) => x.id === n); c.cedula = ci; c.nombre = nombre; return { id: n }; });
+  }
+  function editarEmpresa(id, datos) {
+    const n = Number(id);
+    if (!estado.empresas.some((x) => x.id === n)) throw new ErrorValidacion('La empresa no existe.', 404);
+    const nombre = texto(datos.nombre, 'nombre de la empresa');
+    if (estado.empresas.some((x) => x.id !== n && mismoNombre(x.nombre, nombre))) throw new ErrorValidacion('Ya existe otra empresa con ese nombre.', 409);
+    return modificar((e) => { e.empresas.find((x) => x.id === n).nombre = nombre; return { id: n }; });
+  }
+  function editarEntidad(id, datos) {
+    const n = Number(id);
+    const actual = estado.entidades.find((x) => x.id === n);
+    if (!actual) throw new ErrorValidacion('La entidad no existe.', 404);
+    const nombre = texto(datos.nombre, 'nombre de la entidad');
+    const tipo = String(datos.tipo || actual.tipo);
+    if (!TIPOS_ENTIDAD.includes(tipo)) throw new ErrorValidacion('Indicá si la entidad es judicial, comercial u otros descuentos.');
+    if (estado.entidades.some((x) => x.id !== n && mismoNombre(x.nombre, nombre))) throw new ErrorValidacion('Ya existe otra entidad con ese nombre.', 409);
+    // Cambiar el tipo cambiaría cómo se calculan y pagan sus retenciones: solo se permite si todavía no tiene ninguna.
+    if (tipo !== actual.tipo && estado.retenciones.some((r) => r.entidad_id === n)) throw new ErrorValidacion('No se puede cambiar el tipo: la entidad ya tiene retenciones cargadas. Solo podés cambiarle el nombre.');
+    return modificar((e) => { const x = e.entidades.find((y) => y.id === n); x.nombre = nombre; x.tipo = tipo; return { id: n }; });
   }
 
   function crearRetencion(datos) {
@@ -1978,6 +2023,9 @@
 
   async function atender(metodo, ruta, cuerpo) {
     let m;
+    if ((metodo === 'POST' && /^\/api\/(empresas|entidades)\/\d+\/editar$/.test(ruta))) {
+      await exigirAdmin(ruta.includes('empresas') ? 'editar empresas' : 'editar entidades');
+    }
     if ((metodo === 'POST' && (ruta === '/api/entidades' || ruta === '/api/empresas')) || (metodo === 'DELETE' && /^\/api\/(empresas|entidades)\//.test(ruta))) {
       await exigirAdmin(ruta.includes('empresas') ? 'agregar o borrar empresas' : 'agregar entidades');
     }
@@ -1995,6 +2043,9 @@
       if (ruta === '/api/entidades') return crearEntidad(cuerpo || {});
       if (ruta === '/api/colaboradores') return crearColaborador(cuerpo || {});
       if (ruta === '/api/empresas') return crearEmpresa(cuerpo || {});
+      if ((m = ruta.match(/^\/api\/colaboradores\/(\d+)\/editar$/))) return editarColaborador(m[1], cuerpo || {});
+      if ((m = ruta.match(/^\/api\/empresas\/(\d+)\/editar$/))) return editarEmpresa(m[1], cuerpo || {});
+      if ((m = ruta.match(/^\/api\/entidades\/(\d+)\/editar$/))) return editarEntidad(m[1], cuerpo || {});
       if (ruta === '/api/retenciones') return crearRetencion(cuerpo || {});
       if (ruta === '/api/descuentos') return crearDescuento(cuerpo || {});
       if (ruta === '/api/importar') return importarRetenciones(cuerpo || {});

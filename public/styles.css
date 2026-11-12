@@ -502,3 +502,5 @@ th.ordenable[aria-sort] .flecha { opacity: 1; color: var(--verde-oscuro); }
 th.ordenable[aria-sort] { background: var(--lima-claro); }
 #lista-desc [data-filtrar-ret] { text-align: left; }
 .enlace-izq { text-align: left; }
+.acciones-fila { white-space: nowrap; } .acciones-fila .boton + .boton, .acciones-fila .boton + .sec { margin-left: 6px; }
+.columnas > .tarjeta { scroll-margin-top: 150px; }
