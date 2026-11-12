@@ -1250,7 +1250,7 @@ async function vistaDescuentos(params, vigente) {
           <div class="campo"><label for="h-empresa">Empresa</label><select id="h-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo ancho"><label for="h-q">Buscar</label><input id="h-q" type="search" placeholder="Nombre, CI, entidad, concepto" value="${esc(filtrosDesc.q)}"></div>
         </div>
-        <div class="acciones-export"><button class="boton secundario chico" type="button" id="exportar-personas" title="Documento, nombre y apellido de cada persona con descuento en el mes">Exportar personas del mes a Excel</button></div>
+        <div class="acciones-export"><button class="boton secundario chico" type="button" id="exportar-personas" title="Documento y nombre de cada persona con descuento en el mes">Exportar personas del mes a Excel</button></div>
         <div id="resumen-ret"></div>
         <div id="lista-desc"><p class="cargando">Cargando…</p></div>
       </section>

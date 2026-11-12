@@ -1785,16 +1785,7 @@
   }
 
   // ── Personas con descuento en el mes ──
-  // Una fila por persona (sin repetir) con documento, nombre y apellido, de los descuentos del mes y los filtros elegidos.
-  function separarNombreApellido(completo) {
-    const p = String(completo || '').trim().split(/\s+/).filter(Boolean);
-    if (p.length <= 1) return { nombre: p[0] || '', apellido: '' };
-    if (p.length === 2) return { nombre: p[0], apellido: p[1] };
-    // Con tres palabras casi siempre es "Nombre Segundo Apellido"; con cuatro o más, dos nombres y el resto apellidos.
-    if (p.length === 3) return { nombre: `${p[0]} ${p[1]}`, apellido: p[2] };
-    return { nombre: `${p[0]} ${p[1]}`, apellido: p.slice(2).join(' ') };
-  }
-
+  // Una fila por persona (sin repetir) con documento y nombre completo, de los descuentos del mes y los filtros elegidos.
   function armarPersonasDescuento(f) {
     if (!f.mes) throw new ErrorValidacion('Elegí el mes del descuento para exportar.');
     const mes = periodo(f.mes);
@@ -1802,11 +1793,8 @@
     for (const d of listarDescuentos(f)) if (!personas.has(d.cedula)) personas.set(d.cedula, d.colaborador);
     const [a, m] = mes.split('-');
     if (!personas.size) throw new ErrorValidacion(`No hay descuentos en ${m}/${a} con esos filtros.`);
-    const filas = [...personas].sort((a, b) => a[1].localeCompare(b[1], 'es')).map(([ci, completo]) => {
-      const { nombre, apellido } = separarNombreApellido(completo);
-      return [ci, nombre, apellido];
-    });
-    const columnas = [{ titulo: 'Documento', ancho: 14 }, { titulo: 'Nombre', ancho: 24 }, { titulo: 'Apellido', ancho: 26 }];
+    const filas = [...personas].sort((a, b) => a[1].localeCompare(b[1], 'es')).map(([ci, completo]) => [ci, completo]);
+    const columnas = [{ titulo: 'Documento', ancho: 14 }, { titulo: 'Nombre y apellido', ancho: 40 }];
     return { columnas, filas, hoja: 'Personas', titulo: `Personas con descuento en ${m}/${a}`, subtitulo: `${filas.length} ${filas.length === 1 ? 'persona' : 'personas'} · Generado el ${new Date().toLocaleString('es-UY')}` };
   }
 
