@@ -3442,7 +3442,8 @@ async function vistaRetenciones(_params, vigente) {
           <div class="campo buscador"><label for="r-colab-q">Colaborador <span class="obligatorio">*</span></label>
             <input id="r-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="r-colab-lista">
             <input type="hidden" id="r-colab">
-            <ul class="sugerencias" id="r-colab-lista" role="listbox" hidden></ul></div>
+            <ul class="sugerencias" id="r-colab-lista" role="listbox" hidden></ul>
+            <button type="button" class="enlace-boton" id="r-colab-nuevo">+ Agregar colaborador nuevo</button></div>
           <div class="campo"><label for="r-ent">Entidad acreedora <span class="obligatorio">*</span></label>
             <select id="r-ent" required><option value="">Elegí…</option>
               ${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${e.tipo}" data-pasa="${e.pasa_saldo ? 1 : 0}">${esc(e.nombre)}${normalizarTxt(e.nombre) === normalizarTxt(tipoTxt[e.tipo]) ? '' : ` (${tipoTxt[e.tipo]})`}</option>`).join('')}
@@ -3511,7 +3512,20 @@ async function vistaRetenciones(_params, vigente) {
   };
   selFTipo.addEventListener('change', ajustarEntidadesRet, true);
   ajustarEntidadesRet();
-  const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores);
+  const buscadorColab = conectarBuscadorColaborador(document.getElementById('r-colab-q'), document.getElementById('r-colab'), document.getElementById('r-colab-lista'), cat.colaboradores, {
+    alAgregar: (escrito) => altaColaboradorRet(escrito),
+  });
+  // Alta rápida: si la persona no existe, se crea acá mismo y queda elegida en el formulario.
+  async function altaColaboradorRet(escrito) {
+    const nuevo = await dialogoNuevoColaborador(escrito);
+    if (!nuevo) { document.getElementById('r-colab-q').focus(); return; }
+    cat.colaboradores.push(nuevo);
+    buscadorColab.cambiarLista(cat.colaboradores);
+    buscadorColab.elegirId(nuevo.id);
+    aviso(`${nuevo.nombre} quedó agregado como colaborador. Ahora completá la retención.`);
+    document.getElementById('r-ent').focus();
+  }
+  document.getElementById('r-colab-nuevo').addEventListener('click', () => altaColaboradorRet(document.getElementById('r-colab').value ? '' : document.getElementById('r-colab-q').value));
   const selEnt = document.getElementById('r-ent');
   const chkMensual = document.getElementById('r-mensual');
   const campoBenef = document.getElementById('campo-benef');
