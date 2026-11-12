@@ -539,6 +539,7 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
 :root[data-tema="rosado"] .ley i.falta { background: #ec7aa9; }
 :root[data-tema="rosado"] .falla-en-linea { background: #fbe7f0; border-color: #f3c6d9; color: #9a2557; }
 
+.acciones-export { display: flex; justify-content: flex-end; margin: 4px 0 10px; }
 
 </style>
 </head>
@@ -2356,6 +2357,32 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
     ]);
   }
 
+  // ── Personas con descuento en el mes ──
+  // Una fila por persona (sin repetir) con documento, nombre y apellido, de los descuentos del mes y los filtros elegidos.
+  function separarNombreApellido(completo) {
+    const p = String(completo || '').trim().split(/\s+/).filter(Boolean);
+    if (p.length <= 1) return { nombre: p[0] || '', apellido: '' };
+    if (p.length === 2) return { nombre: p[0], apellido: p[1] };
+    // Con tres palabras casi siempre es "Nombre Segundo Apellido"; con cuatro o más, dos nombres y el resto apellidos.
+    if (p.length === 3) return { nombre: `${p[0]} ${p[1]}`, apellido: p[2] };
+    return { nombre: `${p[0]} ${p[1]}`, apellido: p.slice(2).join(' ') };
+  }
+
+  function armarPersonasDescuento(f) {
+    if (!f.mes) throw new ErrorValidacion('Elegí el mes del descuento para exportar.');
+    const mes = periodo(f.mes);
+    const personas = new Map();
+    for (const d of listarDescuentos(f)) if (!personas.has(d.cedula)) personas.set(d.cedula, d.colaborador);
+    const [a, m] = mes.split('-');
+    if (!personas.size) throw new ErrorValidacion(`No hay descuentos en ${m}/${a} con esos filtros.`);
+    const filas = [...personas].sort((a, b) => a[1].localeCompare(b[1], 'es')).map(([ci, completo]) => {
+      const { nombre, apellido } = separarNombreApellido(completo);
+      return [ci, nombre, apellido];
+    });
+    const columnas = [{ titulo: 'Documento', ancho: 14 }, { titulo: 'Nombre', ancho: 24 }, { titulo: 'Apellido', ancho: 26 }];
+    return { columnas, filas, hoja: 'Personas', titulo: `Personas con descuento en ${m}/${a}`, subtitulo: `${filas.length} ${filas.length === 1 ? 'persona' : 'personas'} · Generado el ${new Date().toLocaleString('es-UY')}` };
+  }
+
   // ── Archivo para Mi Dinero ──
   // Planilla de pagos masivos de Mi Dinero, con las judiciales que se cobran por Mi Dinero y todavía no se pagaron.
   // Mismo formato que el ejemplo del banco: una sola hoja, encabezado en la fila 1, sin títulos.
@@ -2590,6 +2617,7 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
     const url = new URL(rutaCompleta, 'http://local');
     const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
     if (url.pathname === '/api/pagos/mi-dinero') return archivoMiDinero(f);
+    if (url.pathname === '/api/descuentos/personas') return xlsx(armarPersonasDescuento(f));
     const rep = url.pathname.endsWith('planilla') ? armarPlanilla(f) : url.pathname.endsWith('entidades') ? armarPorEntidad(f) : armarAbonar(f);
     if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
     return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });
@@ -3866,6 +3894,7 @@ async function vistaDescuentos(params, vigente) {
           <div class="campo"><label for="h-empresa">Empresa</label><select id="h-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo ancho"><label for="h-q">Buscar</label><input id="h-q" type="search" placeholder="Nombre, CI, entidad, concepto" value="${esc(filtrosDesc.q)}"></div>
         </div>
+        <div class="acciones-export"><button class="boton secundario chico" type="button" id="exportar-personas" title="Documento, nombre y apellido de cada persona con descuento en el mes">Exportar personas del mes a Excel</button></div>
         <div id="resumen-ret"></div>
         <div id="lista-desc"><p class="cargando">Cargando…</p></div>
       </section>
@@ -3976,6 +4005,16 @@ async function vistaDescuentos(params, vigente) {
     const filas = await api(`/api/descuentos?${qs}`);
     ultimasFilasDesc = filas;
     pintarTablaDesc();
+  });
+  document.getElementById('exportar-personas').addEventListener('click', async (ev) => {
+    const boton = ev.currentTarget;
+    const hoy = new Date();
+    const mes = filtrosDesc.mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+    const qs = new URLSearchParams(Object.entries({ ...filtrosDesc, mes }).filter(([, v]) => v));
+    boton.disabled = true;
+    try { await descargarArchivo(`/api/descuentos/personas?${qs}`, `Personas con descuento ${mes}.xlsx`); }
+    catch (e) { aviso(e.validacion ? e.message : 'No se pudo armar el Excel. Probá de nuevo.'); }
+    finally { boton.disabled = false; }
   });
   function conectarEliminarDesc() {
     lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {

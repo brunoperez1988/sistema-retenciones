@@ -1250,6 +1250,7 @@ async function vistaDescuentos(params, vigente) {
           <div class="campo"><label for="h-empresa">Empresa</label><select id="h-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo ancho"><label for="h-q">Buscar</label><input id="h-q" type="search" placeholder="Nombre, CI, entidad, concepto" value="${esc(filtrosDesc.q)}"></div>
         </div>
+        <div class="acciones-export"><button class="boton secundario chico" type="button" id="exportar-personas" title="Documento, nombre y apellido de cada persona con descuento en el mes">Exportar personas del mes a Excel</button></div>
         <div id="resumen-ret"></div>
         <div id="lista-desc"><p class="cargando">Cargando…</p></div>
       </section>
@@ -1360,6 +1361,16 @@ async function vistaDescuentos(params, vigente) {
     const filas = await api(`/api/descuentos?${qs}`);
     ultimasFilasDesc = filas;
     pintarTablaDesc();
+  });
+  document.getElementById('exportar-personas').addEventListener('click', async (ev) => {
+    const boton = ev.currentTarget;
+    const hoy = new Date();
+    const mes = filtrosDesc.mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+    const qs = new URLSearchParams(Object.entries({ ...filtrosDesc, mes }).filter(([, v]) => v));
+    boton.disabled = true;
+    try { await descargarArchivo(`/api/descuentos/personas?${qs}`, `Personas con descuento ${mes}.xlsx`); }
+    catch (e) { aviso(e.validacion ? e.message : 'No se pudo armar el Excel. Probá de nuevo.'); }
+    finally { boton.disabled = false; }
   });
   function conectarEliminarDesc() {
     lista.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', async () => {

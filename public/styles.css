@@ -531,3 +531,4 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
 :root[data-tema="rosado"] .ley i.falta { background: #ec7aa9; }
 :root[data-tema="rosado"] .falla-en-linea { background: #fbe7f0; border-color: #f3c6d9; color: #9a2557; }
 
+.acciones-export { display: flex; justify-content: flex-end; margin: 4px 0 10px; }
