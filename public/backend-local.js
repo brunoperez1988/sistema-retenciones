@@ -1821,24 +1821,27 @@
     ]);
   }
 
-  // ── Personas con descuento en el mes ──
-  // Una fila por persona (sin repetir) con documento y nombre completo, de los descuentos del mes y los filtros elegidos.
+  // ── Personas con retención en el mes ──
+  // Una fila por persona (sin repetir) con documento, nombre y tipo de retención, de las retenciones del mes
+  // (tengan o no descuentos cargados). Respeta los filtros de persona, tipo de retención, entidad y búsqueda.
   function armarPersonasDescuento(f) {
-    if (!f.mes) throw new ErrorValidacion('Elegí el mes del descuento para exportar.');
+    if (!f.mes) throw new ErrorValidacion('Elegí el mes para exportar.');
     const mes = periodo(f.mes);
-    // Una fila por persona; si tiene descuentos de varios tipos, van todos en la misma celda.
+    const filas0 = filtrarTexto(listarRetenciones({ periodo: mes, tipo: f.tipo_retencion, entidad_id: f.entidad_id, colaborador_id: f.colaborador_id }),
+      f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario]);
+    // Si tiene retenciones de varios tipos, van todos en la misma celda.
     const personas = new Map();
     const ORDEN_TIPO = ['judicial', 'comercial', 'otros'];
-    for (const d of listarDescuentos(f)) {
-      if (!personas.has(d.cedula)) personas.set(d.cedula, { nombre: d.colaborador, tipos: new Set() });
-      personas.get(d.cedula).tipos.add(d.tipo_entidad);
+    for (const r of filas0) {
+      if (!personas.has(r.cedula)) personas.set(r.cedula, { nombre: r.colaborador, tipos: new Set() });
+      personas.get(r.cedula).tipos.add(r.tipo);
     }
     const [a, m] = mes.split('-');
-    if (!personas.size) throw new ErrorValidacion(`No hay descuentos en ${m}/${a} con esos filtros.`);
+    if (!personas.size) throw new ErrorValidacion(`No hay retenciones en ${m}/${a} con esos filtros.`);
     const filas = [...personas].sort((x, y) => x[1].nombre.localeCompare(y[1].nombre, 'es'))
       .map(([ci, p]) => [ci, p.nombre, [...p.tipos].sort((x, y) => ORDEN_TIPO.indexOf(x) - ORDEN_TIPO.indexOf(y)).map((t) => TIPO_TXT[t] || t).join(', ')]);
     const columnas = [{ titulo: 'Documento', ancho: 14 }, { titulo: 'Nombre y apellido', ancho: 40 }, { titulo: 'Tipo de retención', ancho: 28 }];
-    return { columnas, filas, hoja: 'Personas', titulo: `Personas con descuento en ${m}/${a}`, subtitulo: `${filas.length} ${filas.length === 1 ? 'persona' : 'personas'} · Generado el ${new Date().toLocaleString('es-UY')}` };
+    return { columnas, filas, hoja: 'Personas', titulo: `Personas con retención en ${m}/${a}`, subtitulo: `${filas.length} ${filas.length === 1 ? 'persona' : 'personas'} · Generado el ${new Date().toLocaleString('es-UY')}` };
   }
 
   // ── Archivo para Mi Dinero ──

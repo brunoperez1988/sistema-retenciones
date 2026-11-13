@@ -2400,24 +2400,27 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
     ]);
   }
 
-  // ── Personas con descuento en el mes ──
-  // Una fila por persona (sin repetir) con documento y nombre completo, de los descuentos del mes y los filtros elegidos.
+  // ── Personas con retención en el mes ──
+  // Una fila por persona (sin repetir) con documento, nombre y tipo de retención, de las retenciones del mes
+  // (tengan o no descuentos cargados). Respeta los filtros de persona, tipo de retención, entidad y búsqueda.
   function armarPersonasDescuento(f) {
-    if (!f.mes) throw new ErrorValidacion('Elegí el mes del descuento para exportar.');
+    if (!f.mes) throw new ErrorValidacion('Elegí el mes para exportar.');
     const mes = periodo(f.mes);
-    // Una fila por persona; si tiene descuentos de varios tipos, van todos en la misma celda.
+    const filas0 = filtrarTexto(listarRetenciones({ periodo: mes, tipo: f.tipo_retencion, entidad_id: f.entidad_id, colaborador_id: f.colaborador_id }),
+      f.q, (x) => [x.colaborador, x.cedula, x.entidad, x.concepto, x.beneficiario]);
+    // Si tiene retenciones de varios tipos, van todos en la misma celda.
     const personas = new Map();
     const ORDEN_TIPO = ['judicial', 'comercial', 'otros'];
-    for (const d of listarDescuentos(f)) {
-      if (!personas.has(d.cedula)) personas.set(d.cedula, { nombre: d.colaborador, tipos: new Set() });
-      personas.get(d.cedula).tipos.add(d.tipo_entidad);
+    for (const r of filas0) {
+      if (!personas.has(r.cedula)) personas.set(r.cedula, { nombre: r.colaborador, tipos: new Set() });
+      personas.get(r.cedula).tipos.add(r.tipo);
     }
     const [a, m] = mes.split('-');
-    if (!personas.size) throw new ErrorValidacion(`No hay descuentos en ${m}/${a} con esos filtros.`);
+    if (!personas.size) throw new ErrorValidacion(`No hay retenciones en ${m}/${a} con esos filtros.`);
     const filas = [...personas].sort((x, y) => x[1].nombre.localeCompare(y[1].nombre, 'es'))
       .map(([ci, p]) => [ci, p.nombre, [...p.tipos].sort((x, y) => ORDEN_TIPO.indexOf(x) - ORDEN_TIPO.indexOf(y)).map((t) => TIPO_TXT[t] || t).join(', ')]);
     const columnas = [{ titulo: 'Documento', ancho: 14 }, { titulo: 'Nombre y apellido', ancho: 40 }, { titulo: 'Tipo de retención', ancho: 28 }];
-    return { columnas, filas, hoja: 'Personas', titulo: `Personas con descuento en ${m}/${a}`, subtitulo: `${filas.length} ${filas.length === 1 ? 'persona' : 'personas'} · Generado el ${new Date().toLocaleString('es-UY')}` };
+    return { columnas, filas, hoja: 'Personas', titulo: `Personas con retención en ${m}/${a}`, subtitulo: `${filas.length} ${filas.length === 1 ? 'persona' : 'personas'} · Generado el ${new Date().toLocaleString('es-UY')}` };
   }
 
   // ── Archivo para Mi Dinero ──
@@ -3930,7 +3933,7 @@ async function vistaDescuentos(params, vigente) {
           <div class="campo"><label for="h-empresa">Empresa</label><select id="h-empresa"><option value="">Todas</option>${cat.empresas.map((e) => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo ancho"><label for="h-q">Buscar</label><input id="h-q" type="search" placeholder="Nombre, CI, entidad, concepto" value="${esc(filtrosDesc.q)}"></div>
         </div>
-        <div class="acciones-export"><button class="boton secundario chico" type="button" id="exportar-personas" title="Documento y nombre de cada persona con descuento en el mes">Exportar personas del mes a Excel</button></div>
+        <div class="acciones-export"><button class="boton secundario chico" type="button" id="exportar-personas" title="Documento, nombre y tipo de cada persona con retención en el mes (tenga o no descuentos cargados)">Exportar personas con retención del mes</button></div>
         <div id="resumen-ret"></div>
         <div id="lista-desc"><p class="cargando">Cargando…</p></div>
       </section>
@@ -4048,7 +4051,7 @@ async function vistaDescuentos(params, vigente) {
     const mes = filtrosDesc.mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
     const qs = new URLSearchParams(Object.entries({ ...filtrosDesc, mes }).filter(([, v]) => v));
     boton.disabled = true;
-    try { await descargarArchivo(`/api/descuentos/personas?${qs}`, `Personas con descuento ${mes}.xlsx`); }
+    try { await descargarArchivo(`/api/descuentos/personas?${qs}`, `Personas con retencion ${mes}.xlsx`); }
     catch (e) { aviso(e.validacion ? e.message : 'No se pudo armar el Excel. Probá de nuevo.'); }
     finally { boton.disabled = false; }
   });
