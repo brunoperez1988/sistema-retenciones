@@ -3955,7 +3955,9 @@ async function vistaDescuentos(params, vigente) {
   const preRet = retenciones.find((r) => String(r.id) === params.get('retencion'));
   // Se descuenta solo sobre las retenciones del mes de trabajo: ni las de meses anteriores ni las de los siguientes.
   const mesDesc = cat.mes_trabajo;
-  const delMes = (r) => r.periodo === mesDesc && abierta(r);
+  // Además entran los saldos que quedaron de meses anteriores (judiciales y Otros descuentos pasan el saldo al mes siguiente).
+  const esSaldo = (r) => r.periodo < mesDesc && r.pasa_saldo && !r.sin_tope && r.pendiente > 0;
+  const delMes = (r) => (r.periodo === mesDesc && abierta(r)) || esSaldo(r);
   // El histórico arranca mostrando las retenciones del mes de trabajo; las completadas quedan en el mes en que se completaron.
   if (filtrosDesc.periodo === null) filtrosDesc.periodo = mesDesc;
 
@@ -4064,7 +4066,7 @@ async function vistaDescuentos(params, vigente) {
     selRet.disabled = !propias.length;
     selRet.innerHTML = propias.length
       ? (propias.length > 1 ? '<option value="">Elegí…</option>' : '') + propias.map((r) =>
-        `<option value="${r.id}">${esc(r.entidad)} · ${esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — ${r.sin_tope ? `${esc(textoPct(r))}, sin tope` : `falta ${moneda(r.pendiente)}`}</option>`).join('')
+        `<option value="${r.id}">${esc(r.entidad)} · ${esSaldo(r) ? `saldo de ${esc(mesCorto(r.periodo))}` : esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — ${r.sin_tope ? `${esc(textoPct(r))}, sin tope` : `falta ${moneda(r.pendiente)}`}</option>`).join('')
       : `<option value="">${selColab.value ? `Sin retenciones de ${mesCorto(mesDesc)} pendientes` : 'Elegí primero la persona'}</option>`;
     if (preferida && propias.some((r) => r.id === preferida)) selRet.value = String(preferida);
     actualizarAyuda();
@@ -4108,7 +4110,7 @@ async function vistaDescuentos(params, vigente) {
     inImporte.focus();
   } else {
     llenarRetenciones();
-    if (preRet && preRet.periodo !== mesDesc) aviso(`Esa retención es de ${nombreMes(preRet.periodo).toLowerCase()}. En Descuentos se cargan solo las de ${nombreMes(mesDesc).toLowerCase()}.`);
+    if (preRet && preRet.periodo !== mesDesc && !esSaldo(preRet)) aviso(`Esa retención es de ${nombreMes(preRet.periodo).toLowerCase()}. En Descuentos se cargan solo las de ${nombreMes(mesDesc).toLowerCase()}.`);
   }
 
   const lista = document.getElementById('lista-desc');
