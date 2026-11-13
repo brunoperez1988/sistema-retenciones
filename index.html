@@ -1073,6 +1073,16 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
   const COLECCIONES = ['entidades', 'colaboradores', 'empresas', 'retenciones', 'descuentos', 'cierres', 'pagos'];
   const REFERENCIAS = ['colaborador_id', 'entidad_id', 'empresa_id', 'retencion_id', 'origen_id'];
   const igual = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  // Dos registros con el mismo número son el mismo si coinciden en lo que los identifica (aunque después se haya editado uno).
+  function mismoRegistro(a, b) {
+    if (!a || !b) return false;
+    if (igual(a, b)) return true;
+    if (a.creado_en || b.creado_en) return a.creado_en === b.creado_en;
+    if (a.registrado_en || b.registrado_en) return a.registrado_en === b.registrado_en;
+    if (a.cedula || b.cedula) return a.cedula === b.cedula;
+    if (a.mes || b.mes) return a.mes === b.mes && a.entidad_id === b.entidad_id;
+    return Boolean(a.nombre) && a.nombre === b.nombre;
+  }
 
   function datosNube(e) {
     const { ultimoRespaldo, pendienteNube, baseNube, sistema, ...resto } = e;
@@ -1089,7 +1099,12 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
       const idsRem = idsDe(remoto);
       let sig = Math.max(local.sig || 1, remoto.sig || 1, ...idsRem, ...idsDe(local)) + 1;
       const cambio = new Map();
-      for (const c of COLECCIONES) for (const x of local[c] || []) if (!idsBase.has(x.id) && idsRem.has(x.id)) cambio.set(x.id, sig++);
+      // Si en GitHub ya está el mismo registro (por ejemplo, una subida que llegó pero cuya respuesta se perdió),
+      // no es algo nuevo de otra persona: se deja con su número para no duplicarlo.
+      const remPorId = new Map(COLECCIONES.flatMap((c) => (remoto[c] || []).map((x) => [x.id, x])));
+      for (const c of COLECCIONES) for (const x of local[c] || []) {
+        if (!idsBase.has(x.id) && idsRem.has(x.id) && !mismoRegistro(x, remPorId.get(x.id))) cambio.set(x.id, sig++);
+      }
       if (cambio.size) {
         for (const c of COLECCIONES) for (const x of local[c] || []) {
           if (cambio.has(x.id)) x.id = cambio.get(x.id);
@@ -1995,7 +2010,56 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
   // La entidad "Otros descuentos" se cargó como comercial: pasa a su propio tipo.
   const otrosComoComercial = (e) => e.entidades.filter((x) => x.tipo === 'comercial' && normalizar(x.nombre) === 'otros descuentos');
 
+  // Copias que dejó una sincronización fallida el 10 y 11/11/2026: un guardado llegó a GitHub pero la respuesta se perdió,
+  // y al juntar los datos lo ya subido se tomó como nuevo y se volvió a agregar con otros números.
+  // Se quitan solo si siguen siendo idénticas a la original (mismo momento de carga e importes).
+  const COPIAS_SYNC = {
+    colaboradores: { 1240: 1208, 1241: 1213, 1242: 1216, 1243: 1219, 1244: 1226, 1245: 1228 },
+    retenciones: { 1246: 1209, 1247: 1214, 1248: 1217, 1249: 1220, 1250: 1225, 1251: 1227, 1252: 1229 },
+    descuentos: [1253, 1276],
+  };
+  function copiasSync(e) {
+    const col = new Map(); const ret = new Map(); const desc = new Map();
+    for (const [c, o] of Object.entries(COPIAS_SYNC.colaboradores)) {
+      const x = e.colaboradores.find((y) => y.id === Number(c)); const y = e.colaboradores.find((z) => z.id === o);
+      if (x && y && x.cedula === y.cedula) col.set(x.id, y.id);
+    }
+    for (const [c, o] of Object.entries(COPIAS_SYNC.retenciones)) {
+      const x = e.retenciones.find((y) => y.id === Number(c)); const y = e.retenciones.find((z) => z.id === o);
+      if (x && y && x.creado_en === y.creado_en && x.importe_total === y.importe_total && x.entidad_id === y.entidad_id && x.periodo === y.periodo
+        && (col.get(x.colaborador_id) || x.colaborador_id) === y.colaborador_id) ret.set(x.id, y.id);
+    }
+    const [desde, hasta] = COPIAS_SYNC.descuentos;
+    for (const x of e.descuentos.filter((d) => d.id >= desde && d.id <= hasta)) {
+      const rid = ret.get(x.retencion_id) || x.retencion_id;
+      const y = e.descuentos.find((d) => d.id < desde && d.retencion_id === rid && d.creado_en === x.creado_en && d.importe === x.importe && d.fecha === x.fecha && d.tipo === x.tipo && d.empresa_id === x.empresa_id);
+      if (y) desc.set(x.id, y.id);
+    }
+    // Una retención copiada solo se quita si todos sus descuentos también son copias.
+    for (const id of [...ret.keys()]) if (e.descuentos.some((d) => d.retencion_id === id && !desc.has(d.id))) ret.delete(id);
+    // Y un descuento copiado sobre una retención copiada que se conserva, se conserva también.
+    for (const id of [...desc.keys()]) { const rid = e.descuentos.find((d) => d.id === id).retencion_id; if (COPIAS_SYNC.retenciones[rid] && !ret.has(rid)) desc.delete(id); }
+    return { col, ret, desc, total: col.size + ret.size + desc.size };
+  }
+  function quitarCopiasSync(e) {
+    const { col, ret, desc } = copiasSync(e);
+    e.descuentos = e.descuentos.filter((d) => !desc.has(d.id));
+    e.retenciones = e.retenciones.filter((r) => !ret.has(r.id));
+    for (const r of e.retenciones) {
+      if (col.has(r.colaborador_id)) r.colaborador_id = col.get(r.colaborador_id);
+      if (ret.has(r.origen_id)) r.origen_id = ret.get(r.origen_id);
+    }
+    e.colaboradores = e.colaboradores.filter((c) => !col.has(c.id) || e.retenciones.some((r) => r.colaborador_id === c.id));
+    // El pago queda con el importe que realmente se transfirió; solo se quitan las líneas de las copias.
+    for (const p of e.pagos || []) if (p.items) p.items = p.items.filter((i) => !ret.has(i.retencion_id));
+    return { colaboradores: col.size, retenciones: ret.size, descuentos: desc.size };
+  }
+
   async function crearMensuales() {
+    if (copiasSync(estado).total) {
+      registroPendiente = { accion: 'Duplicados quitados', detalle: (r) => `Copias de la sincronización del 10 y 11/11: ${r.colaboradores} colaboradores, ${r.retenciones} retenciones y ${r.descuentos} descuentos` };
+      await modificar(quitarCopiasSync);
+    }
     if (otrosComoComercial(estado).length) await modificar((e) => { otrosComoComercial(e).forEach((x) => { x.tipo = 'otros'; delete x.pasa_saldo; }); });
     // Copias automáticas de meses todavía no habilitados (se crearon antes de esta regla): se quitan si no tienen
     // descuentos ni cambios; se vuelven a crear solas cuando se cierre el mes de trabajo.
