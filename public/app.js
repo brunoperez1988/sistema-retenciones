@@ -1223,7 +1223,7 @@ async function vistaDescuentos(params, vigente) {
   const preRet = retenciones.find((r) => String(r.id) === params.get('retencion'));
   // Se descuenta solo sobre las retenciones del mes de trabajo: ni las de meses anteriores ni las de los siguientes.
   const mesDesc = cat.mes_trabajo;
-  // Además entran los saldos que quedaron de meses anteriores (judiciales y Otros descuentos pasan el saldo al mes siguiente).
+  // Además entran los saldos de Otros descuentos que quedaron de meses anteriores (los completados ya no aparecen).
   const esSaldo = (r) => r.periodo < mesDesc && r.pasa_saldo && !r.sin_tope && r.pendiente > 0;
   const delMes = (r) => (r.periodo === mesDesc && abierta(r)) || esSaldo(r);
   // El histórico arranca mostrando las retenciones del mes de trabajo; las completadas quedan en el mes en que se completaron.

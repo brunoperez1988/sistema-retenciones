@@ -1384,8 +1384,9 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
   // - el resto de las comerciales: se cargan cada mes, sin repetir ni pasar saldo.
   const TIPOS_ENTIDAD = ['judicial', 'comercial', 'otros'];
   const sePuedeRepetir = (ent) => Boolean(ent && ent.tipo === 'judicial');
-  // Todas las retenciones pasan al mes siguiente solo con el saldo que les faltó descontar (no con el importe completo).
-  const pasaSaldo = (ent) => Boolean(ent);
+  // Solo los Otros descuentos pasan al mes siguiente, y únicamente con el saldo que les faltó descontar.
+  // Las cooperativas se cargan mes a mes y las judiciales se copian cada mes como nuevas.
+  const pasaSaldo = (ent) => Boolean(ent && ent.tipo === 'otros');
 
   function repiteActiva(r) {
     const t = r.mensual ? r : r.origen_id ? estado.retenciones.find((x) => x.id === r.origen_id) : null;
@@ -3956,7 +3957,7 @@ async function vistaDescuentos(params, vigente) {
   const preRet = retenciones.find((r) => String(r.id) === params.get('retencion'));
   // Se descuenta solo sobre las retenciones del mes de trabajo: ni las de meses anteriores ni las de los siguientes.
   const mesDesc = cat.mes_trabajo;
-  // Además entran los saldos que quedaron de meses anteriores (judiciales y Otros descuentos pasan el saldo al mes siguiente).
+  // Además entran los saldos de Otros descuentos que quedaron de meses anteriores (los completados ya no aparecen).
   const esSaldo = (r) => r.periodo < mesDesc && r.pasa_saldo && !r.sin_tope && r.pendiente > 0;
   const delMes = (r) => (r.periodo === mesDesc && abierta(r)) || esSaldo(r);
   // El histórico arranca mostrando las retenciones del mes de trabajo; las completadas quedan en el mes en que se completaron.
