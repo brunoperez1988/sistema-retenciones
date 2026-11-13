@@ -889,6 +889,7 @@
     });
     const filas = estado.descuentos
       .filter((d) => !mes || d.fecha.slice(0, 7) === mes)
+      .filter((d) => !f.periodo || (rets.get(d.retencion_id) || {}).periodo === periodo(f.periodo))
       .filter((d) => !TIPOS_DESCUENTO.includes(f.tipo_descuento) || d.tipo === f.tipo_descuento)
       .filter((d) => !f.empresa_id || d.empresa_id === Number(f.empresa_id))
       .filter((d) => !f.retencion_id || d.retencion_id === Number(f.retencion_id))

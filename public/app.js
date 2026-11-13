@@ -1214,25 +1214,30 @@ function conectarFiltros(mapa, destino, recargar) {
 
 // ── Descuentos ──
 
-const filtrosDesc = { colaborador_id: '', retencion_id: '', mes: '', tipo_retencion: '', entidad_id: '', tipo_descuento: '', empresa_id: '', q: '' };
+const filtrosDesc = { colaborador_id: '', retencion_id: '', periodo: null, mes: '', tipo_retencion: '', entidad_id: '', tipo_descuento: '', empresa_id: '', q: '' };
 
 async function vistaDescuentos(params, vigente) {
   const [cat, rets] = await Promise.all([api('/api/catalogos'), api('/api/retenciones')]);
   if (!vigente()) return;
   let retenciones = rets;
   const preRet = retenciones.find((r) => String(r.id) === params.get('retencion'));
+  // Se descuenta solo sobre las retenciones del mes de trabajo: ni las de meses anteriores ni las de los siguientes.
+  const mesDesc = cat.mes_trabajo;
+  const delMes = (r) => r.periodo === mesDesc && abierta(r);
+  // El histórico arranca mostrando las retenciones del mes de trabajo; las completadas quedan en el mes en que se completaron.
+  if (filtrosDesc.periodo === null) filtrosDesc.periodo = mesDesc;
 
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Descuentos</h1><p>Lo que efectivamente se le descontó a cada colaborador. Nunca puede superar el total de la retención.</p></div></div>
     <div class="apilado">
       <section class="tarjeta">
-        <h2>Registrar descuento</h2>
+        <h2>Registrar descuento · ${esc(nombreMes(mesDesc))}</h2>
         <form class="formulario form-ancho form-desc" id="form-desc" novalidate>
           <div class="campo buscador"><label for="d-colab-q">Persona <span class="obligatorio">*</span></label>
             <input id="d-colab-q" autocomplete="off" spellcheck="false" placeholder="Escribí la cédula o el nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="d-colab-lista">
             <input type="hidden" id="d-colab">
             <ul class="sugerencias" id="d-colab-lista" role="listbox" hidden></ul>
-            <span class="ayuda">Aparecen solo las personas con retenciones pendientes.</span>
+            <span class="ayuda">Aparecen solo las personas con retenciones de ${esc(nombreMes(mesDesc).toLowerCase())} pendientes.</span>
             <button type="button" class="enlace-boton" id="d-colab-nuevo">+ Agregar colaborador nuevo</button></div>
           <div class="campo ancho2"><label for="d-ret">Retención <span class="obligatorio">*</span></label>
             <select id="d-ret" required disabled><option value="">Elegí primero la persona</option></select>
@@ -1265,7 +1270,8 @@ async function vistaDescuentos(params, vigente) {
             <input id="h-colab-q" type="search" autocomplete="off" spellcheck="false" placeholder="Cédula o nombre" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="h-colab-lista">
             <input type="hidden" id="h-colab"><ul class="sugerencias" id="h-colab-lista" role="listbox" hidden></ul></div>
           <div class="campo"><label for="h-ret">Retención</label><select id="h-ret" disabled><option value="">Elegí primero la persona</option></select></div>
-          <div class="campo"><label for="h-mes">Mes del descuento</label><input type="month" id="h-mes" value="${esc(filtrosDesc.mes)}"></div>
+          <div class="campo"><label for="h-periodo">Mes de la retención</label><input type="month" id="h-periodo" value="${esc(filtrosDesc.periodo)}"></div>
+          <div class="campo"><label for="h-mes">Fecha del descuento (mes)</label><input type="month" id="h-mes" value="${esc(filtrosDesc.mes)}"></div>
           <div class="campo"><label for="h-tipo-ret">Tipo de retención</label><select id="h-tipo-ret"><option value="">Todas</option>${Object.entries(tipoTxt).map(([v, t]) => `<option value="${v}">${esc(t)}</option>`).join('')}</select></div>
           <div class="campo"><label for="h-entidad">Entidad</label><select id="h-entidad"><option value="">Todas</option>${cat.entidades.map((e) => `<option value="${e.id}" data-tipo="${esc(e.tipo)}">${esc(e.nombre)}</option>`).join('')}</select></div>
           <div class="campo"><label for="h-tipo">Quincena / tipo</label><select id="h-tipo"><option value="">Todos</option>${cat.tiposDescuento.map((t) => `<option>${esc(t)}</option>`).join('')}</select></div>
@@ -1303,7 +1309,7 @@ async function vistaDescuentos(params, vigente) {
 
   const buscadorPersona = conectarBuscadorColaborador(form.querySelector('#d-colab-q'), selColab, form.querySelector('#d-colab-lista'), [], {
     alElegir: () => llenarRetenciones(),
-    sinResultado: 'No encontré a nadie con eso entre las personas con retenciones pendientes.',
+    sinResultado: `No encontré a nadie con eso entre las personas con retenciones de ${nombreMes(mesDesc).toLowerCase()} pendientes.`,
     alAgregar: (escrito) => agregarColaborador(escrito),
   });
   // Alta rápida: la persona nueva todavía no tiene retenciones, así que no aparece para descontar hasta que se le cargue una.
@@ -1317,17 +1323,17 @@ async function vistaDescuentos(params, vigente) {
   }
   form.querySelector('#d-colab-nuevo').addEventListener('click', () => agregarColaborador(selColab.value ? '' : form.querySelector('#d-colab-q').value));
   function llenarPersonas() {
-    const conPendientes = new Set(retenciones.filter(abierta).map((r) => r.colaborador_id));
+    const conPendientes = new Set(retenciones.filter(delMes).map((r) => r.colaborador_id));
     buscadorPersona.cambiarLista(cat.colaboradores.filter((c) => conPendientes.has(c.id)));
   }
 
   function llenarRetenciones(preferida) {
-    const propias = retenciones.filter((r) => String(r.colaborador_id) === selColab.value && abierta(r));
+    const propias = retenciones.filter((r) => String(r.colaborador_id) === selColab.value && delMes(r));
     selRet.disabled = !propias.length;
     selRet.innerHTML = propias.length
       ? (propias.length > 1 ? '<option value="">Elegí…</option>' : '') + propias.map((r) =>
         `<option value="${r.id}">${esc(r.entidad)} · ${esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — ${r.sin_tope ? `${esc(textoPct(r))}, sin tope` : `falta ${moneda(r.pendiente)}`}</option>`).join('')
-      : `<option value="">${selColab.value ? 'Sin retenciones pendientes' : 'Elegí primero la persona'}</option>`;
+      : `<option value="">${selColab.value ? `Sin retenciones de ${mesCorto(mesDesc)} pendientes` : 'Elegí primero la persona'}</option>`;
     if (preferida && propias.some((r) => r.id === preferida)) selRet.value = String(preferida);
     actualizarAyuda();
   }
@@ -1364,11 +1370,14 @@ async function vistaDescuentos(params, vigente) {
   inImporte.addEventListener('input', validarImporte);
 
   llenarPersonas();
-  if (preRet && abierta(preRet)) {
+  if (preRet && delMes(preRet)) {
     buscadorPersona.elegirId(preRet.colaborador_id);
     llenarRetenciones(preRet.id);
     inImporte.focus();
-  } else llenarRetenciones();
+  } else {
+    llenarRetenciones();
+    if (preRet && preRet.periodo !== mesDesc) aviso(`Esa retención es de ${nombreMes(preRet.periodo).toLowerCase()}. En Descuentos se cargan solo las de ${nombreMes(mesDesc).toLowerCase()}.`);
+  }
 
   const lista = document.getElementById('lista-desc');
   let ultimasFilasDesc = [];
@@ -1386,9 +1395,8 @@ async function vistaDescuentos(params, vigente) {
   });
   document.getElementById('exportar-personas').addEventListener('click', async (ev) => {
     const boton = ev.currentTarget;
-    const hoy = new Date();
-    const mes = filtrosDesc.mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
-    const qs = new URLSearchParams(Object.entries({ ...filtrosDesc, mes }).filter(([, v]) => v));
+    const mes = filtrosDesc.periodo || mesDesc;
+    const qs = new URLSearchParams(Object.entries({ ...filtrosDesc, periodo: '', mes }).filter(([, v]) => v));
     boton.disabled = true;
     try { await descargarArchivo(`/api/descuentos/personas?${qs}`, `Personas con retencion ${mes}.xlsx`); }
     catch (e) { aviso(e.validacion ? e.message : 'No se pudo armar el Excel. Probá de nuevo.'); }
@@ -1461,7 +1469,7 @@ async function vistaDescuentos(params, vigente) {
     resumenRet.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 
-  conectarFiltros({ mes: 'h-mes', tipo_retencion: 'h-tipo-ret', entidad_id: 'h-entidad', tipo_descuento: 'h-tipo', empresa_id: 'h-empresa', q: 'h-q' }, filtrosDesc, recargarLista);
+  conectarFiltros({ periodo: 'h-periodo', mes: 'h-mes', tipo_retencion: 'h-tipo-ret', entidad_id: 'h-entidad', tipo_descuento: 'h-tipo', empresa_id: 'h-empresa', q: 'h-q' }, filtrosDesc, recargarLista);
   recargarLista();
 
   manejarEnvio(form, {
