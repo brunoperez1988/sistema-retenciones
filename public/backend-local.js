@@ -199,12 +199,53 @@
     const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: sal, iterations: iteraciones }, base, 256);
     return b64(new Uint8Array(bits));
   }
+  // Perfiles de usuario: qué solapas ve cada uno. Los asigna el administrador por nombre de usuario.
+  // Mientras no se asignó ningún perfil, todos ven todo (como antes). Quien tiene la clave de administrador ve todo.
+  const PERFILES = ['admin', 'retenciones', 'descuentos', 'pagos'];
+  const claveUsuario = (u) => String(u || '').trim().toLowerCase();
+  function perfilDe(e, usuario, esAdmin) {
+    const asignados = e.perfiles || {};
+    if (esAdmin) return 'admin';
+    if (!Object.keys(asignados).length) return 'admin';
+    return asignados[claveUsuario(usuario)] || null;
+  }
   async function permisos() {
     await iniciar();
     const cfg = estado.admin;
-    if (!cfg || !cfg.hash) return { configurado: false, admin: true };
-    const prueba = await leerPruebaAdmin();
-    return { configurado: true, admin: Boolean(prueba && prueba.hash === cfg.hash) };
+    const conClave = !cfg || !cfg.hash ? true : Boolean((await leerPruebaAdmin()) && (await leerPruebaAdmin()).hash === cfg.hash);
+    return {
+      configurado: Boolean(cfg && cfg.hash), admin: conClave,
+      usuario: usuarioActual, perfil: perfilDe(estado, usuarioActual, Boolean(cfg && cfg.hash) && conClave),
+      perfilesActivos: Object.keys(estado.perfiles || {}).length > 0,
+    };
+  }
+  // Lista de usuarios para asignar perfiles: los que ya tienen perfil y los que aparecen en el historial.
+  async function usuariosPerfiles() {
+    await iniciar();
+    const asignados = estado.perfiles || {};
+    const nombres = new Map();
+    for (const h of estado.historial || []) if (h.usuario && !nombres.has(claveUsuario(h.usuario))) nombres.set(claveUsuario(h.usuario), h.usuario.trim());
+    for (const k of Object.keys(asignados)) if (!nombres.has(k)) nombres.set(k, k);
+    return [...nombres].map(([k, nombre]) => ({ usuario: nombre, perfil: asignados[k] || null }))
+      .sort((a, b) => a.usuario.localeCompare(b.usuario, 'es'));
+  }
+  async function asignarPerfil(datos) {
+    await iniciar();
+    if (!estado.admin || !estado.admin.hash) throw new ErrorValidacion('Primero creá la clave de administrador: los perfiles los asigna el administrador.');
+    await exigirAdmin('asignar perfiles');
+    const k = claveUsuario(datos.usuario);
+    if (!k) throw new ErrorValidacion('Escribí el nombre de usuario.');
+    if (k.length > 60) throw new ErrorValidacion('El nombre de usuario es muy largo.');
+    const perfil = datos.perfil || null;
+    if (perfil && !PERFILES.includes(perfil)) throw new ErrorValidacion('Elegí un perfil de la lista.');
+    const TXT = { admin: 'Admin', retenciones: 'Retenciones', descuentos: 'Descuento', pagos: 'Pago' };
+    registroPendiente = { accion: perfil ? 'Perfil asignado' : 'Perfil quitado', detalle: `${String(datos.usuario).trim()}${perfil ? ` · ${TXT[perfil]}` : ''}` };
+    await modificar((e) => {
+      const p = { ...(e.perfiles || {}) };
+      if (perfil) p[k] = perfil; else delete p[k];
+      if (Object.keys(p).length) e.perfiles = p; else delete e.perfiles;
+    });
+    return usuariosPerfiles();
   }
   async function exigirAdmin(que) {
     if (!(await permisos()).admin) throw new ErrorValidacion(`Solo el administrador puede ${que}.`, 403);
@@ -522,6 +563,9 @@
     // Clave de administrador: si se cambió acá, queda la de acá; si no, la de GitHub.
     res.admin = !igual(local.admin, base && base.admin) ? local.admin : remoto.admin;
     if (!res.admin) delete res.admin;
+    // Perfiles de usuario: misma regla.
+    res.perfiles = !igual(local.perfiles, base && base.perfiles) ? local.perfiles : remoto.perfiles;
+    if (!res.perfiles) delete res.perfiles;
     return { datos: res, conflictos };
   }
 
@@ -2096,7 +2140,7 @@
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
     cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
-    permisos, configurarAdmin, ingresarAdmin, salirAdmin,
+    permisos, configurarAdmin, ingresarAdmin, salirAdmin, usuariosPerfiles, asignarPerfil,
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,
   };

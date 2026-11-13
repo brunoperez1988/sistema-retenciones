@@ -289,6 +289,21 @@ if (LOCAL) {
   document.getElementById('menu').appendChild(enlace);
 }
 
+// ── Perfiles: qué solapas ve cada uno (Respaldo la ven todos: ahí están la contraseña y GitHub) ──
+const PERFILES = {
+  admin: { nombre: 'Admin', secciones: null },
+  retenciones: { nombre: 'Retenciones', secciones: ['panel', 'retenciones', 'descuentos', 'reportes', 'empresas', 'colaboradores', 'entidades'] },
+  descuentos: { nombre: 'Descuento', secciones: ['panel', 'descuentos'] },
+  pagos: { nombre: 'Pago', secciones: ['panel', 'descuentos', 'pagos', 'reportes'] },
+};
+function puedeVer(seccion) {
+  if (!LOCAL || seccion === 'respaldo') return true;
+  const p = permisosActuales.perfil === undefined ? 'admin' : permisosActuales.perfil;
+  if (!p) return seccion === 'panel';
+  const lista = (PERFILES[p] || {}).secciones;
+  return !lista || lista.includes(seccion);
+}
+
 let navegacionActual = 0;
 let ultimaSeccion = null;
 async function navegar() {
@@ -301,8 +316,14 @@ async function navegar() {
   const [ruta, consulta = ''] = location.hash.replace(/^#\/?/, '').split('?');
   let seccion = vistas[ruta] ? ruta : 'panel';
   if (LOCAL) {
-    permisosActuales = await window.backendLocal.permisos().catch(() => ({ configurado: false, admin: true }));
-    // Empresas y Entidades las ven todos; agregar o borrar sigue siendo solo del administrador.
+    permisosActuales = await window.backendLocal.permisos().catch(() => ({ configurado: false, admin: true, perfil: 'admin' }));
+    // Cada perfil ve solo sus solapas; agregar o borrar empresas y entidades sigue siendo del administrador.
+    document.querySelectorAll('.menu a').forEach((a) => { a.hidden = !puedeVer(a.dataset.seccion); });
+    if (!puedeVer(seccion)) {
+      aviso('Tu perfil no tiene acceso a esa solapa.');
+      if (location.hash !== '#/panel') { history.replaceState(null, '', '#/panel'); }
+      seccion = 'panel';
+    }
   }
   document.querySelectorAll('.menu a').forEach((a) => a.classList.toggle('activo', a.dataset.seccion === seccion));
   // Las animaciones de entrada solo se ven al llegar a una pantalla, no cuando se refresca por cambios de otra persona.
@@ -312,6 +333,9 @@ async function navegar() {
   $app.innerHTML = '<p class="cargando">Cargando…</p>';
   try {
     await vistas[seccion](new URLSearchParams(consulta), () => id === navegacionActual);
+    if (LOCAL && seccion === 'panel' && permisosActuales.perfil === null && id === navegacionActual) {
+      $app.insertAdjacentHTML('afterbegin', `<div class="mensaje error" style="margin-bottom:16px">Todavía no tenés un perfil asignado, por eso solo ves el Panel. Pedile al administrador que te asigne uno (tu usuario es <strong>${esc(permisosActuales.usuario || '')}</strong>).</div>`);
+    }
   } catch (e) {
     if (id === navegacionActual) fallaPagina(navegar);
     if (!(e instanceof ErrorConexion)) console.error(e);
@@ -2244,8 +2268,9 @@ async function vistaRespaldo(_params, vigente) {
       <p>Todo lo que cargás se guarda automáticamente en este navegador${info.nube.estado !== 'apagado' ? ' y en tu repositorio privado de GitHub' : ', en esta computadora'}.</p></div></div>
     ${seccionGithub(info.nube)}
     ${seccionAdmin()}
+    ${seccionPerfiles()}
     ${seccionContrasena()}
-    <div class="columnas">
+    ${permisosActuales.perfil !== 'admin' ? '' : `<div class="columnas">
       <section class="tarjeta">
         <h2>Descargar respaldo</h2>
         <p>Guarda un archivo con <strong>todos</strong> los datos. Hacelo seguido (por ejemplo, al terminar cada quincena) y guardá el archivo en un pendrive, en la nube o en tu correo.</p>
@@ -2285,11 +2310,13 @@ async function vistaRespaldo(_params, vigente) {
         <p>Borra <strong>todos</strong> los datos (incluidos los de ejemplo) para empezar a cargar los reales. ${info.ejemplos ? 'Ahora mismo estás viendo datos de ejemplo.' : 'Antes conviene descargar un respaldo.'}</p>
         <div class="acciones"><button class="boton peligro" type="button" id="borrar-todo">Borrar todo y empezar de cero</button></div>
       </section>
-    </div>`;
+    </div>`}`;
 
   conectarSeccionGithub(info.nube);
   conectarSeccionContrasena();
   conectarSeccionAdmin();
+  conectarSeccionPerfiles();
+  if (permisosActuales.perfil !== 'admin') return;
 
   const zona = document.getElementById('zona-respaldo');
   const bajar = async () => {
@@ -2545,6 +2572,53 @@ function seccionAdmin() {
     <p>Empresas y Entidades las podés ver, pero agregar o borrar lo hace el administrador. Si sos el administrador, ingresá la clave para habilitarlo en esta computadora.</p>
     ${form('form-admin-ingresar', '<div class="campo"><label for="ad-clave">Clave de administrador</label><input id="ad-clave" type="password" autocomplete="current-password"></div>', 'Ingresar como administrador')}
   </section>`;
+}
+
+function seccionPerfiles() {
+  const p = permisosActuales;
+  if (!p.configurado || !p.admin) return '';
+  return `<section class="tarjeta" id="sec-perfiles"><h2>Usuarios y perfiles</h2>
+    <p>Elegí qué solapas ve cada usuario. Todos ven el Panel y la solapa Respaldo (para su contraseña y GitHub).</p>
+    <ul class="lista-perfiles">
+      <li><strong>Admin:</strong> ve todo.</li>
+      <li><strong>Retenciones:</strong> Retenciones recibidas, Descuentos, Reportes, Empresas, Colaboradores y Entidades.</li>
+      <li><strong>Descuento:</strong> Descuentos.</li>
+      <li><strong>Pago:</strong> Descuentos, Pagos y Reportes.</li>
+    </ul>
+    <p class="nota">${p.perfilesActivos ? 'Quien no tenga perfil asignado solo ve el Panel.' : 'Mientras no asignes ningún perfil, todos ven todo, como hasta ahora.'} Quien tiene la clave de administrador siempre ve todo.</p>
+    <div id="lista-perfiles"><p class="cargando">Cargando…</p></div>
+    <form class="formulario" id="form-perfil-nuevo" novalidate>
+      <div class="fila"><div class="campo"><label for="pf-usuario">Usuario</label><input id="pf-usuario" autocomplete="off" spellcheck="false" placeholder="Como lo escribe al entrar"></div>
+      <div class="campo"><label for="pf-perfil">Perfil</label><select id="pf-perfil">${Object.entries(PERFILES).map(([k, v]) => `<option value="${k}">${v.nombre}</option>`).join('')}</select></div></div>
+      <div class="zona-mensaje"></div>
+      <div class="acciones"><button class="boton secundario" type="submit">Asignar perfil</button></div>
+    </form>
+  </section>`;
+}
+
+function conectarSeccionPerfiles() {
+  const lista = document.getElementById('lista-perfiles');
+  if (!lista) return;
+  const opciones = (actual) => `<option value=""${actual ? '' : ' selected'}>Sin perfil</option>${Object.entries(PERFILES).map(([k, v]) => `<option value="${k}"${k === actual ? ' selected' : ''}>${v.nombre}</option>`).join('')}`;
+  const pintar = (usuarios) => {
+    lista.innerHTML = usuarios.length ? `<div class="tabla-contenedor"><table class="mini"><thead><tr><th>Usuario</th><th>Perfil</th></tr></thead><tbody>
+      ${usuarios.map((u) => `<tr><td>${esc(u.usuario)}</td><td><select data-perfil-de="${esc(u.usuario)}" aria-label="Perfil de ${esc(u.usuario)}">${opciones(u.perfil)}</select></td></tr>`).join('')}
+      </tbody></table></div>` : '<p class="vacio">Todavía no hay usuarios. Escribí el nombre abajo.</p>';
+    lista.querySelectorAll('[data-perfil-de]').forEach((sel) => sel.addEventListener('change', async () => {
+      try { await window.backendLocal.asignarPerfil({ usuario: sel.dataset.perfilDe, perfil: sel.value || null }); aviso(sel.value ? `Listo: ${sel.dataset.perfilDe} quedó con el perfil ${PERFILES[sel.value].nombre}.` : `Listo: ${sel.dataset.perfilDe} quedó sin perfil.`); navegar(); }
+      catch (e) { aviso(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA); navegar(); }
+    }));
+  };
+  window.backendLocal.usuariosPerfiles().then(pintar).catch(() => { lista.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div>`; });
+  const f = document.getElementById('form-perfil-nuevo');
+  f.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const zona = f.querySelector('.zona-mensaje');
+    const usuario = f.querySelector('#pf-usuario').value.trim();
+    const perfil = f.querySelector('#pf-perfil').value;
+    try { await window.backendLocal.asignarPerfil({ usuario, perfil }); aviso(`Listo: ${usuario} quedó con el perfil ${PERFILES[perfil].nombre}.`); navegar(); }
+    catch (e) { zona.innerHTML = `<div class="mensaje error">${esc(e instanceof window.backendLocal.ErrorValidacion ? e.message : MENSAJE_FALLA)}</div>`; }
+  });
 }
 
 function conectarSeccionAdmin() {
