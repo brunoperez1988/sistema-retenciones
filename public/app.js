@@ -1833,13 +1833,15 @@ function dialogoPago(mes, g, { pago = null, items = null, importe = null } = {})
 
 // ── Reportes ──
 
-const filtrosRep = { periodo: '', q: '', tipo: '', tipo_descuento: '', empresa_id: '', agrupar: 'beneficiario', pestana: 'planilla' };
+const filtrosRep = { periodo: null, q: '', tipo: '', tipo_descuento: '', empresa_id: '', agrupar: 'beneficiario', pestana: 'planilla' };
 const filtrosHist = { q: '', usuario: '' };
 const filtrosConst = { colaborador_id: '', desde: '', hasta: '' };
 
 async function vistaReportes(params, vigente) {
   const cat = await api('/api/catalogos');
   if (!vigente()) return;
+  // Arranca en el mes de trabajo; los meses cerrados se ven eligiéndolos.
+  if (filtrosRep.periodo === null) filtrosRep.periodo = cat.mes_trabajo;
   if (params && params.get('pestana')) filtrosRep.pestana = params.get('pestana');
   if (params && params.get('colaborador')) { filtrosConst.colaborador_id = params.get('colaborador'); history.replaceState(null, '', '#/reportes'); }
   $app.innerHTML = `

@@ -2033,7 +2033,8 @@
   }
 
   function armarPlanilla(f) {
-    const filas = listarRetenciones({ ...f, con_saldo: true });
+    // Solo las retenciones del mes elegido: lo de meses anteriores (ya cerrados) no aparece.
+    const filas = listarRetenciones(f);
     const columnas = [
       { titulo: 'Período', ancho: 10 }, { titulo: 'Cédula', ancho: 12 }, { titulo: 'Colaborador', ancho: 26 }, { titulo: 'Entidad', ancho: 26 },
       { titulo: 'Tipo', ancho: 11 }, { titulo: 'Concepto', ancho: 24 }, { titulo: 'Expediente / Juzgado', ancho: 22 }, { titulo: 'Beneficiario', ancho: 24 },
@@ -2060,7 +2061,7 @@
     const mes = f.periodo ? periodo(f.periodo) : null;
     const antes = (id) => (mes ? estado.descuentos.filter((d) => d.retencion_id === id && d.fecha.slice(0, 7) < mes).reduce((a, d) => a + d.importe, 0) : 0);
     const grupos = new Map();
-    for (const x of listarRetenciones({ ...f, con_saldo: true })) {
+    for (const x of listarRetenciones(f)) {
       if (!grupos.has(x.entidad)) grupos.set(x.entidad, { entidad: x.entidad, tipo: x.tipo, filas: [], para_descontar: 0, descontado: 0, falta: 0 });
       const g = grupos.get(x.entidad);
       const previo = x.arrastre ? antes(x.id) : 0;
@@ -2133,7 +2134,7 @@
       if (ruta === '/api/descuentos') return listarDescuentos(f);
       if (ruta === '/api/mes-de-trabajo') return { mes: mesDeTrabajo() };
       if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
-      if (ruta === '/api/reportes/planilla') return listarRetenciones({ ...f, con_saldo: true });
+      if (ruta === '/api/reportes/planilla') return listarRetenciones(f);
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
       if (ruta === '/api/reportes/entidades') return reportePorEntidad(f);
       if (ruta === '/api/datos') return infoDatos();
