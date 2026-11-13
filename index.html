@@ -3500,7 +3500,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
 
 // ── Retenciones recibidas ──
 
-const filtrosRet = { colaborador_id: '', periodo: '', tipo: '', entidad_id: '', q: '' };
+const filtrosRet = { colaborador_id: '', periodo: null, tipo: '', entidad_id: '', q: '' };
 
 // Buscador de colaboradores: se escribe la cédula o parte del nombre y se elige de la lista.
 const sinAcentos = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -3606,6 +3606,8 @@ function dialogoNuevoColaborador(escrito = '') {
 async function vistaRetenciones(_params, vigente) {
   const cat = await api('/api/catalogos');
   if (!vigente()) return;
+  // Arranca mostrando solo el mes de trabajo: los meses cerrados no aparecen salvo que se elija ese período.
+  if (filtrosRet.periodo === null) filtrosRet.periodo = cat.mes_trabajo;
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div></div>
     <div class="apilado">
