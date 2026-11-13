@@ -1826,12 +1826,18 @@
   function armarPersonasDescuento(f) {
     if (!f.mes) throw new ErrorValidacion('Elegí el mes del descuento para exportar.');
     const mes = periodo(f.mes);
+    // Una fila por persona; si tiene descuentos de varios tipos, van todos en la misma celda.
     const personas = new Map();
-    for (const d of listarDescuentos(f)) if (!personas.has(d.cedula)) personas.set(d.cedula, d.colaborador);
+    const ORDEN_TIPO = ['judicial', 'comercial', 'otros'];
+    for (const d of listarDescuentos(f)) {
+      if (!personas.has(d.cedula)) personas.set(d.cedula, { nombre: d.colaborador, tipos: new Set() });
+      personas.get(d.cedula).tipos.add(d.tipo_entidad);
+    }
     const [a, m] = mes.split('-');
     if (!personas.size) throw new ErrorValidacion(`No hay descuentos en ${m}/${a} con esos filtros.`);
-    const filas = [...personas].sort((a, b) => a[1].localeCompare(b[1], 'es')).map(([ci, completo]) => [ci, completo]);
-    const columnas = [{ titulo: 'Documento', ancho: 14 }, { titulo: 'Nombre y apellido', ancho: 40 }];
+    const filas = [...personas].sort((x, y) => x[1].nombre.localeCompare(y[1].nombre, 'es'))
+      .map(([ci, p]) => [ci, p.nombre, [...p.tipos].sort((x, y) => ORDEN_TIPO.indexOf(x) - ORDEN_TIPO.indexOf(y)).map((t) => TIPO_TXT[t] || t).join(', ')]);
+    const columnas = [{ titulo: 'Documento', ancho: 14 }, { titulo: 'Nombre y apellido', ancho: 40 }, { titulo: 'Tipo de retención', ancho: 28 }];
     return { columnas, filas, hoja: 'Personas', titulo: `Personas con descuento en ${m}/${a}`, subtitulo: `${filas.length} ${filas.length === 1 ? 'persona' : 'personas'} · Generado el ${new Date().toLocaleString('es-UY')}` };
   }
 
