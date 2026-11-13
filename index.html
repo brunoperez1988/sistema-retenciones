@@ -1638,10 +1638,13 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
   }
 
   // Entidades del mes que todavía no tienen el pago registrado, o cuyo importe cambió después de pagar.
+  // ANDA se puede cerrar con el pago registrado aunque el importe no coincida; las demás aceptan hasta $ 10 de diferencia.
   function pagosPendientes(mes) {
     // Las judiciales no frenan el cierre: lo que no se depositó pasa a los Pagos del mes siguiente.
     // "Otros descuentos" tampoco: se puede registrar el pago, pero no hace falta para cerrar.
-    return listarPagos({ periodo: mes }).grupos.filter((g) => g.tipo === 'comercial' && g.importe > 0 && (!g.pago || g.pago.importe !== g.importe));
+    const DIFERENCIA_ACEPTADA = 1000; // $ 10,00 en centésimos
+    const cuadra = (g) => normalizar(g.entidad) === 'anda' || Math.abs(g.pago.importe - g.importe) <= DIFERENCIA_ACEPTADA;
+    return listarPagos({ periodo: mes }).grupos.filter((g) => g.tipo === 'comercial' && g.importe > 0 && (!g.pago || !cuadra(g)));
   }
 
   function nombreArchivoSeguro(n) {
@@ -1779,7 +1782,7 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
     if (cierreDe(mes)) throw new ErrorValidacion(`${nombreMesTxt(mes)} ya está cerrado.`, 409);
     const sinPagar = pagosPendientes(mes);
     if (sinPagar.length) {
-      throw new ErrorValidacion(`No se puede cerrar ${nombreMesTxt(mes)}: falta registrar el pago de ${sinPagar.map((g) => g.entidad).join(', ')}. Registralo en la pestaña Pagos.`, 409);
+      throw new ErrorValidacion(`No se puede cerrar ${nombreMesTxt(mes)}: falta registrar el pago de ${sinPagar.map((g) => g.pago ? `${g.entidad} (se pagó ${pesosTxt(g.pago.importe)} y da ${pesosTxt(g.importe)}: más de $ 10 de diferencia)` : g.entidad).join(', ')}. Revisalo en la pestaña Pagos.`, 409);
     }
     return modificar((e) => {
       e.cierres = [...(e.cierres || []), { id: e.sig++, mes, cerrado_por: usuarioActual || '', fecha: ahora() }];
