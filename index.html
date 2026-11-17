@@ -1784,16 +1784,35 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
     if (sinPagar.length) {
       throw new ErrorValidacion(`No se puede cerrar ${nombreMesTxt(mes)}: falta registrar el pago de ${sinPagar.map((g) => g.pago ? `${g.entidad} (se pagó ${pesosTxt(g.pago.importe)} y da ${pesosTxt(g.importe)}: más de $ 10 de diferencia)` : g.entidad).join(', ')}. Revisalo en la pestaña Pagos.`, 409);
     }
+    // Otros descuentos que no se terminaron de descontar: el saldo se carga solo como retención nueva del mes siguiente.
+    // Desde noviembre 2026: los saldos de octubre ya se cargaron a mano en noviembre.
+    const conSaldo = mes < '2026-11' ? [] : listarRetenciones({ periodo: mes, tipo: 'otros' }).filter((r) => r.importe_total != null && r.pendiente > 0);
     return modificar((e) => {
       e.cierres = [...(e.cierres || []), { id: e.sig++, mes, cerrado_por: usuarioActual || '', fecha: ahora() }];
-      return { ok: true, mes };
+      const sig = mesSiguiente(mes);
+      let saldos = 0;
+      for (const r of conSaldo) {
+        if (e.retenciones.some((x) => x.saldo_de === r.id)) continue;
+        const orig = e.retenciones.find((x) => x.id === r.id);
+        e.retenciones.push({ id: e.sig++, colaborador_id: orig.colaborador_id, entidad_id: orig.entidad_id, periodo: sig, regla: '',
+          importe_total: r.pendiente, concepto: [orig.concepto, `saldo de ${nombreMesTxt(mes)}`].filter(Boolean).join(' · '), expediente: orig.expediente || '',
+          cargado_por: 'Automática (saldo del mes anterior)', creado_en: ahora(), saldo_de: orig.id });
+        saldos += 1;
+      }
+      return { ok: true, mes, saldos };
     });
   }
 
   function reabrirMes(mes) {
     mes = periodo(mes);
     if (!cierreDe(mes)) throw new ErrorValidacion(`${nombreMesTxt(mes)} no está cerrado.`, 404);
-    return modificar((e) => { e.cierres = e.cierres.filter((x) => x.mes !== mes); return { ok: true, mes }; });
+    return modificar((e) => {
+      e.cierres = e.cierres.filter((x) => x.mes !== mes);
+      // Los saldos que se pasaron solos al cerrar se quitan (si todavía no tienen descuentos); se vuelven a pasar al cerrar de nuevo.
+      const deEsteMes = new Set(e.retenciones.filter((r) => r.periodo === mes).map((r) => r.id));
+      e.retenciones = e.retenciones.filter((r) => !(r.saldo_de && deEsteMes.has(r.saldo_de) && !e.descuentos.some((d) => d.retencion_id === r.id)));
+      return { ok: true, mes };
+    });
   }
 
   // ── Avisos del Panel: lo que está pendiente de revisar ──
@@ -1862,7 +1881,7 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
         return { accion: 'Pago registrado', detalle: (res, e) => { const p = e.pagos.find((x) => x.id === res.id); return `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia} · ${fechaTxt(p.fecha_pago)}${(() => { const k = comprobantesDe(p).length; return k ? ` · con ${k === 1 ? 'comprobante' : `${k} comprobantes`}` : ''; })()}`; } };
       }
       if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Comprobante adjuntado', detalle: (res) => (p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}${res && res.agregados > 1 ? ` · ${res.agregados} archivos` : ''}` : '') }; }
-      if (ruta === '/api/cierres') return { accion: 'Mes cerrado', detalle: c.mes ? nombreMesTxt(periodo(c.mes)) : '' };
+      if (ruta === '/api/cierres') return { accion: 'Mes cerrado', detalle: (res) => `${c.mes ? nombreMesTxt(periodo(c.mes)) : ''}${res && res.saldos ? ` · ${res.saldos} ${res.saldos === 1 ? 'saldo de Otros descuentos pasó' : 'saldos de Otros descuentos pasaron'} al mes siguiente` : ''}` };
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) { const r = ret(m[1]); return { accion: 'Importe definido', detalle: () => `${descRet(r)} · ${pesosTxt(importe(c.importe_total))}` }; }
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/editar$/))) {
         const antes = { ...ret(m[1]) };
