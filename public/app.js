@@ -983,7 +983,7 @@ async function vistaRetenciones(_params, vigente) {
     nota.hidden = !op?.value || esJudicial();
     nota.textContent = op?.dataset.pasa === '1'
       ? 'Lo que no se llegue a descontar este mes pasa solo al mes siguiente, hasta quedar en 0.'
-      : 'Las retenciones comerciales se cargan cada mes: no se repiten ni pasan el saldo al mes siguiente.';
+      : 'Se cargan cada mes: no se repiten ni pasan el saldo solas al mes siguiente. Si quedó algo sin descontar, se carga en el mes nuevo.';
   });
   const selCalculo = document.getElementById('r-calculo');
   const mostrarCalculo = () => {

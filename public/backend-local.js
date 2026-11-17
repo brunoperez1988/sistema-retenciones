@@ -818,9 +818,9 @@
   // - el resto de las comerciales: se cargan cada mes, sin repetir ni pasar saldo.
   const TIPOS_ENTIDAD = ['judicial', 'comercial', 'otros'];
   const sePuedeRepetir = (ent) => Boolean(ent && ent.tipo === 'judicial');
-  // Solo los Otros descuentos pasan al mes siguiente, y únicamente con el saldo que les faltó descontar.
-  // Las cooperativas se cargan mes a mes y las judiciales se copian cada mes como nuevas.
-  const pasaSaldo = (ent) => Boolean(ent && ent.tipo === 'otros');
+  // Ningún saldo pasa solo al mes siguiente: lo que faltó descontar de Otros descuentos se carga en la planilla del mes nuevo,
+  // las cooperativas se cargan mes a mes y las judiciales se copian cada mes como nuevas.
+  const pasaSaldo = () => false;
 
   function repiteActiva(r) {
     const t = r.mensual ? r : r.origen_id ? estado.retenciones.find((x) => x.id === r.origen_id) : null;
