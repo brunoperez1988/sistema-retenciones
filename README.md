@@ -119,3 +119,27 @@ El repositorio ya trae `vercel.json`: Vercel arma la versión de archivo único
 En Vercel no hace falta configurar nada a mano: en *Settings → Build and Deployment*
 dejá todos los "Override" apagados. Los datos de esta versión se guardan en el
 navegador de cada computadora (igual que el archivo único).
+
+### Ingreso solo para cuentas @aglh.com.uy
+
+`middleware.js` pide iniciar sesión con Google antes de mostrar la página y solo deja
+pasar cuentas del dominio `aglh.com.uy`. La sesión dura 7 días; para salir, abrir
+`/auth/logout`.
+
+Configuración (una sola vez):
+
+1. En [Google Cloud Console](https://console.cloud.google.com/) crear un proyecto
+   (con la cuenta @aglh.com.uy).
+2. *APIs y servicios → Pantalla de consentimiento de OAuth*: tipo **Interno**,
+   nombre "Control de Retenciones" y tu correo como contacto.
+3. *APIs y servicios → Credenciales → Crear credenciales → ID de cliente de OAuth*:
+   tipo **Aplicación web**. En *URI de redireccionamiento autorizados* agregar
+   `https://TU-DIRECCION.vercel.app/auth/callback` (la dirección que muestra Vercel).
+4. Copiar el **ID de cliente** y el **Secreto del cliente**.
+5. En Vercel, *Settings → Environment Variables*, agregar:
+   - `GOOGLE_CLIENT_ID`: el ID de cliente
+   - `GOOGLE_CLIENT_SECRET`: el secreto del cliente
+   - `SESSION_SECRET`: una frase larga al azar (30 caracteres o más)
+6. Volver a publicar (*Deployments → … → Redeploy*).
+
+Si falta alguna variable, la página muestra "Falta configurar el ingreso" y no deja entrar.
