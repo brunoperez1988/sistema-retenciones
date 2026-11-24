@@ -111,3 +111,11 @@ Respaldo.bat         respaldo con doble clic (Windows)
 public/              pantallas (HTML, CSS, JS)
 test/                pruebas de las reglas
 ```
+
+## Publicar en Vercel
+
+El repositorio ya trae `vercel.json`: Vercel arma la versión de archivo único
+(`npm run archivo-unico`) y publica la carpeta `dist`, donde queda `index.html`.
+En Vercel no hace falta configurar nada a mano: en *Settings → Build and Deployment*
+dejá todos los "Override" apagados. Los datos de esta versión se guardan en el
+navegador de cada computadora (igual que el archivo único).
