@@ -274,6 +274,28 @@
     return permisos();
   }
   async function salirAdmin() { await guardarPruebaAdmin(null); return permisos(); }
+  // Olvidé la clave de administrador: se crea una nueva probando que se tiene la clave de GitHub
+  // con permiso de escritura sobre el repositorio de datos (quien la tiene ya puede cambiar todos los datos).
+  async function restablecerAdmin(datos) {
+    await iniciar();
+    const token = String(datos.token || '').trim();
+    if (!token) throw new ErrorValidacion('Pegá la clave (token) de GitHub.');
+    const clave = String(datos.clave || '');
+    if (!clave) throw new ErrorValidacion('Escribí la clave de administrador nueva.');
+    if (clave !== String(datos.clave2 || '')) throw new ErrorValidacion('Las dos claves no coinciden.');
+    const repo = (nubeCfg && nubeCfg.repo) || REPO_DATOS;
+    const res = await github({ repo, token }, 'GET', `/repos/${repo}`).catch((e) => { throw new ErrorValidacion(e.message); });
+    if (res.status === 404) throw new ErrorValidacion('Esa clave de GitHub no tiene acceso al repositorio de datos.');
+    if (!res.ok) throw new ErrorValidacion(`GitHub respondió ${res.status}.`);
+    const info = await res.json();
+    if (!info.permissions || info.permissions.push !== true) throw new ErrorValidacion('Esa clave de GitHub no tiene permiso para escribir en el repositorio de datos.');
+    const sal = crypto.getRandomValues(new Uint8Array(16));
+    const cfg = { sal: b64(sal), iteraciones: 200000, hash: await resumenClaveAdmin(clave, sal, 200000), definido_por: usuarioActual || '', fecha: ahora() };
+    registroPendiente = { accion: 'Clave de administrador restablecida', detalle: '' };
+    await modificar((e) => { e.admin = cfg; });
+    await guardarPruebaAdmin({ hash: cfg.hash });
+    return permisos();
+  }
 
   function cuenta() {
     const c = leerCuenta();
@@ -342,6 +364,8 @@
     const bin = atob(String(b64).replace(/\s/g, ''));
     return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
   }
+
+  const REPO_DATOS = 'brunoperez1988/sistema-retenciones-datos';
 
   class ErrorNube extends Error {
     constructor(mensaje, status = 0) { super(mensaje); this.status = status; }
@@ -2230,7 +2254,7 @@
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
     cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
-    permisos, configurarAdmin, ingresarAdmin, salirAdmin, usuariosPerfiles, asignarPerfil,
+    permisos, configurarAdmin, ingresarAdmin, salirAdmin, restablecerAdmin, usuariosPerfiles, asignarPerfil,
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,
   };
