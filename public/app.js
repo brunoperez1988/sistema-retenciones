@@ -2585,6 +2585,12 @@ function seccionAdmin() {
   return `<section class="tarjeta" id="sec-admin"><h2>Administrador</h2>
     <p>Empresas y Entidades las podés ver, pero agregar o borrar lo hace el administrador. Si sos el administrador, ingresá la clave para habilitarlo en esta computadora.</p>
     ${form('form-admin-ingresar', '<div class="campo"><label for="ad-clave">Clave de administrador</label><input id="ad-clave" type="password" autocomplete="current-password"></div>', 'Ingresar como administrador')}
+    <details style="margin-top:12px"><summary><strong>Olvidé la clave de administrador</strong></summary>
+      <p class="nota">Para crear una clave nueva, pegá la clave (token) de GitHub donde se guardan los datos. Si no la tenés, en <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">GitHub</a> tocá la clave “Retenciones” y luego <strong>Regenerate token</strong>. No se borra ningún dato.</p>
+      ${form('form-admin-restablecer', `<div class="campo"><label for="ar-token">Clave de GitHub (token)</label><input id="ar-token" type="password" autocomplete="off" placeholder="github_pat_…"></div>
+        <div class="fila"><div class="campo"><label for="ar-clave">Clave de administrador nueva</label><input id="ar-clave" type="password" autocomplete="new-password"></div>
+        <div class="campo"><label for="ar-clave2">Repetí la clave nueva</label><input id="ar-clave2" type="password" autocomplete="new-password"></div></div>`, 'Crear clave nueva')}
+    </details>
   </section>`;
 }
 
@@ -2654,6 +2660,8 @@ function conectarSeccionAdmin() {
   enviar('form-admin-crear', (f) => window.backendLocal.configurarAdmin({ clave: f.querySelector('#ad-clave').value, clave2: f.querySelector('#ad-clave2').value }),
     'Listo: la clave de administrador quedó guardada. Ahora solo vos podés agregar o borrar empresas y entidades.');
   enviar('form-admin-ingresar', (f) => window.backendLocal.ingresarAdmin({ clave: f.querySelector('#ad-clave').value }), 'Listo: en esta computadora sos el administrador.');
+  enviar('form-admin-restablecer', (f) => window.backendLocal.restablecerAdmin({ token: f.querySelector('#ar-token').value, clave: f.querySelector('#ar-clave').value, clave2: f.querySelector('#ar-clave2').value }),
+    'Listo: la clave de administrador nueva quedó guardada y en esta computadora sos el administrador.');
   const salirAd = document.getElementById('ad-salir');
   if (salirAd) salirAd.addEventListener('click', async () => {
     if (!(await confirmar({ titulo: '¿Dejar de ser administrador acá?', html: '<p>En esta computadora vas a poder ver Empresas y Entidades, pero no agregar ni borrar. Podés volver a habilitarlo ingresando la clave.</p>', boton: 'Sí, dejar de ser administrador' }))) return;
