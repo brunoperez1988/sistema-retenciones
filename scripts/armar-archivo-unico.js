@@ -21,4 +21,6 @@ if (html.includes('href="/styles.css"') || html.includes('src="/app.js"')) throw
 const destino = path.join(__dirname, '..', 'dist', 'Sistema-Retenciones.html');
 fs.mkdirSync(path.dirname(destino), { recursive: true });
 fs.writeFileSync(destino, html);
+// Copia como index.html para publicarla en la web (Vercel sirve dist/index.html).
+fs.writeFileSync(path.join(path.dirname(destino), 'index.html'), html);
 console.log('Listo:', destino);
