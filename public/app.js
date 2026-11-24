@@ -2511,7 +2511,7 @@ function pantallaAcceso(c) {
         ? 'Elegí un usuario y una contraseña. Con la contraseña se cifran los datos guardados en esta computadora: sin ella nadie los puede leer. <strong>Anotala en un lugar seguro.</strong>'
         : 'Ingresá con tu usuario y contraseña para ver las retenciones.'}</p>
       <form class="formulario" id="form-acceso" novalidate>
-        <div class="campo"><label for="ac-usuario">Usuario</label><input id="ac-usuario" autocomplete="username" value="${esc(c.usuario)}" autocapitalize="off" spellcheck="false"></div>
+        <div class="campo"><label for="ac-usuario">Usuario</label><input id="ac-usuario" autocomplete="username" value="${esc(c.usuario)}" autocapitalize="off" spellcheck="false">${crear ? '<span class="ayuda">Puede ser tu correo o un nombre sin espacios ni tildes.</span>' : ''}</div>
         <div class="campo"><label for="ac-clave">Contraseña</label><input id="ac-clave" type="password" autocomplete="${crear ? 'new-password' : 'current-password'}"></div>
         ${crear ? '<div class="campo"><label for="ac-clave2">Repetí la contraseña</label><input id="ac-clave2" type="password" autocomplete="new-password"></div>' : ''}
         ${crear ? `<details class="traer-github"${c.usuario ? '' : ' open'}><summary>¿Ya usás el sistema en otra computadora? Traé tus datos de GitHub</summary>
