@@ -74,7 +74,10 @@ export default async function middleware(req) {
   const { GOOGLE_CLIENT_ID: id, GOOGLE_CLIENT_SECRET: secretoCliente, SESSION_SECRET: secreto } = process.env;
   const dominio = (process.env.ALLOWED_DOMAIN || 'aglh.com.uy').toLowerCase();
   if (!id || !secretoCliente || !secreto || secreto.length < 16) {
-    return pagina(503, 'Falta configurar el ingreso', 'El acceso con Google todavía no está configurado en Vercel.');
+    // Solo se muestran los nombres de lo que falta, nunca los valores.
+    const faltan = [!id && 'GOOGLE_CLIENT_ID', !secretoCliente && 'GOOGLE_CLIENT_SECRET', !secreto && 'SESSION_SECRET'].filter(Boolean);
+    const corto = secreto && secreto.length < 16 ? '<br>SESSION_SECRET es muy corto: tiene que tener 16 caracteres o más.' : '';
+    return pagina(503, 'Falta configurar el ingreso', `El acceso con Google todavía no está configurado en Vercel.${faltan.length ? `<br>Falta: <strong>${faltan.join(', ')}</strong>.` : ''}${corto}`);
   }
   const redirect = `${url.origin}/auth/callback`;
   const entrar = `<a class="b" href="/auth/login">Ingresar con Google</a>`;
