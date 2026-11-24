@@ -2438,6 +2438,13 @@ function seccionGithub(n) {
 }
 
 function conectarSeccionGithub(n) {
+  if (n.estado === 'apagado') window.backendLocal.servidor().then((s) => {
+    const campo = document.getElementById('nube-token');
+    if (!s || !s.github || !campo) return;
+    campo.placeholder = 'No hace falta: dejalo vacío';
+    const nota = campo.closest('form').querySelector('.nota');
+    if (nota) nota.textContent = 'En la versión web la clave de GitHub ya está guardada en el servidor: dejá el campo vacío y tocá Conectar.';
+  });
   if (n.estado !== 'apagado') {
     document.getElementById('nube-ahora').addEventListener('click', async (ev) => {
       ev.target.disabled = true;
@@ -2524,6 +2531,14 @@ function pantallaAcceso(c) {
     </section>`;
   const form = document.getElementById('form-acceso');
   (c.usuario ? form.querySelector('#ac-clave') : form.querySelector('#ac-usuario')).focus();
+  // En la web, la clave de GitHub está en el servidor: los datos se traen solos.
+  let traerDelServidor = false;
+  if (crear) window.backendLocal.servidor().then((s) => {
+    if (!s || !s.github) return;
+    traerDelServidor = true;
+    const det = form.querySelector('.traer-github');
+    if (det) det.outerHTML = '<p class="nota">Al crear tu usuario se traen solos los datos de la empresa.</p>';
+  });
   const zona = form.querySelector('.zona-mensaje');
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -2534,15 +2549,15 @@ function pantallaAcceso(c) {
       const u = form.querySelector('#ac-usuario').value;
       const k = form.querySelector('#ac-clave').value;
       if (crear) {
-        const token = form.querySelector('#ac-token').value.trim();
+        const token = (form.querySelector('#ac-token')?.value || '').trim();
         await window.backendLocal.crearCuenta(u, k, form.querySelector('#ac-clave2').value);
-        if (token) {
+        if (token || traerDelServidor) {
           zona.innerHTML = '<p class="nota">Trayendo tus datos de GitHub…</p>';
           try {
             await window.backendLocal.conectarNube('brunoperez1988/sistema-retenciones-datos', token, 'traer');
             aviso('Listo: se trajeron tus datos de GitHub y se siguen guardando ahí.');
           } catch (e2) {
-            aviso(`El usuario se creó, pero no se pudieron traer los datos de GitHub: ${String(e2.message || 'revisá la clave').replace(/\.$/, '')}. Probá de nuevo en Respaldo → Guardar en GitHub.`);
+            aviso(`El usuario se creó, pero no se pudieron traer los datos: ${String(e2.message || 'revisá la clave').replace(/\.$/, '')}. Probá de nuevo en Respaldo → Guardar en GitHub.`);
           }
         }
       } else await window.backendLocal.ingresar(u, k);
@@ -2660,7 +2675,12 @@ function conectarSeccionAdmin() {
   enviar('form-admin-crear', (f) => window.backendLocal.configurarAdmin({ clave: f.querySelector('#ad-clave').value, clave2: f.querySelector('#ad-clave2').value }),
     'Listo: la clave de administrador quedó guardada. Ahora solo vos podés agregar o borrar empresas y entidades.');
   enviar('form-admin-ingresar', (f) => window.backendLocal.ingresarAdmin({ clave: f.querySelector('#ad-clave').value }), 'Listo: en esta computadora sos el administrador.');
-  enviar('form-admin-restablecer', (f) => window.backendLocal.restablecerAdmin({ token: f.querySelector('#ar-token').value, clave: f.querySelector('#ar-clave').value, clave2: f.querySelector('#ar-clave2').value }),
+  window.backendLocal.servidor().then((s) => {
+    const campo = document.getElementById('ar-token');
+    if (!s || !s.admin || !campo) return;
+    campo.closest('.campo').outerHTML = `<p class="nota">Ingresaste con ${esc(s.email)}, que es administrador: no hace falta la clave de GitHub.</p>`;
+  });
+  enviar('form-admin-restablecer', (f) => window.backendLocal.restablecerAdmin({ token: f.querySelector('#ar-token')?.value || '', clave: f.querySelector('#ar-clave').value, clave2: f.querySelector('#ar-clave2').value }),
     'Listo: la clave de administrador nueva quedó guardada y en esta computadora sos el administrador.');
   const salirAd = document.getElementById('ad-salir');
   if (salirAd) salirAd.addEventListener('click', async () => {
