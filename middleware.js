@@ -6,6 +6,9 @@
 //   GOOGLE_CLIENT_SECRET  Secreto del cliente OAuth
 //   SESSION_SECRET        Una frase larga al azar (30 caracteres o más)
 //   ALLOWED_DOMAIN        Opcional. Por defecto: aglh.com.uy
+//   GITHUB_TOKEN          Opcional. Clave de GitHub del repositorio de datos: así nadie la pega en su navegador.
+//   DATA_REPO             Opcional. Por defecto: brunoperez1988/sistema-retenciones-datos
+//   ADMIN_EMAILS          Opcional. Correos (separados por coma) que pueden restablecer la clave de administrador sin la de GitHub.
 //
 // Si falta alguna variable, la página no se muestra (falla cerrada).
 
@@ -121,8 +124,36 @@ export default async function middleware(req) {
     return new Response(null, { status: 302, headers: h });
   }
 
-  if (await sesionValida(req, secreto)) {
-    return new Response(null, { headers: { 'x-middleware-next': '1' } }); // sigue a la página
+  const email = await sesionValida(req, secreto);
+  if (!email) {
+    if (url.pathname === '/auth/yo' || url.pathname.startsWith('/gh/')) {
+      return new Response('{"error":"sin sesión"}', { status: 401, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' } });
+    }
+    return pagina(401, 'Control de Retenciones', `Ingresá con tu cuenta de Google @${dominio}.<br>${entrar}`);
   }
-  return pagina(401, 'Control de Retenciones', `Ingresá con tu cuenta de Google @${dominio}.<br>${entrar}`);
+
+  const tokenGithub = process.env.GITHUB_TOKEN || '';
+  const repo = process.env.DATA_REPO || 'brunoperez1988/sistema-retenciones-datos';
+
+  if (url.pathname === '/auth/yo') {
+    const admins = (process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+    return Response.json({ email, github: Boolean(tokenGithub), admin: admins.includes(email) }, { headers: { 'cache-control': 'no-store' } });
+  }
+
+  // Pasarela a GitHub: solo el repositorio de datos, con la clave guardada en Vercel.
+  if (url.pathname.startsWith('/gh/')) {
+    const ruta = url.pathname.slice(3);
+    const base = `/repos/${repo}`;
+    if (!tokenGithub) return Response.json({ error: 'Falta GITHUB_TOKEN' }, { status: 503 });
+    if (ruta.includes('..') || (ruta !== base && !ruta.startsWith(`${base}/`))) return Response.json({ error: 'Ruta no permitida' }, { status: 403 });
+    if (!['GET', 'PUT'].includes(req.method)) return Response.json({ error: 'Método no permitido' }, { status: 405 });
+    const h = new Headers({ Authorization: `Bearer ${tokenGithub}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sistema-retenciones' });
+    for (const n of ['accept', 'content-type', 'if-none-match']) { const v = req.headers.get(n); if (v) h.set(n, v); }
+    const r = await fetch(`https://api.github.com${ruta}${url.search}`, { method: req.method, headers: h, body: req.method === 'PUT' ? await req.text() : undefined });
+    const out = new Headers({ 'cache-control': 'no-store' });
+    for (const n of ['content-type', 'etag', 'x-github-request-id']) { const v = r.headers.get(n); if (v) out.set(n, v); }
+    return new Response(r.status === 304 ? null : r.body, { status: r.status, headers: out });
+  }
+
+  return new Response(null, { headers: { 'x-middleware-next': '1' } }); // sigue a la página
 }

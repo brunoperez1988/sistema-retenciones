@@ -279,16 +279,20 @@
   async function restablecerAdmin(datos) {
     await iniciar();
     const token = String(datos.token || '').trim();
-    if (!token) throw new ErrorValidacion('Pegá la clave (token) de GitHub.');
+    // En la web, quien ingresó con Google con un correo de ADMIN_EMAILS no necesita la clave de GitHub.
+    const porGoogle = !token && Boolean((await servidor())?.admin);
+    if (!token && !porGoogle) throw new ErrorValidacion('Pegá la clave (token) de GitHub.');
     const clave = String(datos.clave || '');
     if (!clave) throw new ErrorValidacion('Escribí la clave de administrador nueva.');
     if (clave !== String(datos.clave2 || '')) throw new ErrorValidacion('Las dos claves no coinciden.');
-    const repo = (nubeCfg && nubeCfg.repo) || REPO_DATOS;
-    const res = await github({ repo, token }, 'GET', `/repos/${repo}`).catch((e) => { throw new ErrorValidacion(e.message); });
-    if (res.status === 404) throw new ErrorValidacion('Esa clave de GitHub no tiene acceso al repositorio de datos.');
-    if (!res.ok) throw new ErrorValidacion(`GitHub respondió ${res.status}.`);
-    const info = await res.json();
-    if (!info.permissions || info.permissions.push !== true) throw new ErrorValidacion('Esa clave de GitHub no tiene permiso para escribir en el repositorio de datos.');
+    if (!porGoogle) {
+      const repo = (nubeCfg && nubeCfg.repo) || REPO_DATOS;
+      const res = await github({ repo, token }, 'GET', `/repos/${repo}`).catch((e) => { throw new ErrorValidacion(e.message); });
+      if (res.status === 404) throw new ErrorValidacion('Esa clave de GitHub no tiene acceso al repositorio de datos.');
+      if (!res.ok) throw new ErrorValidacion(`GitHub respondió ${res.status}.`);
+      const info = await res.json();
+      if (!info.permissions || info.permissions.push !== true) throw new ErrorValidacion('Esa clave de GitHub no tiene permiso para escribir en el repositorio de datos.');
+    }
     const sal = crypto.getRandomValues(new Uint8Array(16));
     const cfg = { sal: b64(sal), iteraciones: 200000, hash: await resumenClaveAdmin(clave, sal, 200000), definido_por: usuarioActual || '', fecha: ahora() };
     registroPendiente = { accion: 'Clave de administrador restablecida', detalle: '' };
@@ -371,18 +375,34 @@
     constructor(mensaje, status = 0) { super(mensaje); this.status = status; }
   }
 
+  // Versión publicada en la web: la clave de GitHub vive en el servidor (Vercel) y los pedidos pasan por /gh/.
+  // Solo funciona después de ingresar con Google con una cuenta de la empresa.
+  const SERVIDOR = 'servidor';
+  let servidorCache;
+  async function servidor() {
+    if (servidorCache !== undefined) return servidorCache;
+    try {
+      if (!/^https?:$/.test(location.protocol)) throw new Error('archivo local');
+      const r = await fetch('/auth/yo', { cache: 'no-store' });
+      servidorCache = r.ok && (r.headers.get('content-type') || '').includes('json') ? await r.json() : null;
+    } catch { servidorCache = null; }
+    return servidorCache;
+  }
+
   async function github(config, metodo, ruta, cuerpo, accept = 'application/vnd.github+json', extra = {}) {
     let res;
+    const viaServidor = config.token === SERVIDOR;
     try {
-      res = await fetch(`https://api.github.com${ruta}`, {
+      res = await fetch(viaServidor ? `/gh${ruta}` : `https://api.github.com${ruta}`, {
         method: metodo,
-        headers: { Authorization: `Bearer ${config.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(cuerpo ? { 'Content-Type': 'application/json' } : {}), ...extra },
+        headers: { ...(viaServidor ? {} : { Authorization: `Bearer ${config.token}` }), Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(cuerpo ? { 'Content-Type': 'application/json' } : {}), ...extra },
         body: cuerpo ? JSON.stringify(cuerpo) : undefined,
         cache: 'no-store',
       });
     } catch {
       throw new ErrorNube('No hay conexión con GitHub.');
     }
+    if (viaServidor && res.status === 401 && !(res.headers.get('x-github-request-id'))) throw new ErrorNube('Tu sesión venció. Recargá la página e ingresá de nuevo con Google.', 401);
     if (res.status === 401) throw new ErrorNube('La clave de GitHub no es válida o venció.', 401);
     if (res.status === 403) throw new ErrorNube('La clave no tiene permiso sobre ese repositorio (revisá que tenga "Contents: Read and write").', 403);
     return res;
@@ -623,6 +643,7 @@
     repo = String(repo || '').trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
     token = String(token || '').trim();
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new ErrorValidacion('Escribí el repositorio como usuario/nombre, por ejemplo brunoperez1988/sistema-retenciones-datos.');
+    if (!token && (await servidor())?.github) token = SERVIDOR;
     if (!token) throw new ErrorValidacion('Pegá la clave (token) de GitHub.');
     const c = { repo, token };
     const res = await github(c, 'GET', `/repos/${repo}`).catch((e) => { throw new ErrorValidacion(e.message); });
@@ -2254,7 +2275,7 @@
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
     cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
-    permisos, configurarAdmin, ingresarAdmin, salirAdmin, restablecerAdmin, usuariosPerfiles, asignarPerfil,
+    servidor, permisos, configurarAdmin, ingresarAdmin, salirAdmin, restablecerAdmin, usuariosPerfiles, asignarPerfil,
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,
   };

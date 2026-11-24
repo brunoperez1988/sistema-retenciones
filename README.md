@@ -140,6 +140,11 @@ Configuración (una sola vez):
    - `GOOGLE_CLIENT_ID`: el ID de cliente
    - `GOOGLE_CLIENT_SECRET`: el secreto del cliente
    - `SESSION_SECRET`: una frase larga al azar (30 caracteres o más)
+   - `GITHUB_TOKEN` (opcional, recomendado): la clave de GitHub del repositorio de datos.
+     Así nadie tiene que pegarla en su navegador: los datos se guardan y se traen a través
+     de Vercel, y solo para quien ingresó con Google.
+   - `ADMIN_EMAILS` (opcional): correos separados por coma que pueden restablecer la clave
+     de administrador sin la clave de GitHub.
 6. Volver a publicar (*Deployments → … → Redeploy*).
 
 Si falta alguna variable, la página muestra "Falta configurar el ingreso" y no deja entrar.
