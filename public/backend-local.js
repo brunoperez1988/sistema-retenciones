@@ -126,7 +126,7 @@
   async function crearCuenta(usuario, contrasena, repetida) {
     if (leerCuenta()) throw new ErrorValidacion('Ya hay un usuario creado en este navegador.');
     const u = normalizarUsuario(usuario);
-    if (!/^[a-z0-9._-]{3,40}$/.test(u)) throw new ErrorValidacion('El usuario debe tener entre 3 y 40 letras o números, sin espacios.');
+    if (!/^[a-z0-9._@+-]{3,80}$/.test(u)) throw new ErrorValidacion('El usuario debe tener entre 3 y 80 letras o números, sin espacios ni tildes (puede ser tu correo, por ejemplo nombre@empresa.com).');
     if (!String(contrasena || '').length) throw new ErrorValidacion('Escribí una contraseña.');
     if (contrasena !== repetida) throw new ErrorValidacion('Las dos contraseñas no coinciden.');
     const sal = crypto.getRandomValues(new Uint8Array(16));
