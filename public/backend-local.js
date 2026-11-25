@@ -1417,6 +1417,25 @@
       filas.filter((r) => !r.completa && !r.a_definir && !conDescuentoEnMes.has(r.id)).map((r) => item(r, r.sin_tope ? `CI ${r.cedula} · ${r.regla || 'porcentaje'}` : `CI ${r.cedula}`)));
     agregar('otros-arrastre', 'info', 'Otros descuentos que vienen de meses anteriores', 'Adelantos o ajustes que todavía no se terminaron de descontar.',
       filas.filter((r) => r.arrastre && r.tipo === 'otros').map((r) => item(r, `Desde ${nombreMesTxt(r.periodo)} · falta ${pesosTxt(r.pendiente)}`)));
+    // Vencimientos: lo que termina este mes o el mes que viene, para avisar con tiempo al colaborador o a sueldos.
+    const siguiente = mesSiguiente(mes);
+    const plantilla = (r) => (r.mensual ? r : r.origen_id ? estado.retenciones.find((t) => t.id === r.origen_id) : null);
+    const terminaEste = [];
+    const terminaSiguiente = [];
+    for (const r of filas) {
+      const t = plantilla(r);
+      if (r.tipo === 'judicial' && t && t.mensual && !t.baja && t.hasta) {
+        if (t.hasta === mes) terminaEste.push(item(r, `CI ${r.cedula} · última cuota`));
+        else if (t.hasta === siguiente) terminaSiguiente.push(item(r, `CI ${r.cedula} · la última cuota es en ${nombreMesTxt(siguiente)}`));
+      }
+      if (r.tope && r.importe_total != null) {
+        const enMes = r.descontado_real - r.descontado_antes;
+        if (r.completa && r.descontado_antes < r.importe_total) terminaEste.push(item(r, `CI ${r.cedula} · deuda cancelada (${pesosTxt(r.importe_total)})`));
+        else if (!r.completa && enMes > 0 && r.pendiente <= enMes) terminaSiguiente.push(item(r, `CI ${r.cedula} · le falta ${pesosTxt(r.pendiente)} (este mes se retuvo ${pesosTxt(enMes)})`));
+      }
+    }
+    agregar('termina-este', 'info', 'Terminan este mes', 'Es la última vez que se retienen: desde el mes que viene ya no aparecen. Si corresponde, avisale a sueldos para que deje de descontarlas.', terminaEste);
+    agregar('termina-siguiente', 'info', 'Terminan el mes que viene', 'Les queda una sola cuota o un saldo chico. Sirve para avisarle con tiempo al colaborador o a sueldos.', terminaSiguiente);
     agregar('excedido', 'error', 'Se descontó más que el total', 'Puede pasar si dos personas cargaron el mismo descuento a la vez. Revisá y borrá el que sobra.',
       listarRetenciones().filter((r) => r.importe_total != null && r.descontado_real > r.importe_total).map((r) => item(r, `CI ${r.cedula} · ${nombreMesTxt(r.periodo)} · ${pesosTxt(r.descontado_real - r.importe_total)} de más`)));
     return avisos;

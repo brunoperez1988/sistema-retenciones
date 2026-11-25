@@ -492,7 +492,7 @@ async function vistaPanel(_params, vigente) {
       if (ir) { mesPagos = d.periodo; location.hash = '#/pagos'; }
       return;
     }
-    const pendientes = (d.avisos || []).filter((a) => a.clave !== 'cierre' && a.cantidad);
+    const pendientes = (d.avisos || []).filter((a) => !['cierre', 'termina-este', 'termina-siguiente'].includes(a.clave) && a.cantidad);
     const ok = await confirmar({
       titulo: `¿Cerrar ${nombre}?`,
       html: `<p>Después de cerrarlo, <strong>nadie va a poder cargar, cambiar ni borrar</strong> retenciones o descuentos de ${esc(nombre)}. Si hace falta, se puede reabrir.</p>
