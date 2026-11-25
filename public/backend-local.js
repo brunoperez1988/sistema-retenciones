@@ -1039,7 +1039,7 @@
       })
       // Las de meses anteriores entran si llegaron a este mes con saldo, aunque en este mes se hayan terminado de descontar
       // (si no, al completarse desaparecían del mes y lo retenido no se sumaba).
-      .filter((x) => !x.arrastre || (x.pasa_saldo && (x.a_definir || x.importe_total - x.descontado_antes > 0)))
+      .filter((x) => !x.arrastre || (x.pasa_saldo && (x.a_definir || x.importe_total - x.descontado_antes > 0)) || (x.tope && x.importe_total - x.descontado_antes > 0))
       .filter((x) => !filtraDescuentos || x._hayFiltrados)
       .sort((a, b) => b.periodo.localeCompare(a.periodo) || a.colaborador.localeCompare(b.colaborador, 'es') || a.entidad.localeCompare(b.entidad, 'es') || a.id - b.id);
     filas.forEach((x) => delete x._hayFiltrados);
@@ -1562,6 +1562,7 @@
     } else {
       fila.importe_total = importe(datos.importe_total, 'el importe total');
     }
+    if (datosTope(datos, fila, entidad)) fila.tope = true;
     return modificar((e) => { const id = e.sig++; e.retenciones.push({ id, ...fila }); return { id }; });
   }
 
@@ -1578,6 +1579,17 @@
   const mesDeHoy = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
   function mesSiguiente(m) { const [a, x] = m.split('-').map(Number); return x === 12 ? `${a + 1}-01` : `${a}-${String(x + 1).padStart(2, '0')}`; }
   const esPorcentaje = (regla) => /%/.test(regla || '');
+
+  // Deuda con porcentaje máximo (tope): una orden comercial con un saldo total, de la que cada mes se retiene como máximo
+  // el porcentaje. Pasa sola de un mes al otro con lo que le falta, y al llegar a 0 queda completa (se cancela).
+  // Lo que un mes no se llegó a descontar queda en el saldo: no se suma al mes siguiente por encima del porcentaje.
+  function datosTope(datos, fila, entidad) {
+    if (!datos.tope) return false;
+    if (entidad.tipo === 'judicial') throw new ErrorValidacion('El saldo con porcentaje máximo es solo para las entidades comerciales y otros descuentos.');
+    if (leerRegla(fila.regla).porcentaje == null) throw new ErrorValidacion('El saldo con porcentaje máximo se usa con las retenciones por porcentaje.');
+    if (fila.importe_total == null) throw new ErrorValidacion('Ingresá el saldo total a descontar, por ejemplo 50.000.');
+    return true;
+  }
 
   // Copias mensuales que faltan crear hasta el mes actual.
   function mensualesFaltantes(e) {
@@ -1725,10 +1737,12 @@
       const ya = descontadoDe(estado, n);
       if (cambios.importe_total < ya) throw new ErrorValidacion(`Ya se descontaron ${pesosTxt(ya)}: el importe total no puede ser menor.`, 409);
     }
+    const conTope = datosTope(datos, cambios, entidad);
     return modificar((e) => {
       const x = e.retenciones.find((y) => y.id === n);
       Object.assign(x, cambios, { editado_por: usuarioActual || '', editado_en: ahora() });
       if (!sePuedeRepetir(entidad)) { delete x.mensual; delete x.hasta; }
+      if (conTope) x.tope = true; else delete x.tope;
       // El beneficiario es el mismo para todos los meses de una retención que se repite.
       const familia = x.mensual ? x.id : x.origen_id;
       if (familia && entidad.tipo === 'judicial') {
