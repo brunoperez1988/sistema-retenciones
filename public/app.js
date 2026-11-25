@@ -575,7 +575,7 @@ function graficosPanel(d) {
   const tipos = [['comercial', 'Comerciales'], ['judicial', 'Judiciales'], ['otros', 'Otros']];
   const suma = Object.fromEntries(tipos.map(([t]) => [t, { ret: 0, pac: 0 }]));
   for (const r of d.retenciones) {
-    if (r.sin_tope || r.a_definir || !r.importe_total || !suma[r.tipo]) continue;
+    if (r.sin_tope || r.tope || r.a_definir || !r.importe_total || !suma[r.tipo]) continue;
     suma[r.tipo].pac += r.importe_total; suma[r.tipo].ret += Math.min(r.descontado_real, r.importe_total);
   }
   const filas = tipos.filter(([t]) => suma[t].pac > 0);
@@ -607,6 +607,7 @@ function contarIndicadores() {
 
 function tarjetaOrden(r) {
   if (r.sin_tope) return tarjetaPorcentaje(r);
+  if (r.tope) return tarjetaDeuda(r);
   if (r.a_definir) return tarjetaADefinir(r);
   const pct = Math.min(100, Math.round((r.descontado_real / r.importe_total) * 100));
   return `
@@ -616,7 +617,7 @@ function tarjetaOrden(r) {
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${textoBeneficiario(r)}
-          ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}${r.tope ? ` como máximo por mes · deuda ${moneda(r.importe_total)}` : ''}</span>` : ''}
+          ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.tope ? '<span class="etiqueta-tipo mensual">Hasta cancelar</span>' : r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div>
       </div>
@@ -670,6 +671,30 @@ function tarjetaPorcentaje(r) {
     </article>`;
 }
 
+// Deuda con porcentaje: cada mes se retiene el porcentaje (como las de porcentaje) y lo retenido baja el saldo de la deuda.
+function tarjetaDeuda(r) {
+  const delMes = r.descontado_real - (r.descontado_antes || 0);
+  const pct = Math.min(100, Math.round((r.descontado_real / r.importe_total) * 100));
+  return `
+    <article class="orden ${esc(r.tipo)} ${r.completa ? 'es-completa' : ''}">
+      <div class="orden-cabecera">
+        <div class="orden-persona">${esc(r.colaborador)}
+          <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
+          ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
+        </div>
+        <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}<span class="etiqueta-tipo mensual">Hasta cancelar</span>${r.completa ? '<span class="etiqueta-tipo completa">Cancelada</span>' : ''}</div>
+      </div>
+      <div class="orden-cifras"><span>Retener ${etiquetaRegla(r)}</span></div>
+      <div class="orden-cifras"><span>Retenido este mes <strong>${moneda(delMes)}</strong>${r.empresas ? ` (${esc(r.empresas)})` : ''}</span></div>
+      <div class="barra-avance" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-label="Deuda pagada ${pct}%"><span style="width:${pct}%"></span></div>
+      <div class="orden-cifras">
+        <span>Deuda <strong>${moneda(r.importe_total)}</strong> · pagado ${moneda(r.descontado_real)}</span>
+        ${r.completa ? '' : `<span class="falta">Saldo <strong>${moneda(r.pendiente)}</strong></span>`}
+      </div>
+      <div class="orden-acciones"><button class="boton chico secundario" type="button" data-detalle="${r.id}">Ver detalle</button>${r.completa ? '' : `<a class="boton chico secundario" href="#/descuentos?retencion=${r.id}">Registrar descuento</a>`}</div>
+    </article>`;
+}
+
 // Orden con otra regla (BPC, etc.) a la que todavía le falta el importe.
 function tarjetaADefinir(r) {
   return `
@@ -679,7 +704,7 @@ function tarjetaADefinir(r) {
           <span class="sec">CI ${esc(cedula(r.cedula))} · ${esc(r.entidad)}</span>
           ${r.concepto ? `<span class="sec">${esc(r.concepto)}</span>` : ''}
           ${textoBeneficiario(r)}
-          ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}${r.tope ? ` como máximo por mes · deuda ${moneda(r.importe_total)}` : ''}</span>` : ''}
+          ${r.regla && !r.a_definir ? `<span class="sec">Retener ${etiquetaRegla(r)}</span>` : ''}
         </div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}<span class="etiqueta-tipo a-definir">A definir</span></div>
       </div>
@@ -816,7 +841,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
     }
     catch { dlg.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div><div class="acciones"><button class="boton secundario" type="button" data-cerrar>Cerrar</button></div>`; dlg.querySelector('[data-cerrar]').onclick = () => dlg.close(); return; }
     const fila = (t, v) => (v ? `<tr><th>${t}</th><td>${v}</td></tr>` : '');
-    const total = r.sin_tope ? `${etiquetaRegla(r)} · sin tope` : r.a_definir ? `A definir · ${etiquetaRegla(r)}` : `${r.tope ? 'Deuda ' : ''}${moneda(r.importe_total)}${r.tope ? ' · como máximo' : ''}${r.regla ? ` · ${etiquetaRegla(r)}` : ''}`;
+    const total = r.sin_tope ? `${etiquetaRegla(r)} · sin tope` : r.a_definir ? `A definir · ${etiquetaRegla(r)}` : `${r.tope ? 'Deuda ' : ''}${moneda(r.importe_total)}${r.regla ? ` · ${etiquetaRegla(r)}` : ''}`;
     dlg.innerHTML = `
       <div class="detalle-cabecera"><div><h2>${esc(r.colaborador)}</h2><p class="nota">CI ${esc(cedula(r.cedula))}</p></div>
         <div class="orden-etiquetas">${etiquetaTipo(r.tipo)}${r.repite ? '<span class="etiqueta-tipo mensual">Mensual</span>' : ''}${r.tope ? '<span class="etiqueta-tipo mensual">Hasta cancelar</span>' : r.arrastre ? `<span class="etiqueta-tipo arrastre">Viene de ${esc(mesCorto(r.periodo))}</span>` : ''}${r.completa ? '<span class="etiqueta-tipo completa">Completa</span>' : ''}</div></div>
@@ -1305,6 +1330,7 @@ function tablaRetenciones(filasSinOrden) {
 
 function celdaTotal(r) {
   if (r.sin_tope) return `${etiquetaRegla(r)}<span class="sec">sin tope</span>`;
+  if (r.tope) return `${etiquetaRegla(r)}<span class="sec">deuda ${moneda(r.importe_total)}</span>`;
   if (r.a_definir) return `<span class="etiqueta-tipo a-definir">A definir</span><span class="sec">${etiquetaRegla(r)}</span>`;
   return `${moneda(r.importe_total)}${r.regla ? `<span class="sec">${etiquetaRegla(r)}</span>` : ''}`;
 }
@@ -1445,7 +1471,7 @@ async function vistaDescuentos(params, vigente) {
     selRet.disabled = !propias.length;
     selRet.innerHTML = propias.length
       ? (propias.length > 1 ? '<option value="">Elegí…</option>' : '') + propias.map((r) =>
-        `<option value="${r.id}">${esc(r.entidad)} · ${r.tope ? `máx. ${esc(textoPct(r))} por mes · deuda ${moneda(r.importe_total)}` : esSaldo(r) ? `saldo de ${esc(mesCorto(r.periodo))}` : esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — ${r.sin_tope ? `${esc(textoPct(r))}, sin tope` : `falta ${moneda(r.pendiente)}`}</option>`).join('')
+        `<option value="${r.id}">${esc(r.entidad)} · ${r.tope ? esc(textoPct(r)) : esSaldo(r) ? `saldo de ${esc(mesCorto(r.periodo))}` : esc(mesCorto(r.periodo))}${r.concepto ? ' · ' + esc(r.concepto) : ''} — ${r.sin_tope ? `${esc(textoPct(r))}, sin tope` : r.tope ? `saldo de la deuda ${moneda(r.pendiente)}` : `falta ${moneda(r.pendiente)}`}</option>`).join('')
       : `<option value="">${selColab.value ? `Sin retenciones de ${mesCorto(mesDesc)} pendientes` : 'Elegí primero la persona'}</option>`;
     if (preferida && propias.some((r) => r.id === preferida)) selRet.value = String(preferida);
     actualizarAyuda();
@@ -1453,10 +1479,12 @@ async function vistaDescuentos(params, vigente) {
 
   function actualizarAyuda() {
     const r = retElegida();
-    ayudaRet.innerHTML = r && r.sin_tope
+    ayudaRet.innerHTML = r && r.tope
+      ? `Retener ${etiquetaRegla(r)} · Ingresá lo que se logró descontar. Se resta del saldo de la deuda: <strong>${moneda(r.pendiente)}</strong> (de ${moneda(r.importe_total)}).`
+      : r && r.sin_tope
       ? `Retener ${etiquetaRegla(r)} · Ingresá lo que se logró descontar en esta empresa. Ya descontado: <strong>${moneda(r.descontado_real)}</strong>${r.empresas ? ` (${esc(r.empresas)})` : ''}.`
       : r
-      ? `${r.tope ? `Retener como máximo ${etiquetaRegla(r)} este mes · deuda ` : 'Total '}${moneda(r.importe_total)} · descontado ${moneda(r.descontado_real)} · <strong>máximo a descontar ${moneda(r.pendiente)}</strong>
+      ? `Total ${moneda(r.importe_total)} · descontado ${moneda(r.descontado_real)} · <strong>máximo a descontar ${moneda(r.pendiente)}</strong>
          <button type="button" class="boton chico secundario" id="usar-saldo" style="margin-left:6px">Usar saldo</button>`
       : '';
     const usar = document.getElementById('usar-saldo');
