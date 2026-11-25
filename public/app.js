@@ -800,7 +800,13 @@ function conectarDetalle(raiz, filas, alTerminar) {
     dlg.addEventListener('close', () => dlg.remove());
     dlg.showModal();
     let descuentos;
-    try { descuentos = await api(`/api/descuentos?retencion_id=${r.id}`); }
+    let cambios = { filas: [], total: 0 };
+    try {
+      [descuentos, cambios] = await Promise.all([
+        api(`/api/descuentos?retencion_id=${r.id}`),
+        LOCAL ? api(`/api/historial?retencion_id=${r.id}`).catch(() => ({ filas: [], total: 0 })) : Promise.resolve(cambios),
+      ]);
+    }
     catch { dlg.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div><div class="acciones"><button class="boton secundario" type="button" data-cerrar>Cerrar</button></div>`; dlg.querySelector('[data-cerrar]').onclick = () => dlg.close(); return; }
     const fila = (t, v) => (v ? `<tr><th>${t}</th><td>${v}</td></tr>` : '');
     const total = r.sin_tope ? `${etiquetaRegla(r)} · sin tope` : r.a_definir ? `A definir · ${etiquetaRegla(r)}` : `${r.tope ? 'Deuda ' : ''}${moneda(r.importe_total)}${r.tope ? ' · como máximo' : ''}${r.regla ? ` · ${etiquetaRegla(r)}` : ''}`;
@@ -821,6 +827,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
         ${r.tipo === 'judicial' ? fila('Cuenta / detalle', esc(r.beneficiario_cuenta)) : ''}
         ${fila('Se repite', r.repite ? 'Todos los meses' : '')}
         ${fila('Cargada por', `${esc(r.cargado_por)} · ${fecha(r.creado_en)}`)}
+        ${r.editado_por ? fila('Última edición', `${esc(r.editado_por)} · ${fecha(r.editado_en)} ${esc(String(r.editado_en || '').slice(11, 16))}`) : ''}
       </tbody></table></div>
       <h3>Descuentos (${descuentos.length})</h3>
       ${descuentos.length ? `<div class="tabla-contenedor"><table>
@@ -828,6 +835,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
         <tbody>${descuentos.map((d) => `<tr><td>${fecha(d.fecha)}</td><td>${esc(d.tipo)}</td><td>${esc(d.empresa)}</td>
           <td class="num">${moneda(d.importe)}</td><td class="num">${d.saldo_despues == null ? '<span class="sec">sin tope</span>' : moneda(d.saldo_despues)}</td><td>${esc(d.descontado_por)}</td></tr>`).join('')}</tbody>
       </table></div>` : '<p class="nota">Todavía no tiene descuentos.</p>'}
+      ${LOCAL ? `<h3>Historial de cambios (${cambios.total})</h3>${filasCambios(cambios, 'Todavía no hay cambios anotados de esta retención. Desde ahora queda registrado quién la edita, le descuenta o la borra.')}` : ''}
       <div class="acciones" style="margin-top:16px">
         ${r.completa || r.a_definir ? '' : `<a class="boton" href="#/descuentos?retencion=${r.id}">Registrar descuento</a>`}
         ${r.a_definir ? `<button class="boton ambar" type="button" ${atributosDefinir(r)}>Definir importe</button>` : ''}
@@ -1928,7 +1936,7 @@ function dialogoPago(mes, g, { pago = null, items = null, importe = null } = {})
 // ── Reportes ──
 
 const filtrosRep = { periodo: null, q: '', tipo: '', tipo_descuento: '', empresa_id: '', agrupar: 'beneficiario', pestana: 'planilla' };
-const filtrosHist = { q: '', usuario: '' };
+const filtrosHist = { q: '', usuario: '', tipo: '', desde: '', hasta: '' };
 const filtrosConst = { colaborador_id: '', desde: '', hasta: '' };
 
 async function vistaReportes(params, vigente) {
@@ -2028,34 +2036,53 @@ async function vistaReportes(params, vigente) {
 
 // ── Historial de cambios ──
 
+const consultaHist = () => new URLSearchParams(Object.entries(filtrosHist).filter(([, v]) => v));
+
 async function pestanaHistorial(opciones, resultado) {
-  const h = await api(`/api/historial?${new URLSearchParams(Object.entries(filtrosHist).filter(([, v]) => v))}`);
+  const h = await api(`/api/historial?${consultaHist()}`);
   opciones.innerHTML = `<h2>Historial de cambios</h2>
+    <p class="nota">Quién cargó, editó o borró cada cosa y cuándo, solo de esta empresa.</p>
     <div class="filtros" style="margin-top:10px">
       <div class="campo"><label for="hi-usuario">Usuario</label><select id="hi-usuario"><option value="">Todos</option>${h.usuarios.map((u) => `<option>${esc(u)}</option>`).join('')}</select></div>
+      <div class="campo"><label for="hi-tipo">Qué hizo</label><select id="hi-tipo"><option value="">Todo</option>${Object.entries(h.tipos || {}).map(([k, t]) => `<option value="${esc(k)}">${esc(t)}</option>`).join('')}</select></div>
+      <div class="campo"><label for="hi-desde">Desde</label><input type="date" id="hi-desde" value="${esc(filtrosHist.desde)}"></div>
+      <div class="campo"><label for="hi-hasta">Hasta</label><input type="date" id="hi-hasta" value="${esc(filtrosHist.hasta)}"></div>
       <div class="campo ancho"><label for="hi-q">Buscar</label><input type="search" id="hi-q" placeholder="Nombre, CI, acción, fecha" value="${esc(filtrosHist.q)}"></div>
-    </div>`;
-  const sel = document.getElementById('hi-usuario');
-  sel.value = filtrosHist.usuario;
-  sel.addEventListener('change', () => { filtrosHist.usuario = sel.value; pestanaHistorial(opciones, resultado); });
+    </div>
+    <div class="acciones" style="margin-top:10px"><button class="boton secundario" type="button" id="hi-excel">Descargar Excel</button></div>`;
+  const recargar = async () => { resultado.innerHTML = tablaHistorial(await api(`/api/historial?${consultaHist()}`)); };
+  [['hi-usuario', 'usuario'], ['hi-tipo', 'tipo'], ['hi-desde', 'desde'], ['hi-hasta', 'hasta']].forEach(([id, campo]) => {
+    const el = document.getElementById(id);
+    el.value = filtrosHist[campo];
+    el.addEventListener('change', () => { filtrosHist[campo] = el.value; recargar(); });
+  });
   let espera;
   document.getElementById('hi-q').addEventListener('input', (ev) => {
     clearTimeout(espera);
-    espera = setTimeout(async () => {
-      filtrosHist.q = ev.target.value;
-      const r = await api(`/api/historial?${new URLSearchParams(Object.entries(filtrosHist).filter(([, v]) => v))}`);
-      resultado.innerHTML = tablaHistorial(r);
-    }, 250);
+    espera = setTimeout(() => { filtrosHist.q = ev.target.value; recargar(); }, 250);
+  });
+  document.getElementById('hi-excel').addEventListener('click', async (ev) => {
+    const b = ev.currentTarget; b.disabled = true;
+    try { await descargarArchivo(`/api/historial/excel?${consultaHist()}`, `Historial de cambios ${empresaSistemaActual.nombre || ''} ${new Date().toISOString().slice(0, 10)}.xlsx`.replace(/\s+/g, ' ')); }
+    catch (e) { aviso(e.validacion ? e.message : MENSAJE_FALLA); }
+    finally { b.disabled = false; }
   });
   resultado.innerHTML = tablaHistorial(h);
 }
 
-function tablaHistorial(h) {
-  if (!h.filas.length) return '<div class="tabla-contenedor"><p class="vacio">Todavía no hay cambios anotados con estos filtros. Desde ahora, cada alta, descuento, borrado o cierre queda registrado acá con el usuario que lo hizo.</p></div>';
+const quienHizo = (x) => `${esc(x.usuario || x.correo || '—')}${x.correo && x.correo !== String(x.usuario || '').toLowerCase() ? `<span class="sec">${esc(x.correo)}</span>` : ''}`;
+const ETIQUETA_CAMBIO = { alta: 'completa', edicion: 'mensual', borrado: 'a-definir', descuento: 'arrastre', pago: 'arrastre', otro: '' };
+
+function filasCambios(h, vacio) {
+  if (!h.filas.length) return `<div class="tabla-contenedor"><p class="vacio">${esc(vacio)}</p></div>`;
   return `<div class="tabla-contenedor"><table>
-    <thead><tr><th>Fecha y hora</th><th>Usuario</th><th>Qué hizo</th><th>Detalle</th></tr></thead>
-    <tbody>${h.filas.map((x) => `<tr><td>${esc(fecha(x.fecha))}<span class="sec">${esc(x.fecha.slice(11, 16))}</span></td><td>${esc(x.usuario || '—')}</td><td>${esc(x.accion)}</td><td>${esc(x.detalle)}</td></tr>`).join('')}</tbody>
-  </table></div>${h.total > h.filas.length ? `<p class="nota">Se muestran los últimos ${h.filas.length} de ${h.total}. Usá el buscador para encontrar uno en particular.</p>` : ''}`;
+    <thead><tr><th>Fecha y hora</th><th>Quién</th><th>Qué hizo</th><th>Detalle</th></tr></thead>
+    <tbody>${h.filas.map((x) => `<tr><td>${esc(fecha(x.fecha))}<span class="sec">${esc(x.fecha.slice(11, 16))}</span></td><td>${quienHizo(x)}</td><td><span class="etiqueta-tipo ${ETIQUETA_CAMBIO[x.tipo] || ''}">${esc(x.accion)}</span></td><td>${esc(x.detalle)}</td></tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function tablaHistorial(h) {
+  return `${filasCambios(h, 'Todavía no hay cambios anotados con estos filtros. Cada alta, edición, descuento, borrado o cierre queda registrado acá con el usuario que lo hizo.')}${h.total > h.filas.length ? `<p class="nota">Se muestran los últimos ${h.filas.length} de ${h.total}. Usá los filtros para encontrar uno en particular, o bajá el Excel para verlos todos.</p>` : ''}`;
 }
 
 // ── Constancia por funcionario ──

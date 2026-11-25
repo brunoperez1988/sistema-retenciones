@@ -830,8 +830,13 @@
   const MAX_HISTORIAL = 3000;
   let registroPendiente = null; // lo que se anota en el historial con el próximo cambio
 
-  function entradaHistorial(accion, detalle) {
-    return { k: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, fecha: ahora(), usuario: usuarioActual || '', accion, detalle: detalle || '' };
+  // Cada anotación guarda el usuario, el correo de Google (en la versión web) y, si corresponde, la retención.
+  function entradaHistorial(accion, detalle, extra = {}) {
+    const correo = (servidorCache && servidorCache.email) || '';
+    const h = { k: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, fecha: ahora(), usuario: usuarioActual || '', accion, detalle: detalle || '' };
+    if (correo) h.correo = String(correo).toLowerCase();
+    if (extra.ret_id) h.ret_id = Number(extra.ret_id);
+    return h;
   }
 
   async function modificar(fn) {
@@ -842,8 +847,10 @@
       const r = registroPendiente;
       registroPendiente = null;
       let detalle = '';
+      let retId = null;
       try { detalle = typeof r.detalle === 'function' ? r.detalle(resultado, copia) : r.detalle; } catch { /* sin detalle */ }
-      copia.historial = [...(copia.historial || []), entradaHistorial(r.accion, detalle)].slice(-MAX_HISTORIAL);
+      try { retId = typeof r.ret === 'function' ? r.ret(resultado, copia) : r.ret; } catch { /* sin retención */ }
+      copia.historial = [...(copia.historial || []), entradaHistorial(r.accion, detalle, { ret_id: retId })].slice(-MAX_HISTORIAL);
     }
     if (configNube()) copia.pendienteNube = true;
     await guardarEstado(copia);
@@ -1422,11 +1429,58 @@
 
   // ── Historial de cambios ──
 
-  function listarHistorial(f = {}) {
+  // Qué tipo de cambio es cada anotación, para filtrar: cargó, editó, borró, descuentos, pagos u otros.
+  const TIPOS_CAMBIO = { alta: 'Cargó', edicion: 'Editó', borrado: 'Borró', descuento: 'Descuentos', pago: 'Pagos', otro: 'Otros' };
+  function tipoCambio(accion) {
+    const a = String(accion || '');
+    if (/eliminad|anulad|quitad|borrad/i.test(a)) return 'borrado';
+    if (/^descuento/i.test(a)) return 'descuento';
+    if (/pago|comprobante/i.test(a)) return 'pago';
+    if (/^alta|importaci|copiad/i.test(a)) return 'alta';
+    if (/editad|definido|dejó de repetirse/i.test(a)) return 'edicion';
+    return 'otro';
+  }
+  // Las anotaciones de antes no tenían la retención: se reconocen por el texto (colaborador · entidad · mes).
+  const ACCIONES_RETENCION = /retenci|importe definido|beneficiario editado|dejó de repetirse|^descuento/i;
+  function esDeRetencion(h, r, texto) {
+    if (h.ret_id != null) return h.ret_id === r.id;
+    return ACCIONES_RETENCION.test(h.accion || '') && Boolean(texto) && (h.detalle === texto || String(h.detalle || '').startsWith(`${texto} · `));
+  }
+  function filtrarHistorial(f = {}) {
     let filas = [...(estado.historial || [])].reverse();
-    if (f.usuario) filas = filas.filter((h) => normalizar(h.usuario) === normalizar(f.usuario));
-    filas = filtrarTexto(filas, f.q, (h) => [h.usuario, h.accion, h.detalle, h.fecha]);
-    return { usuarios: [...new Set((estado.historial || []).map((h) => h.usuario).filter(Boolean))].sort(), total: filas.length, filas: filas.slice(0, 500) };
+    if (f.usuario) filas = filas.filter((h) => normalizar(h.correo || h.usuario) === normalizar(f.usuario) || normalizar(h.usuario) === normalizar(f.usuario));
+    if (f.tipo && TIPOS_CAMBIO[f.tipo]) filas = filas.filter((h) => tipoCambio(h.accion) === f.tipo);
+    if (f.desde) filas = filas.filter((h) => String(h.fecha).slice(0, 10) >= f.desde);
+    if (f.hasta) filas = filas.filter((h) => String(h.fecha).slice(0, 10) <= f.hasta);
+    if (f.retencion_id) {
+      const r = estado.retenciones.find((x) => x.id === Number(f.retencion_id));
+      const id = Number(f.retencion_id);
+      // Si la retención ya se borró, igual se encuentran sus anotaciones por el número.
+      const texto = r ? descRet(r) : '';
+      filas = filas.filter((h) => (r ? esDeRetencion(h, r, texto) : h.ret_id === id));
+    }
+    return filtrarTexto(filas, f.q, (h) => [h.usuario, h.correo, h.accion, h.detalle, h.fecha]);
+  }
+  function listarHistorial(f = {}) {
+    // En el historial de una retención no hace falta repetir de quién es y de qué mes.
+    const r = f.retencion_id ? estado.retenciones.find((x) => x.id === Number(f.retencion_id)) : null;
+    const prefijo = r ? `${descRet(r)} · ` : null;
+    const filas = filtrarHistorial(f).map((h) => ({ ...h, tipo: tipoCambio(h.accion), ...(prefijo && String(h.detalle || '').startsWith(prefijo) ? { detalle: h.detalle.slice(prefijo.length) } : {}) }));
+    const quien = new Map();
+    for (const h of estado.historial || []) { const k = h.correo || h.usuario; if (k && !quien.has(normalizar(k))) quien.set(normalizar(k), k); }
+    return { usuarios: [...quien.values()].sort((a, b) => a.localeCompare(b, 'es')), tipos: TIPOS_CAMBIO, total: filas.length, filas: filas.slice(0, 500) };
+  }
+  function armarHistorial(f) {
+    const filas = filtrarHistorial(f);
+    const columnas = [{ titulo: 'Fecha', ancho: 12 }, { titulo: 'Hora', ancho: 8 }, { titulo: 'Usuario', ancho: 22 }, { titulo: 'Correo', ancho: 28 }, { titulo: 'Tipo', ancho: 12 }, { titulo: 'Qué hizo', ancho: 26 }, { titulo: 'Detalle', ancho: 90 }];
+    const cuerpo = filas.map((h) => [fechaTxt(String(h.fecha).slice(0, 10)), String(h.fecha).slice(11, 16), h.usuario || '', h.correo || '', TIPOS_CAMBIO[tipoCambio(h.accion)], h.accion, h.detalle || '']);
+    const partes = [];
+    if (f.usuario) partes.push(`Usuario: ${f.usuario}`);
+    if (f.tipo && TIPOS_CAMBIO[f.tipo]) partes.push(`Tipo: ${TIPOS_CAMBIO[f.tipo]}`);
+    if (f.desde) partes.push(`Desde ${fechaTxt(f.desde)}`);
+    if (f.hasta) partes.push(`Hasta ${fechaTxt(f.hasta)}`);
+    if (f.q) partes.push(`Búsqueda: ${f.q}`);
+    return { columnas, filas: cuerpo, titulo: `Historial de cambios · ${EMPRESAS_SISTEMA[empresaActual].nombre}`, hoja: 'Historial', subtitulo: `${partes.join(' · ') || 'Todos los cambios'} · ${filas.length} ${filas.length === 1 ? 'cambio' : 'cambios'} · Generado el ${new Date().toLocaleString('es-UY')}` };
   }
 
   const nombreCol = (id) => (estado.colaboradores.find((x) => x.id === Number(id)) || {}).nombre || '';
@@ -1443,10 +1497,10 @@
       if (ruta === '/api/colaboradores') return { accion: 'Alta de colaborador', detalle: `${String(c.nombre || '').trim()} · CI ${String(c.cedula || '').replace(/\D/g, '')}` };
       if (ruta === '/api/empresas') return { accion: 'Alta de empresa', detalle: String(c.nombre || '').trim() };
       if (ruta === '/api/retenciones') {
-        return { accion: 'Alta de retención', detalle: (res, e) => { const r = e.retenciones.find((x) => x.id === res.id); return `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}`; } };
+        return { accion: 'Alta de retención', ret: (res) => res.id, detalle: (res, e) => { const r = e.retenciones.find((x) => x.id === res.id); return `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}`; } };
       }
       if (ruta === '/api/descuentos') {
-        return { accion: 'Descuento registrado', detalle: (res, e) => { const d = e.descuentos.find((x) => x.id === res.id); return `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${d.tipo} · ${(e.empresas.find((x) => x.id === d.empresa_id) || {}).nombre || ''} · ${fechaTxt(d.fecha)}`; } };
+        return { accion: 'Descuento registrado', ret: (res, e) => (e.descuentos.find((x) => x.id === res.id) || {}).retencion_id, detalle: (res, e) => { const d = e.descuentos.find((x) => x.id === res.id); return `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${d.tipo} · ${(e.empresas.find((x) => x.id === d.empresa_id) || {}).nombre || ''} · ${fechaTxt(d.fecha)}`; } };
       }
       if (ruta === '/api/importar') {
         return { accion: 'Importación de archivo', detalle: (res) => [res.retenciones ? `${res.retenciones} retenciones` : '', res.colaboradores ? `${res.colaboradores} colaboradores` : '', res.empresas ? `${res.empresas} empresas` : ''].filter(Boolean).join(', ') || 'Sin datos nuevos' };
@@ -1456,7 +1510,7 @@
       }
       if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Comprobante adjuntado', detalle: (res) => (p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)}${res && res.agregados > 1 ? ` · ${res.agregados} archivos` : ''}` : '') }; }
       if (ruta === '/api/cierres') return { accion: 'Mes cerrado', detalle: (res) => `${c.mes ? nombreMesTxt(periodo(c.mes)) : ''}${res && res.saldos ? ` · ${res.saldos} ${res.saldos === 1 ? 'saldo de Otros descuentos pasó' : 'saldos de Otros descuentos pasaron'} al mes siguiente` : ''}` };
-      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) { const r = ret(m[1]); return { accion: 'Importe definido', detalle: () => `${descRet(r)} · ${pesosTxt(importe(c.importe_total))}` }; }
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) { const r = ret(m[1]); return { accion: 'Importe definido', ret: Number(m[1]), detalle: () => `${descRet(r)} · ${pesosTxt(importe(c.importe_total))}` }; }
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/editar$/))) {
         const antes = { ...ret(m[1]) };
         const txt = (r) => ({
@@ -1464,18 +1518,18 @@
           Total: r.importe_total != null ? pesosTxt(r.importe_total) : (r.regla || 'a definir'), Concepto: r.concepto || '', Expediente: r.expediente || '',
           Beneficiario: r.beneficiario || '', 'Doc. beneficiario': r.beneficiario_doc || '', 'Medio de cobro': r.beneficiario_cobro || '', Cuenta: r.beneficiario_cuenta || '',
         });
-        return { accion: 'Retención editada', detalle: (res, e) => {
+        return { accion: 'Retención editada', ret: Number(m[1]), detalle: (res, e) => {
           const a = txt(antes); const d = txt(e.retenciones.find((x) => x.id === res.id));
           const dif = Object.keys(a).filter((k) => a[k] !== d[k]).map((k) => `${k}: ${a[k] || '—'} → ${d[k] || '—'}`);
           return `${descRet(antes)} · ${dif.length ? dif.join(' · ') : 'sin cambios'}`;
         } };
       }
-      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return { accion: 'Dejó de repetirse', detalle: descRet(ret(m[1])) };
-      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/beneficiario$/))) return { accion: 'Beneficiario editado', detalle: `${descRet(ret(m[1]))} · ${String(c.beneficiario || '').trim()}` };
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return { accion: 'Dejó de repetirse', ret: Number(m[1]), detalle: descRet(ret(m[1])) };
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/beneficiario$/))) return { accion: 'Beneficiario editado', ret: Number(m[1]), detalle: `${descRet(ret(m[1]))} · ${String(c.beneficiario || '').trim()}` };
     }
     if (metodo === 'DELETE') {
-      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) { const r = ret(m[1]); return { accion: 'Retención eliminada', detalle: r ? `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}` : '' }; }
-      if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) { const d = estado.descuentos.find((x) => x.id === Number(m[1])); return { accion: 'Descuento eliminado', detalle: d ? `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${fechaTxt(d.fecha)}` : '' }; }
+      if ((m = ruta.match(/^\/api\/retenciones\/(\d+)$/))) { const r = ret(m[1]); return { accion: 'Retención eliminada', ret: Number(m[1]), detalle: r ? `${descRet(r)} · ${r.importe_total != null ? pesosTxt(r.importe_total) : r.regla}` : '' }; }
+      if ((m = ruta.match(/^\/api\/descuentos\/(\d+)$/))) { const d = estado.descuentos.find((x) => x.id === Number(m[1])); return { accion: 'Descuento eliminado', ret: d ? d.retencion_id : null, detalle: d ? `${descRet(ret(d.retencion_id))} · ${pesosTxt(d.importe)} · ${fechaTxt(d.fecha)}` : '' }; }
       if ((m = ruta.match(/^\/api\/empresas\/(\d+)$/))) return { accion: 'Empresa eliminada', detalle: (estado.empresas.find((x) => x.id === Number(m[1])) || {}).nombre || '' };
       if ((m = ruta.match(/^\/api\/pagos\/(\d+)\/comprobante\/(\d+)$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); const c = p && comprobantesDe(p)[Number(m[2])]; return { accion: 'Comprobante quitado', detalle: p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${c ? c.nombre : ''}` : '' }; }
       if ((m = ruta.match(/^\/api\/pagos\/(\d+)$/))) { const p = (estado.pagos || []).find((x) => x.id === Number(m[1])); return { accion: 'Pago anulado', detalle: p ? `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia}` : '' }; }
@@ -2385,6 +2439,7 @@
     const f = Object.fromEntries([...url.searchParams].filter(([, v]) => v));
     if (url.pathname === '/api/pagos/mi-dinero') return archivoMiDinero(f);
     if (url.pathname === '/api/descuentos/personas') return xlsx(armarPersonasDescuento(f));
+    if (url.pathname === '/api/historial/excel') return xlsx(armarHistorial(f));
     const rep = url.pathname.endsWith('planilla') ? armarPlanilla(f) : url.pathname.endsWith('entidades') ? armarPorEntidad(f) : armarAbonar(f);
     if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
     return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });
