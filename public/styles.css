@@ -464,9 +464,8 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
 .barras .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .barras .num .sec { color: var(--texto-suave); }
 .barras .num .pct { display: inline-block; min-width: 3.2em; margin-right: 6px; font-weight: 700; }
-.barras .total, .barras .sin-pactado { border-top: 1px solid var(--borde); padding-top: 10px; }
+.barras .total { border-top: 1px solid var(--borde); padding-top: 10px; }
 .barras .total { --c-barra: var(--verde); }
-.barras .sin-pactado .sec, .barras .sin-pactado .num { color: var(--texto-suave); }
 @media (max-width: 800px) {
   .graficos { grid-template-columns: minmax(0, 1fr); }
   .barras .b { grid-template-columns: minmax(0, 1fr) auto; }

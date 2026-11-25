@@ -569,18 +569,16 @@ function seccionAvisos(avisos) {
 }
 
 // Anillo con el % retenido de lo pactado y una barra por tipo: lo pactado de ese tipo es el 100%.
-// Lo retenido de las de porcentaje y de las deudas con porcentaje máximo no tiene un pactado del mes:
-// va en una fila aparte, así las filas sumadas dan el Total retenido y el Total pactado.
+// Lo retenido de las de porcentaje y de las deudas con porcentaje máximo no tiene un pactado del mes: no entra acá.
 function graficosPanel(d) {
   if (!d.retenciones.length) return '';
   const porcentaje = (ret, pac) => (pac ? Math.max(0, Math.round((ret / pac) * 100)) : 0);
   const tipos = [['comercial', 'Comerciales'], ['judicial', 'Judiciales'], ['otros', 'Otros']];
   const suma = Object.fromEntries(tipos.map(([t]) => [t, { ret: 0, pac: 0 }]));
-  let sinPactado = 0;
   for (const r of d.retenciones) {
     const antes = r.arrastre ? r.descontado_antes : 0; // de meses anteriores cuenta solo lo de este mes
     const ret = r.descontado_real - antes;
-    if (r.sin_tope || r.tope) { sinPactado += ret; continue; }
+    if (r.sin_tope || r.tope) continue; // sin importe pactado del mes
     const s = suma[r.tipo] || suma.otros;
     s.ret += ret; s.pac += (r.importe_total || 0) - antes;
   }
@@ -597,9 +595,7 @@ function graficosPanel(d) {
       <div class="ley"><span><i class="retenido"></i>Retenido</span><span><i class="falta"></i>Falta</span></div></div></div>
     <div class="tarjeta"><h3>Retenido por tipo (de lo pactado)</h3><div class="barras">
       ${filas.map(([t, nombre]) => barra(t, nombre, suma[t].ret, suma[t].pac)).join('')}
-      ${filas.length ? barra('total', 'Total pactado', retPactado, pacTotal) : '<p class="sec">Todavía no hay retenciones con importe este mes.</p>'}
-      ${sinPactado ? `<div class="b sin-pactado"><strong>Por porcentaje</strong><span class="sec">Retenciones y deudas por porcentaje: no tienen un importe pactado del mes</span><span class="num">${moneda(sinPactado)}</span></div>` : ''}
-      ${sinPactado ? `<div class="b total-retenido"><strong>Total retenido</strong><span></span><span class="num"><strong>${moneda(d.retenido)}</strong></span></div>` : ''}</div></div>
+      ${filas.length ? barra('total', 'Total pactado', retPactado, pacTotal) : '<p class="sec">Todavía no hay retenciones con importe este mes.</p>'}</div></div>
   </section>`;
 }
 
