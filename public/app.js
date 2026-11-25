@@ -312,32 +312,55 @@ function puedeVer(seccion) {
   return !lista || lista.includes(seccion);
 }
 
+const inicialEmpresa = (n) => esc(String(n || '?').slice(0, 1));
+
+async function cambiarEmpresaA(id) {
+  const e = empresaSistemaActual;
+  if (id === e.id) return;
+  const elegida = e.disponibles.find((x) => x.id === id);
+  const nombre = elegida ? elegida.nombre : 'la otra empresa';
+  document.getElementById('empresa-sistema').classList.add('cambiando');
+  aviso(`Cambiando a ${nombre}…`);
+  try {
+    await window.backendLocal.cambiarEmpresa(id);
+    aviso(`Ahora estás en ${nombre}.`);
+    if (location.hash !== '#/panel') location.hash = '#/panel'; else navegar();
+  } catch (err) {
+    aviso(err instanceof window.backendLocal.ErrorValidacion ? err.message : MENSAJE_FALLA);
+  } finally {
+    document.getElementById('empresa-sistema').classList.remove('cambiando');
+  }
+}
+
 function pintarEmpresaSistema() {
   const el = document.getElementById('empresa-sistema');
   if (!el) return;
   const e = empresaSistemaActual;
   el.hidden = !e.id;
   document.title = e.id ? `Control de Retenciones · ${e.nombre}` : 'Control de Retenciones';
+  document.documentElement.dataset.empresa = e.id || '';
   if (!e.id) return;
-  if (e.disponibles.length < 2) {
-    el.innerHTML = `<span class="empresa-sistema-nombre" title="Estás trabajando en ${esc(e.nombre)}">${esc(e.nombre)}</span>`;
+  if (el.dataset.pintada === `${e.id}|${e.disponibles.length}`) return;
+  el.dataset.pintada = `${e.id}|${e.disponibles.length}`;
+  const varias = e.disponibles.length > 1;
+  const chip = (x, extra = '') => `<span class="emp-insignia emp-${esc(x.id)}" aria-hidden="true">${inicialEmpresa(x.nombre)}</span>${extra}`;
+
+  if (!varias) {
+    el.innerHTML = `<span class="emp-actual" title="Estás trabajando en ${esc(e.nombre)}">${chip(e)}<span class="emp-textos"><small>Empresa</small><strong>${esc(e.nombre)}</strong></span></span>`;
     return;
   }
-  if (el.querySelector('select')?.value === e.id) return;
-  el.innerHTML = `<span class="sr-solo">Empresa</span><select aria-label="Empresa en la que trabajás" title="Cambiar de empresa">
-    ${e.disponibles.map((x) => `<option value="${esc(x.id)}"${x.id === e.id ? ' selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select>`;
-  el.querySelector('select').addEventListener('change', async (ev) => {
-    const elegida = e.disponibles.find((x) => x.id === ev.target.value);
-    ev.target.disabled = true;
-    aviso(`Cambiando a ${elegida ? elegida.nombre : 'la otra empresa'}…`);
-    try {
-      await window.backendLocal.cambiarEmpresa(ev.target.value);
-      ev.target.disabled = false;
-      aviso(`Ahora estás en ${elegida ? elegida.nombre : 'la otra empresa'}.`);
-      if (location.hash !== '#/panel') location.hash = '#/panel'; else navegar();
-    }
-    catch (err) { ev.target.disabled = false; ev.target.value = e.id; aviso(err instanceof window.backendLocal.ErrorValidacion ? err.message : MENSAJE_FALLA); }
-  });
+
+  // Botón con la empresa actual; al tocarlo se abre un menú con las empresas a las que puede entrar.
+  el.innerHTML = `<button type="button" class="emp-actual emp-boton" aria-haspopup="menu" aria-expanded="false" title="Cambiar de empresa">${chip(e)}<span class="emp-textos"><small>Empresa</small><strong>${esc(e.nombre)}</strong></span><span class="emp-flecha" aria-hidden="true">▾</span></button>
+    <div class="emp-menu" role="menu" hidden><p class="emp-menu-titulo">Cambiar de empresa</p>
+      ${e.disponibles.map((x) => `<button type="button" role="menuitemradio" aria-checked="${x.id === e.id}" data-emp="${esc(x.id)}">${chip(x)}<span class="emp-textos"><strong>${esc(x.nombre)}</strong><small>${x.id === e.id ? 'Estás trabajando acá' : 'Tocá para entrar'}</small></span>${x.id === e.id ? '<span class="emp-tilde" aria-hidden="true">✓</span>' : ''}</button>`).join('')}</div>`;
+  const boton = el.querySelector('.emp-boton');
+  const menu = el.querySelector('.emp-menu');
+  const abrir = (si) => { menu.hidden = !si; boton.setAttribute('aria-expanded', String(si)); };
+  boton.addEventListener('click', (ev) => { ev.stopPropagation(); abrir(menu.hidden); });
+  document.addEventListener('click', (ev) => { if (!el.contains(ev.target)) abrir(false); });
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') abrir(false); });
+  menu.querySelectorAll('[data-emp]').forEach((b) => b.addEventListener('click', () => { abrir(false); cambiarEmpresaA(b.dataset.emp); }));
 }
 
 let navegacionActual = 0;
