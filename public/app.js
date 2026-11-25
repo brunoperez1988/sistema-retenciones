@@ -198,7 +198,7 @@ const vistas = {
     $app.innerHTML = `<div class="tarjeta vacio" style="max-width:560px;margin:40px auto;text-align:center">
       <h2 style="justify-content:center">Solo para el administrador</h2>
       <p>Esta solapa la puede ver y modificar solo quien administra el sistema.</p>
-      <p class="nota">Si sos el administrador, ingresá tu clave en <a href="#/respaldo">Respaldo → Administrador</a>.</p></div>`;
+      <p class="nota">Si sos el administrador, ingresá tu clave en <a href="#/cuenta">Mi cuenta → Administrador</a>.</p></div>`;
   },
   panel: vistaPanel,
   retenciones: vistaRetenciones,
@@ -208,7 +208,7 @@ const vistas = {
   empresas: vistaEmpresas,
   colaboradores: vistaColaboradores,
   entidades: vistaEntidades,
-  ...(LOCAL ? { respaldo: vistaRespaldo } : {}),
+  ...(LOCAL ? { respaldo: vistaRespaldo, cuenta: vistaCuenta } : {}),
 };
 
 // ── Tema: claro, rosado u oscuro (se recuerda en este navegador) ──
@@ -295,6 +295,11 @@ if (LOCAL) {
   enlace.dataset.seccion = 'respaldo';
   enlace.textContent = 'Respaldo';
   document.getElementById('menu').appendChild(enlace);
+  const enlaceCuenta = document.createElement('a');
+  enlaceCuenta.href = '#/cuenta';
+  enlaceCuenta.dataset.seccion = 'cuenta';
+  enlaceCuenta.textContent = 'Mi cuenta';
+  document.getElementById('menu').appendChild(enlaceCuenta);
 }
 
 // ── Perfiles: qué solapas ve cada uno (Respaldo la ven todos: ahí están la contraseña y GitHub) ──
@@ -305,8 +310,10 @@ const PERFILES = {
   pagos: { nombre: 'Pago', secciones: ['panel', 'descuentos', 'pagos', 'reportes'] },
 };
 function puedeVer(seccion) {
-  if (!LOCAL || seccion === 'respaldo') return true;
+  if (!LOCAL || seccion === 'cuenta') return true;
   const p = permisosActuales.perfil === undefined ? 'admin' : permisosActuales.perfil;
+  // Respaldo (accesos, perfiles, copias, borrar todo) es solo del Admin; los demás tienen "Mi cuenta".
+  if (seccion === 'respaldo') return p === 'admin';
   if (!p) return seccion === 'panel';
   const lista = (PERFILES[p] || {}).secciones;
   return !lista || lista.includes(seccion);
@@ -386,6 +393,11 @@ async function navegar() {
     permisosActuales = await window.backendLocal.permisos().catch(() => ({ configurado: false, admin: true, perfil: 'admin' }));
     // Cada perfil ve solo sus solapas; agregar o borrar empresas y entidades sigue siendo del administrador.
     document.querySelectorAll('.menu a').forEach((a) => { a.hidden = !puedeVer(a.dataset.seccion); });
+    // "Mi cuenta" solo hace falta para quien no ve Respaldo (el Admin tiene todo ahí).
+    const linkCuenta = document.querySelector('.menu a[data-seccion="cuenta"]');
+    if (linkCuenta) linkCuenta.hidden = puedeVer('respaldo');
+    const pastillaNube = document.getElementById('estado-nube');
+    if (pastillaNube) pastillaNube.href = puedeVer('respaldo') ? '#/respaldo' : '#/cuenta';
     if (!puedeVer(seccion)) {
       aviso('Tu perfil no tiene acceso a esa solapa.');
       if (location.hash !== '#/panel') { history.replaceState(null, '', '#/panel'); }
@@ -2222,7 +2234,7 @@ async function vistaAlta({ titulo, descripcion, ruta, campos, columnas, vacio, e
       ${sinPermiso ? `<section class="tarjeta">
         <h2>Solo lectura</h2>
         <p>Podés ver el listado, pero solo el administrador puede agregar o borrar.</p>
-        <p class="sec">Si sos el administrador, ingresá tu clave en <a href="#/respaldo">Respaldo → Administrador</a>.</p>
+        <p class="sec">Si sos el administrador, ingresá tu clave en <a href="#/cuenta">Mi cuenta → Administrador</a>.</p>
       </section>` : `<section class="tarjeta">
         <h2>Nuevo registro</h2>
         <form class="formulario" id="form-alta" novalidate>
@@ -2339,7 +2351,7 @@ function diasDesde(fechaHora) {
 }
 
 async function avisoRespaldo() {
-  if (!LOCAL) return '';
+  if (!LOCAL || !puedeVer('respaldo')) return '';
   let info;
   try { info = await api('/api/datos'); } catch { return ''; }
   if (info.nube && info.nube.estado !== 'apagado') return ''; // ya se guarda solo en GitHub
@@ -2352,6 +2364,22 @@ async function avisoRespaldo() {
   if (!hayCambios || (dias !== null && dias < 7)) return '';
   return `<div class="falla-en-linea" style="margin-bottom:18px"><span>${dias === null ? 'Todavía no descargaste ningún respaldo.' : `Hace ${dias} días que no descargás un respaldo.`} Los datos viven solo en este navegador.</span>
     <a class="boton chico ambar" href="#/respaldo">Descargar respaldo</a></div>`;
+}
+
+// Mi cuenta: lo que cada persona necesita aunque no sea Admin (contraseña, clave de administrador y GitHub).
+async function vistaCuenta(_params, vigente) {
+  if (puedeVer('respaldo')) { location.replace('#/respaldo'); return; }
+  const info = await api('/api/datos');
+  if (!vigente()) return;
+  $app.innerHTML = `
+    <div class="encabezado"><div><h1>Mi cuenta</h1>
+      <p>Tu contraseña de este navegador${info.nube.estado === 'apagado' ? ' y la conexión con GitHub' : ''}. Si sos el administrador, acá ingresás tu clave.</p></div></div>
+    ${info.nube.estado === 'apagado' ? seccionGithub(info.nube) : ''}
+    ${seccionContrasena()}
+    ${seccionAdmin()}`;
+  if (info.nube.estado === 'apagado') conectarSeccionGithub(info.nube);
+  conectarSeccionContrasena();
+  conectarSeccionAdmin();
 }
 
 async function vistaRespaldo(_params, vigente) {
