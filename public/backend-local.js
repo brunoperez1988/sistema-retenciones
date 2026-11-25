@@ -263,13 +263,12 @@
     });
     return usuariosPerfiles();
   }
-  // Algunos reportes son solo de ciertos perfiles: el historial, del Admin; la planilla, de Admin y Retenciones.
+  // Algunos reportes son solo de ciertos perfiles: el historial de cambios, solo del Admin.
   async function exigirPerfil(perfiles, mensaje) {
     const p = await permisos();
     if (!perfiles.includes(p.perfil)) throw new ErrorValidacion(mensaje, 403);
   }
   const SOLO_ADMIN_HISTORIAL = 'El historial de cambios lo ve solo el perfil Admin.';
-  const SOLO_PLANILLA = 'La planilla de personas con retenciones la ven solo los perfiles Admin y Retenciones.';
   async function exigirAdmin(que) {
     if (!(await permisos()).admin) throw new ErrorValidacion(`Solo el administrador puede ${que}.`, 403);
   }
@@ -2385,7 +2384,7 @@
       if (ruta === '/api/descuentos') return listarDescuentos(f);
       if (ruta === '/api/mes-de-trabajo') return { mes: mesDeTrabajo() };
       if (ruta === '/api/panel') return panel(f.periodo || new Date().toISOString().slice(0, 7));
-      if (ruta === '/api/reportes/planilla') { await exigirPerfil(['admin', 'retenciones'], SOLO_PLANILLA); return listarRetenciones(f); }
+      if (ruta === '/api/reportes/planilla') return listarRetenciones(f);
       if (ruta === '/api/reportes/abonar') return reporteAbonar(f);
       if (ruta === '/api/reportes/entidades') return reportePorEntidad(f);
       if (ruta === '/api/datos') return infoDatos();
@@ -2447,7 +2446,6 @@
     if (url.pathname === '/api/pagos/mi-dinero') return archivoMiDinero(f);
     if (url.pathname === '/api/descuentos/personas') return xlsx(armarPersonasDescuento(f));
     if (url.pathname === '/api/historial/excel') { await exigirPerfil(['admin'], SOLO_ADMIN_HISTORIAL); return xlsx(armarHistorial(f)); }
-    if (url.pathname.endsWith('planilla')) await exigirPerfil(['admin', 'retenciones'], SOLO_PLANILLA);
     const rep = url.pathname.endsWith('planilla') ? armarPlanilla(f) : url.pathname.endsWith('entidades') ? armarPorEntidad(f) : armarAbonar(f);
     if (f.formato === 'csv') return csv(rep.columnas, rep.filas);
     return xlsx({ ...rep, subtitulo: `${textoFiltros(f)} · Generado el ${new Date().toLocaleString('es-UY')}` });

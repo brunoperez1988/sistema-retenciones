@@ -310,7 +310,7 @@ const PERFILES = {
   pagos: { nombre: 'Pago', secciones: ['panel', 'descuentos', 'pagos', 'reportes'] },
 };
 // Pestañas de Reportes que no ve cualquier perfil.
-const PESTANAS_REPORTES = { historial: ['admin'], planilla: ['admin', 'retenciones'] };
+const PESTANAS_REPORTES = { historial: ['admin'] };
 function puedeVerPestana(pestana) {
   if (!LOCAL) return true;
   const p = permisosActuales.perfil === undefined ? 'admin' : permisosActuales.perfil;
