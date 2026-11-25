@@ -568,34 +568,38 @@ function seccionAvisos(avisos) {
   </section>`;
 }
 
-// Anillo con el % retenido de lo pactado y barras de lo retenido por tipo.
-// Las barras usan las mismas cuentas que los totales del Panel: sumadas dan el Total retenido y el Total pactado.
-// Lo retenido de las de porcentaje y de las deudas con porcentaje máximo suma al retenido, pero no al pactado.
+// Anillo con el % retenido de lo pactado y una barra por tipo: lo pactado de ese tipo es el 100%.
+// Lo retenido de las de porcentaje y de las deudas con porcentaje máximo no tiene un pactado del mes:
+// va en una fila aparte, así las filas sumadas dan el Total retenido y el Total pactado.
 function graficosPanel(d) {
   if (!d.retenciones.length) return '';
-  const retenidoPactado = d.pactado - d.disponible; // sin las de porcentaje ni las deudas
-  const pct = d.pactado ? Math.max(0, Math.min(100, Math.round((retenidoPactado / d.pactado) * 100))) : 0;
+  const porcentaje = (ret, pac) => (pac ? Math.max(0, Math.round((ret / pac) * 100)) : 0);
   const tipos = [['comercial', 'Comerciales'], ['judicial', 'Judiciales'], ['otros', 'Otros']];
-  const suma = Object.fromEntries(tipos.map(([t]) => [t, { ret: 0, pac: 0, pct: 0 }]));
+  const suma = Object.fromEntries(tipos.map(([t]) => [t, { ret: 0, pac: 0 }]));
+  let sinPactado = 0;
   for (const r of d.retenciones) {
-    const s = suma[r.tipo] || suma.otros;
     const antes = r.arrastre ? r.descontado_antes : 0; // de meses anteriores cuenta solo lo de este mes
     const ret = r.descontado_real - antes;
-    s.ret += ret;
-    if (r.sin_tope || r.tope) s.pct += r.tope ? r.descontado_real - r.descontado_antes : ret;
-    if (!r.tope) s.pac += (r.importe_total || 0) - antes;
+    if (r.sin_tope || r.tope) { sinPactado += ret; continue; }
+    const s = suma[r.tipo] || suma.otros;
+    s.ret += ret; s.pac += (r.importe_total || 0) - antes;
   }
+  const retPactado = tipos.reduce((a, [t]) => a + suma[t].ret, 0);
+  const pacTotal = tipos.reduce((a, [t]) => a + suma[t].pac, 0);
+  const pct = Math.min(100, porcentaje(retPactado, pacTotal));
   const filas = tipos.filter(([t]) => suma[t].pac > 0 || suma[t].ret > 0);
-  const max = Math.max(1, ...filas.map(([t]) => Math.max(suma[t].pac, suma[t].ret)));
+  const barra = (clase, nombre, ret, pac) => { const p = porcentaje(ret, pac); return `<div class="b ${clase}"><strong>${nombre}</strong>
+        <div class="pista"><span style="width:${Math.min(100, p)}%"></span></div>
+        <span class="num"><b class="pct">${p}%</b> ${moneda(ret)} <span class="sec">de ${moneda(pac)}</span></span></div>`; };
   return `<section class="graficos" aria-label="Avance del mes">
     <div class="tarjeta"><h3>Avance de lo pactado</h3><div class="dona-box">
       <div class="dona" style="--pct:${pct}" role="img" aria-label="${pct}% retenido"><div>${pct}%<small>retenido</small></div></div>
       <div class="ley"><span><i class="retenido"></i>Retenido</span><span><i class="falta"></i>Falta</span></div></div></div>
-    <div class="tarjeta"><h3>Retenido por tipo</h3><div class="barras">
-      ${filas.map(([t, nombre]) => `<div class="b ${t}"><strong>${nombre}</strong>
-        <div class="pista"><em style="width:${(suma[t].pac / max) * 100}%"></em><span style="width:${(suma[t].ret / max) * 100}%"></span></div>
-        <span class="num">${moneda(suma[t].ret)} <span class="sec">de ${moneda(suma[t].pac)} pactado</span>${suma[t].pct ? `<span class="sec extra">incluye ${moneda(suma[t].pct)} por porcentaje</span>` : ''}</span></div>`).join('')}
-      ${filas.length ? `<div class="b total"><strong>Total</strong><span></span><span class="num"><strong>${moneda(d.retenido)}</strong> <span class="sec">de ${moneda(d.pactado)} pactado</span></span></div>` : '<p class="sec">Todavía no hay retenciones con importe este mes.</p>'}</div></div>
+    <div class="tarjeta"><h3>Retenido por tipo (de lo pactado)</h3><div class="barras">
+      ${filas.map(([t, nombre]) => barra(t, nombre, suma[t].ret, suma[t].pac)).join('')}
+      ${filas.length ? barra('total', 'Total pactado', retPactado, pacTotal) : '<p class="sec">Todavía no hay retenciones con importe este mes.</p>'}
+      ${sinPactado ? `<div class="b sin-pactado"><strong>Por porcentaje</strong><span class="sec">Retenciones y deudas por porcentaje: no tienen un importe pactado del mes</span><span class="num">${moneda(sinPactado)}</span></div>` : ''}
+      ${sinPactado ? `<div class="b total-retenido"><strong>Total retenido</strong><span></span><span class="num"><strong>${moneda(d.retenido)}</strong></span></div>` : ''}</div></div>
   </section>`;
 }
 
