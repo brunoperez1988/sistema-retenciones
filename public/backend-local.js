@@ -1939,6 +1939,41 @@
     return limpio;
   }
 
+  // ── Respaldo automático semanal ──
+  // Cada lunes Vercel guarda sola una copia de cada empresa en el repositorio de datos (api/respaldo-semanal.js),
+  // en <carpeta de la empresa>respaldos/AAAA-MM-DD.json. Acá se listan, se descargan o se recuperan.
+  const carpetaRespaldosAuto = () => `${EMPRESAS_SISTEMA[empresaActual].prefijo}respaldos`;
+
+  async function listarRespaldosAuto() {
+    const c = configNube();
+    if (!c) return { conectado: false, copias: [] };
+    const res = await github(c, 'GET', `/repos/${c.repo}/contents/${carpetaRespaldosAuto()}`);
+    if (res.status === 404) return { conectado: true, copias: [] };
+    if (!res.ok) throw new ErrorNube(`GitHub respondió ${res.status}.`, res.status);
+    const lista = await res.json();
+    const copias = (Array.isArray(lista) ? lista : [])
+      .filter((x) => x.type === 'file' && /^\d{4}-\d{2}-\d{2}\.json$/.test(x.name))
+      .map((x) => ({ fecha: x.name.slice(0, 10), ruta: x.path, tamano: x.size }))
+      .sort((a, b) => b.fecha.localeCompare(a.fecha));
+    return { conectado: true, copias };
+  }
+
+  async function leerRespaldoAuto(fecha) {
+    const c = configNube();
+    if (!c) throw new ErrorValidacion('Para usar los respaldos automáticos tenés que tener conectado GitHub.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))) throw new ErrorValidacion('Respaldo no válido.');
+    let res;
+    try { res = await github(c, 'GET', `/repos/${c.repo}/contents/${carpetaRespaldosAuto()}/${fecha}.json?t=${Date.now()}`, null, 'application/vnd.github.raw+json'); }
+    catch (err) { throw new ErrorValidacion(err.message); }
+    if (res.status === 404) throw new ErrorValidacion('Ese respaldo ya no está en GitHub.');
+    if (!res.ok) throw new ErrorValidacion(`No se pudo traer el respaldo (GitHub respondió ${res.status}).`);
+    return res.text();
+  }
+
+  async function recuperarRespaldoAuto(fecha) {
+    return importarRespaldo(await leerRespaldoAuto(fecha));
+  }
+
   // ── Respaldo ──
 
   function infoDatos() {
@@ -2397,6 +2432,9 @@
     descargar,
     exportarRespaldo: async () => { await iniciar(); return exportarRespaldo(); },
     importarRespaldo: async (t) => { await iniciar(); return importarRespaldo(t); },
+    listarRespaldosAuto: async () => { await iniciar(); return listarRespaldosAuto(); },
+    descargarRespaldoAuto: async (fecha) => { await iniciar(); return new Blob([await leerRespaldoAuto(fecha)], { type: 'application/json' }); },
+    recuperarRespaldoAuto: async (fecha) => { await iniciar(); return recuperarRespaldoAuto(fecha); },
     borrarTodo: async () => { await iniciar(); return borrarTodo(); },
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,

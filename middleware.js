@@ -134,6 +134,8 @@ function empresasDe(email, accesos) {
 
 export default async function middleware(req) {
   const url = new URL(req.url);
+  // El respaldo automático semanal lo llama Vercel (cron), sin sesión de Google: se controla en api/respaldo-semanal.js.
+  if (url.pathname === '/api/respaldo-semanal') return new Response(null, { headers: { 'x-middleware-next': '1' } });
   const { GOOGLE_CLIENT_ID: id, GOOGLE_CLIENT_SECRET: secretoCliente, SESSION_SECRET: secreto } = process.env;
   const dominio = (process.env.ALLOWED_DOMAIN || 'aglh.com.uy').toLowerCase();
   if (!id || !secretoCliente || !secreto || secreto.length < 16) {

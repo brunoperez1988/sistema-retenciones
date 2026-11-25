@@ -2396,7 +2396,12 @@ async function vistaRespaldo(_params, vigente) {
     ${seccionCopiarEmpresa()}
     ${seccionPerfiles()}
     ${seccionContrasena()}
-    ${permisosActuales.perfil !== 'admin' ? '' : `<div class="columnas">
+    ${permisosActuales.perfil !== 'admin' ? '' : `<section class="tarjeta" id="sec-respaldo-auto" style="margin-bottom:20px">
+      <h2>Respaldo automático</h2>
+      <p>Todos los lunes de madrugada se guarda <strong>sola</strong> una copia de los datos de SHI y de AGLH en GitHub. No tenés que hacer nada. Si alguna vez algo sale mal, desde acá podés descargar o recuperar la copia de una semana.</p>
+      <div id="lista-respaldo-auto"><p class="nota">Buscando las copias…</p></div>
+    </section>
+    <div class="columnas">
       <section class="tarjeta">
         <h2>Descargar respaldo</h2>
         <p>Guarda un archivo con <strong>todos</strong> los datos. Hacelo seguido (por ejemplo, al terminar cada quincena) y guardá el archivo en un pendrive, en la nube o en tu correo.</p>
@@ -2446,6 +2451,7 @@ async function vistaRespaldo(_params, vigente) {
   conectarSeccionCopiarEmpresa();
   if (permisosActuales.perfil !== 'admin') return;
 
+  cargarRespaldosAuto(vigente);
   const zona = document.getElementById('zona-respaldo');
   const bajar = async () => {
     zona.innerHTML = '';
@@ -2503,6 +2509,65 @@ async function vistaRespaldo(_params, vigente) {
     try { await window.backendLocal.borrarTodo(); aviso('Listo: el sistema quedó vacío.'); location.hash = '#/panel'; }
     catch (e) { console.error(e); aviso(MENSAJE_FALLA); }
   });
+}
+
+// Lista de las copias semanales que guarda Vercel (las últimas 8; el resto se ve con “Ver todas”).
+async function cargarRespaldosAuto(vigente, todas = false) {
+  const caja = document.getElementById('lista-respaldo-auto');
+  if (!caja) return;
+  let r;
+  try { r = await window.backendLocal.listarRespaldosAuto(); }
+  catch (e) { console.error(e); if (vigente()) caja.innerHTML = `<div class="mensaje error">No se pudo ver la lista de copias: ${esc(e.message || MENSAJE_FALLA)}</div>`; return; }
+  if (!vigente()) return;
+  if (!r.conectado) { caja.innerHTML = '<p class="nota">Para que funcione, esta computadora tiene que estar conectada a GitHub (más arriba).</p>'; return; }
+  if (!r.copias.length) { caja.innerHTML = '<p class="nota">Todavía no hay copias guardadas. La primera se hace el próximo lunes.</p>'; return; }
+  const dias = diasDesde(`${r.copias[0].fecha} 06:00:00`);
+  const atrasado = dias !== null && dias > 8;
+  const visibles = todas ? r.copias : r.copias.slice(0, 8);
+  const nombreDia = (f) => new Date(`${f}T12:00:00`).toLocaleDateString('es-UY', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  caja.innerHTML = `
+    <div class="${atrasado ? 'mensaje error' : 'mensaje ok'}" style="margin:12px 0">${atrasado
+      ? `La última copia es del ${fecha(r.copias[0].fecha)} (hace ${dias} días). Avisale a quien te ayuda con el sistema.`
+      : `Última copia: <strong>${esc(nombreDia(r.copias[0].fecha))}</strong>. Hay ${r.copias.length} ${r.copias.length === 1 ? 'copia guardada' : 'copias guardadas'}.`}</div>
+    <div class="tabla-contenedor"><table>
+      <thead><tr><th>Semana del</th><th class="num">Tamaño</th><th></th></tr></thead>
+      <tbody>${visibles.map((x) => `<tr class="fila-respaldo-auto">
+        <td>${esc(nombreDia(x.fecha))}</td>
+        <td class="num">${Math.max(1, Math.round(x.tamano / 1024))} KB</td>
+        <td><div class="acciones" style="justify-content:flex-end;margin:0">
+          <button class="boton chico secundario" type="button" data-bajar-auto="${esc(x.fecha)}">Descargar</button>
+          <button class="boton chico peligro" type="button" data-recuperar-auto="${esc(x.fecha)}">Recuperar</button>
+        </div></td></tr>`).join('')}</tbody>
+    </table></div>
+    <style>.fila-respaldo-auto td{vertical-align:middle}</style>
+    ${!todas && r.copias.length > visibles.length ? '<div class="acciones" style="margin-top:10px"><button class="boton chico secundario" type="button" id="ver-todas-auto">Ver todas</button></div>' : ''}
+    <div id="zona-respaldo-auto" style="margin-top:12px"></div>`;
+  const zonaAuto = document.getElementById('zona-respaldo-auto');
+  const mostrarError = (e) => {
+    if (e instanceof window.backendLocal.ErrorValidacion) zonaAuto.innerHTML = `<div class="mensaje error">${esc(e.message)} No se cambió nada.</div>`;
+    else { console.error(e); zonaAuto.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div>`; }
+  };
+  const verTodas = document.getElementById('ver-todas-auto');
+  if (verTodas) verTodas.addEventListener('click', () => cargarRespaldosAuto(vigente, true));
+  caja.querySelectorAll('[data-bajar-auto]').forEach((b) => b.addEventListener('click', async () => {
+    zonaAuto.innerHTML = '';
+    try {
+      const blob = await window.backendLocal.descargarRespaldoAuto(b.dataset.bajarAuto);
+      guardarBlob(blob, `respaldo-retenciones-${(empresaSistemaActual.nombre || 'shi').toLowerCase()}-semana-${b.dataset.bajarAuto}.json`);
+      aviso('Copia descargada. Buscala en la carpeta Descargas.');
+    } catch (e) { mostrarError(e); }
+  }));
+  caja.querySelectorAll('[data-recuperar-auto]').forEach((b) => b.addEventListener('click', async () => {
+    const f = b.dataset.recuperarAuto;
+    zonaAuto.innerHTML = '';
+    if (!confirm(`¿Volver los datos${empresaSistemaActual.nombre ? ` de ${empresaSistemaActual.nombre}` : ''} a como estaban el ${fecha(f)}? Se reemplaza todo lo actual por esa copia (lo cargado después se pierde).`)) return;
+    if (!confirm('Confirmá de nuevo: esto cambia los datos para todos los que usan el sistema.')) return;
+    try {
+      const info2 = await window.backendLocal.recuperarRespaldoAuto(f);
+      aviso(`Copia del ${fecha(f)} recuperada: ${info2.cantidades.retenciones} retenciones y ${info2.cantidades.descuentos} descuentos.`);
+      navegar();
+    } catch (e) { mostrarError(e); }
+  }));
 }
 
 function seccionGithub(n) {
