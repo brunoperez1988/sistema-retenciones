@@ -463,6 +463,8 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
 :root[data-tema="oscuro"] .barras .judicial { --c-barra: #a5a8a2; }
 .barras .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .barras .num .sec { color: var(--texto-suave); }
+.barras .num .extra { display: block; font-size: .8rem; }
+.barras .total { border-top: 1px solid var(--borde); padding-top: 10px; }
 @media (max-width: 800px) {
   .graficos { grid-template-columns: minmax(0, 1fr); }
   .barras .b { grid-template-columns: minmax(0, 1fr) auto; }
