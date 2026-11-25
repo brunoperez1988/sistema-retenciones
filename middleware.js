@@ -11,6 +11,10 @@
 //   ADMIN_EMAILS          Opcional. Correos (separados por coma) que pueden restablecer la clave de administrador sin la de GitHub.
 //
 // Si falta alguna variable, la página no se muestra (falla cerrada).
+//
+// Empresas: AGLH y SHI son dos sistemas aparte. A cuál entra cada correo lo decide el administrador
+// en Respaldo → Acceso a empresas, y queda guardado en el repositorio de datos (config/accesos.json).
+// Esta pasarela solo deja leer o guardar los archivos de las empresas habilitadas para ese correo.
 
 import { LOGO_LETRAS, LOGO_HOJA } from './ingreso-logos.js';
 
@@ -91,6 +95,43 @@ h1{font-size:26px;margin:0 0 8px;color:#2b2c2e}.f>p{color:#63666a;margin:0 0 28p
   return new Response(html, { status: estado, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...extra } });
 }
 
+const EMPRESAS = ['aglh', 'shi'];
+const ARCHIVO_ACCESOS = 'config/accesos.json';
+let cacheAccesos = null; // { valor, sha, hasta }
+
+const listaAdmins = () => (process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
+const cabecerasGithub = (token) => ({ Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sistema-retenciones', Accept: 'application/vnd.github+json' });
+const soloEmpresas = (l) => (Array.isArray(l) ? EMPRESAS.filter((k) => l.includes(k)) : []);
+
+// Sin archivo de accesos todos entran a AGLH, como hasta ahora.
+async function leerAccesos(token, repo, fresco = false) {
+  if (!fresco && cacheAccesos && cacheAccesos.hasta > Date.now()) return cacheAccesos;
+  const r = await fetch(`https://api.github.com/repos/${repo}/contents/${ARCHIVO_ACCESOS}`, { headers: cabecerasGithub(token) });
+  let valor = { porDefecto: ['aglh'], usuarios: {} };
+  let sha = null;
+  if (r.ok) {
+    const info = await r.json();
+    sha = info.sha;
+    try {
+      const bin = atob(String(info.content || '').replace(/\s/g, ''));
+      const j = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+      const usuarios = {};
+      for (const [k, v] of Object.entries(j.usuarios || {})) usuarios[String(k).toLowerCase()] = soloEmpresas(v);
+      valor = { porDefecto: soloEmpresas(j.porDefecto), usuarios };
+    } catch { valor = { porDefecto: [], usuarios: {} }; } // archivo dañado: falla cerrada
+  } else if (r.status !== 404) {
+    throw new Error(`GitHub respondió ${r.status}`);
+  }
+  cacheAccesos = { valor, sha, hasta: Date.now() + 30000 };
+  return cacheAccesos;
+}
+
+function empresasDe(email, accesos) {
+  if (listaAdmins().includes(email)) return [...EMPRESAS];
+  const propio = accesos.usuarios[email];
+  return propio ? propio : accesos.porDefecto;
+}
+
 export default async function middleware(req) {
   const url = new URL(req.url);
   const { GOOGLE_CLIENT_ID: id, GOOGLE_CLIENT_SECRET: secretoCliente, SESSION_SECRET: secreto } = process.env;
@@ -159,9 +200,48 @@ export default async function middleware(req) {
   const tokenGithub = process.env.GITHUB_TOKEN || '';
   const repo = process.env.DATA_REPO || 'brunoperez1988/sistema-retenciones-datos';
 
+  const esAdmin = listaAdmins().includes(email);
+  const sinCache = { 'cache-control': 'no-store' };
+
+  let accesos = { porDefecto: ['aglh'], usuarios: {} };
+  if (tokenGithub && (url.pathname === '/auth/yo' || url.pathname === '/auth/accesos' || url.pathname.startsWith('/gh/'))) {
+    try { accesos = (await leerAccesos(tokenGithub, repo)).valor; }
+    catch { return Response.json({ error: 'No se pudo leer quién tiene acceso a cada empresa. Probá de nuevo en un rato.' }, { status: 503, headers: sinCache }); }
+  }
+
   if (url.pathname === '/auth/yo') {
-    const admins = (process.env.ADMIN_EMAILS || '').toLowerCase().split(',').map((x) => x.trim()).filter(Boolean);
-    return Response.json({ email, github: Boolean(tokenGithub), admin: admins.includes(email) }, { headers: { 'cache-control': 'no-store' } });
+    return Response.json({ email, github: Boolean(tokenGithub), admin: esAdmin, empresas: empresasDe(email, accesos) }, { headers: sinCache });
+  }
+
+  // Acceso a empresas: lo ve y lo cambia solo el administrador (ADMIN_EMAILS).
+  if (url.pathname === '/auth/accesos') {
+    if (!esAdmin) return Response.json({ error: 'Solo el administrador puede ver o cambiar los accesos.' }, { status: 403, headers: sinCache });
+    if (!tokenGithub) return Response.json({ error: 'Falta GITHUB_TOKEN en Vercel.' }, { status: 503, headers: sinCache });
+    if (req.method === 'GET') return Response.json({ ...accesos, admins: listaAdmins() }, { headers: sinCache });
+    if (req.method !== 'POST') return Response.json({ error: 'Método no permitido' }, { status: 405, headers: sinCache });
+    let pedido;
+    try { pedido = await req.json(); } catch { return Response.json({ error: 'Pedido inválido.' }, { status: 400, headers: sinCache }); }
+    const usuarios = {};
+    for (const [k, v] of Object.entries(pedido.usuarios || {})) {
+      const correo = String(k).trim().toLowerCase();
+      if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+$/.test(correo) || !correo.endsWith(`@${dominio}`)) {
+        return Response.json({ error: `El correo ${correo.replace(/[<>&"]/g, '')} no es de @${dominio}.` }, { status: 400, headers: sinCache });
+      }
+      usuarios[correo] = soloEmpresas(v);
+    }
+    const nuevo = { porDefecto: soloEmpresas(pedido.porDefecto), usuarios };
+    const actual = await leerAccesos(tokenGithub, repo, true);
+    const texto = JSON.stringify(nuevo, null, 1);
+    const bytes = enc.encode(texto);
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    const r = await fetch(`https://api.github.com/repos/${repo}/contents/${ARCHIVO_ACCESOS}`, {
+      method: 'PUT', headers: { ...cabecerasGithub(tokenGithub), 'content-type': 'application/json' },
+      body: JSON.stringify({ message: `Accesos a empresas cambiados por ${email}`, content: btoa(bin), ...(actual.sha ? { sha: actual.sha } : {}) }),
+    });
+    if (!r.ok) return Response.json({ error: `No se pudo guardar (GitHub respondió ${r.status}). Probá de nuevo.` }, { status: 502, headers: sinCache });
+    cacheAccesos = { valor: nuevo, sha: (await r.json()).content.sha, hasta: Date.now() + 30000 };
+    return Response.json({ ...nuevo, admins: listaAdmins() }, { headers: sinCache });
   }
 
   // Pasarela a GitHub: solo el repositorio de datos, con la clave guardada en Vercel.
@@ -169,7 +249,15 @@ export default async function middleware(req) {
     const ruta = url.pathname.slice(3);
     const base = `/repos/${repo}`;
     if (!tokenGithub) return Response.json({ error: 'Falta GITHUB_TOKEN' }, { status: 503 });
-    if (ruta.includes('..') || (ruta !== base && !ruta.startsWith(`${base}/`))) return Response.json({ error: 'Ruta no permitida' }, { status: 403 });
+    let rutaTxt;
+    try { rutaTxt = decodeURIComponent(ruta); } catch { return Response.json({ error: 'Ruta no permitida' }, { status: 403 }); }
+    if (rutaTxt.includes('..') || (ruta !== base && !ruta.startsWith(`${base}/contents/`))) return Response.json({ error: 'Ruta no permitida' }, { status: 403 });
+    if (ruta !== base) {
+      // Cada archivo pertenece a una empresa: SHI vive en empresas/shi/, AGLH en el resto. La configuración no se toca desde acá.
+      const archivo = rutaTxt.slice(`${base}/contents/`.length);
+      const empresa = archivo.startsWith('empresas/shi/') ? 'shi' : archivo.startsWith('empresas/') || archivo.startsWith('config/') ? null : 'aglh';
+      if (!empresa || !empresasDe(email, accesos).includes(empresa)) return Response.json({ error: 'No tenés acceso a esa empresa.' }, { status: 403 });
+    }
     if (!['GET', 'PUT'].includes(req.method)) return Response.json({ error: 'Método no permitido' }, { status: 405 });
     const h = new Headers({ Authorization: `Bearer ${tokenGithub}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sistema-retenciones' });
     for (const n of ['accept', 'content-type', 'if-none-match']) { const v = req.headers.get(n); if (v) h.set(n, v); }

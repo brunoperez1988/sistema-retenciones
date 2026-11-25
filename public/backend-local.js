@@ -13,8 +13,18 @@
   const TIPOS_DESCUENTO = ['1Q', '2Q', 'Egresos', 'Ajustes', 'Licencias'];
   const NOMBRE_BD = 'sistema-retenciones';
   const ALMACEN = 'datos';
-  const CLAVE = 'estado';
   const VERSION_DATOS = 1;
+
+  // ── Empresas del sistema ──
+  // Cada empresa es un sistema aparte: sus datos se guardan en el navegador con su propia clave
+  // y en GitHub en su propia carpeta. AGLH sigue usando los lugares de siempre.
+  const EMPRESAS_SISTEMA = {
+    aglh: { nombre: 'AGLH', registro: 'estado', prefijo: '' },
+    shi: { nombre: 'SHI', registro: 'estado-shi', prefijo: 'empresas/shi/' },
+  };
+  const CLAVE_EMPRESA = 'ret.empresaSistema';
+  let empresaActual = (() => { try { const v = localStorage.getItem(CLAVE_EMPRESA); return EMPRESAS_SISTEMA[v] ? v : 'aglh'; } catch { return 'aglh'; } })();
+  let CLAVE = EMPRESAS_SISTEMA[empresaActual].registro;
 
   class ErrorValidacion extends Error {
     constructor(mensaje, status = 400) { super(mensaje); this.status = status; }
@@ -164,6 +174,11 @@
     const llaveNueva = await derivarLlave(nueva, sal, ITERACIONES);
     const verif = await cifrar({ usuario: c.usuario }, llaveNueva);
     await guardarRegistro(CLAVE, await cifrar(estado, llaveNueva));
+    for (const emp of Object.values(EMPRESAS_SISTEMA)) {
+      if (emp.registro === CLAVE) continue;
+      const otro = await leerRegistro(emp.registro);
+      if (otro) await guardarRegistro(emp.registro, await cifrar(await descifrar(otro), llaveNueva));
+    }
     await guardarRegistro('nube', nubeCfg ? await cifrar(nubeCfg, llaveNueva) : null);
     const pruebaAdmin = await leerPruebaAdmin();
     await guardarRegistro('admin', pruebaAdmin ? await cifrar(pruebaAdmin, llaveNueva) : null);
@@ -174,7 +189,7 @@
 
   // Olvidé la contraseña: se borra lo guardado en este navegador (los datos de GitHub no se tocan).
   async function olvideContrasena() {
-    await guardarRegistro(CLAVE, null);
+    for (const emp of Object.values(EMPRESAS_SISTEMA)) await guardarRegistro(emp.registro, null);
     await guardarRegistro('nube', null);
     await guardarRegistro('admin', null);
     try { localStorage.removeItem(CLAVE_CUENTA); localStorage.removeItem('ret.nube'); localStorage.setItem('ret.sinEjemplos', '1'); } catch { /* sin almacenamiento */ }
@@ -320,7 +335,16 @@
     if (estado) return;
     if (!iniciando) {
       iniciando = (async () => {
+        const disponibles = await empresasPermitidas();
+        if (!disponibles.length) throw new ErrorSinEmpresa();
+        if (!disponibles.includes(empresaActual)) usarEmpresa(disponibles[0]);
         let e = await leerEstado();
+        if (!e && empresaActual !== 'aglh') {
+          // Empresa nueva: arranca vacía, con la misma clave de administrador que AGLH (si está en esta computadora).
+          e = estadoVacio();
+          try { const aglh = await descifrar(await leerRegistro(EMPRESAS_SISTEMA.aglh.registro)); if (aglh && aglh.admin) e.admin = aglh.admin; } catch { /* sin datos de AGLH */ }
+          await guardarEstado(e);
+        }
         if (!e) {
           let sinEjemplos = false;
           try { sinEjemplos = localStorage.getItem('ret.sinEjemplos') === '1'; } catch { /* sin almacenamiento */ }
@@ -340,7 +364,49 @@
   // archivo JSON a un repositorio privado. Cada subida queda como un "commit",
   // así que el repositorio guarda también el historial de versiones.
 
-    const ARCHIVO_NUBE = 'datos/retenciones.json';
+  const archivoNube = () => `${EMPRESAS_SISTEMA[empresaActual].prefijo}datos/retenciones.json`;
+
+  class ErrorSinEmpresa extends Error { constructor() { super('Tu usuario no tiene acceso a ninguna empresa. Pedile al administrador que te habilite.'); this.sinEmpresa = true; } }
+  function usarEmpresa(id) {
+    empresaActual = id;
+    CLAVE = EMPRESAS_SISTEMA[id].registro;
+    try { localStorage.setItem(CLAVE_EMPRESA, id); } catch { /* sin almacenamiento */ }
+  }
+  // En la web, el servidor dice a qué empresas puede entrar cada correo. En la compu (sin servidor) se ven las dos.
+  async function empresasPermitidas() {
+    const s = await servidor();
+    if (!s || !Array.isArray(s.empresas)) return Object.keys(EMPRESAS_SISTEMA);
+    return Object.keys(EMPRESAS_SISTEMA).filter((k) => s.empresas.includes(k));
+  }
+  async function empresaSistema() {
+    const disponibles = await empresasPermitidas();
+    const id = disponibles.includes(empresaActual) ? empresaActual : disponibles[0] || null;
+    return { id, nombre: id ? EMPRESAS_SISTEMA[id].nombre : '', disponibles: disponibles.map((k) => ({ id: k, nombre: EMPRESAS_SISTEMA[k].nombre })) };
+  }
+  // Cambiar de empresa: se sube lo pendiente de la actual y se carga la otra desde cero (no queda nada de la anterior en memoria).
+  async function cambiarEmpresa(id) {
+    if (!EMPRESAS_SISTEMA[id]) throw new ErrorValidacion('Esa empresa no existe.');
+    if (!(await empresasPermitidas()).includes(id)) throw new ErrorValidacion('No tenés acceso a esa empresa.', 403);
+    if (iniciando) await iniciando.catch(() => {});
+    clearTimeout(temporizadorSubida);
+    if (subiendo) await subiendo;
+    if (estado && estado.pendienteNube && configNube()) await subirAhora();
+    usarEmpresa(id);
+    estado = null; shaNube = null; ultimaLectura = null;
+    await iniciar();
+    return empresaSistema();
+  }
+  // Accesos por correo (solo el administrador de Google, en la web).
+  async function pedirAccesos(metodo, cuerpo) {
+    let r;
+    try { r = await fetch('/auth/accesos', { method: metodo, cache: 'no-store', headers: cuerpo ? { 'Content-Type': 'application/json' } : {}, body: cuerpo ? JSON.stringify(cuerpo) : undefined }); }
+    catch { throw new ErrorValidacion('No hay conexión con el servidor.'); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new ErrorValidacion(j.error || `El servidor respondió ${r.status}.`, r.status);
+    return j;
+  }
+  const leerAccesos = () => pedirAccesos('GET');
+  const guardarAccesos = (datos) => pedirAccesos('POST', datos);
   let shaNube = null;
   let estadoNube = { estado: 'apagado', mensaje: '' };
   let subiendo = null;
@@ -408,13 +474,13 @@
     return res;
   }
 
-  const rutaArchivo = (c) => `/repos/${c.repo}/contents/${ARCHIVO_NUBE}`;
+  const rutaArchivo = (c) => `/repos/${c.repo}/contents/${archivoNube()}`;
 
   // Devuelve { datos, sha } del archivo en GitHub, o null si todavía no existe.
   // Si el archivo no cambió desde la última lectura, GitHub responde 304 sin mandarlo de nuevo (rápido y no gasta el límite).
   let ultimaLectura = null; // { repo, etag, valor }
   async function leerNube(c) {
-    const previa = ultimaLectura && ultimaLectura.repo === c.repo ? ultimaLectura : null;
+    const previa = ultimaLectura && ultimaLectura.repo === c.repo && ultimaLectura.archivo === archivoNube() ? ultimaLectura : null;
     const res = await github(c, 'GET', rutaArchivo(c), null, undefined, previa ? { 'If-None-Match': previa.etag } : {});
     if (res.status === 304 && previa) return structuredClone(previa.valor);
     if (res.status === 404) return null;
@@ -427,7 +493,7 @@
       texto = await raw.text();
     }
     const valor = { datos: JSON.parse(texto), sha: info.sha };
-    ultimaLectura = etag ? { repo: c.repo, etag, valor: structuredClone(valor) } : null;
+    ultimaLectura = etag ? { repo: c.repo, archivo: archivoNube(), etag, valor: structuredClone(valor) } : null;
     return valor;
   }
 
@@ -443,7 +509,7 @@
     try {
       let datos = datosNube(enviado);
       let mensajeFusion = '';
-      const cuerpo = (sha) => ({ message: `Datos actualizados ${datos.modificado || ahora()}${usuarioActual ? ` por ${usuarioActual}` : ''}`, content: aBase64(paraNube(datos)), ...(sha ? { sha } : {}) });
+      const cuerpo = (sha) => ({ message: `Datos ${EMPRESAS_SISTEMA[empresaActual].nombre} actualizados ${datos.modificado || ahora()}${usuarioActual ? ` por ${usuarioActual}` : ''}`, content: aBase64(paraNube(datos)), ...(sha ? { sha } : {}) });
       let res = await github(c, 'PUT', rutaArchivo(c), cuerpo(shaNube));
       if (res.status === 409 || res.status === 422) {
         // Otra persona guardó antes: se juntan sus cambios con los de acá antes de subir.
@@ -548,7 +614,7 @@
   }
 
   function datosNube(e) {
-    const { ultimoRespaldo, pendienteNube, baseNube, sistema, ...resto } = e;
+    const { ultimoRespaldo, pendienteNube, baseNube, sistema, empresa_sistema, ...resto } = e;
     return resto;
   }
 
@@ -1138,7 +1204,7 @@
     const tamano = Math.floor((b64.length * 3) / 4);
     if (!tamano) throw new ErrorValidacion('El archivo del comprobante está vacío.');
     if (tamano > MAX_COMPROBANTE) throw new ErrorValidacion('El comprobante es muy grande: el máximo es 10 MB.');
-    const ruta = `comprobantes/${mes}/${Date.now()}-${nombreArchivoSeguro(archivo.nombre)}`;
+    const ruta = `${EMPRESAS_SISTEMA[empresaActual].prefijo}comprobantes/${mes}/${Date.now()}-${nombreArchivoSeguro(archivo.nombre)}`;
     let res;
     try {
       res = await github(c, 'PUT', `/repos/${c.repo}/contents/${ruta.split('/').map(encodeURIComponent).join('/')}`, { message: `Comprobante de pago: ${etiqueta}`, content: b64 });
@@ -1832,7 +1898,7 @@
   }
 
   async function exportarRespaldo() {
-    const copia = { ...structuredClone(estado), sistema: 'Sistema de Retenciones', exportado: ahora() };
+    const copia = { ...structuredClone(estado), sistema: 'Sistema de Retenciones', empresa_sistema: empresaActual, exportado: ahora() };
     delete copia.ultimoRespaldo;
     delete copia.pendienteNube;
     delete copia.baseNube;
@@ -1851,8 +1917,10 @@
   async function importarRespaldo(textoArchivo) {
     let datos;
     try { datos = JSON.parse(textoArchivo); } catch { throw new ErrorValidacion('El archivo no es un respaldo válido.'); }
+    const de = datos && datos.empresa_sistema;
+    if (de && de !== empresaActual && EMPRESAS_SISTEMA[de]) throw new ErrorValidacion(`Ese respaldo es de ${EMPRESAS_SISTEMA[de].nombre} y ahora estás en ${EMPRESAS_SISTEMA[empresaActual].nombre}. Cambiá de empresa arriba antes de recuperarlo.`);
     const nuevo = validarEstado(datos);
-    delete nuevo.sistema; delete nuevo.exportado;
+    delete nuevo.sistema; delete nuevo.exportado; delete nuevo.empresa_sistema;
     nuevo.ultimoRespaldo = ahora();
     nuevo.modificado = ahora();
     nuevo.historial = [...(nuevo.historial || []), entradaHistorial('Respaldo recuperado', 'Se reemplazaron todos los datos por los de un archivo de respaldo')].slice(-MAX_HISTORIAL);
@@ -2275,6 +2343,7 @@
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
     cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
+    empresaSistema, cambiarEmpresa, leerAccesos, guardarAccesos,
     servidor, permisos, configurarAdmin, ingresarAdmin, salirAdmin, restablecerAdmin, usuariosPerfiles, asignarPerfil,
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,

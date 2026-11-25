@@ -540,3 +540,15 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
 .quitar-comp:hover { color: #b3261e; background: #fbe9e7; }
 .lista-perfiles { margin: 6px 0 10px; padding-left: 20px; } .lista-perfiles li { margin: 2px 0; }
 .menu a[hidden] { display: none !important; }
+
+/* ── Empresa del sistema (AGLH / SHI) ── */
+.empresa-sistema { display: flex; align-items: center; }
+.empresa-sistema select, .empresa-sistema-nombre { font: inherit; font-size: .88rem; font-weight: 700; color: #fff; background: var(--grafito); border: 1px solid var(--grafito); border-radius: 999px; padding: 5px 12px; }
+.empresa-sistema select { cursor: pointer; padding-right: 8px; }
+.empresa-sistema select:focus-visible { outline: 3px solid var(--lima); outline-offset: 2px; }
+.sr-solo { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.marcas-empresa { display: flex; gap: 16px; flex-wrap: wrap; padding: 6px 0; }
+.marca-empresa { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+.marca-empresa input { width: 18px; height: 18px; }
+.etiqueta-campo { font-weight: 600; font-size: .9rem; }
+body.bloqueado .empresa-sistema { display: none !important; }

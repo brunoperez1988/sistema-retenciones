@@ -190,6 +190,8 @@ const estado = { mes: mesActual(), mesElegido: false };
 
 // Solapas que solo ve el administrador (cuando hay clave de administrador).
 let permisosActuales = { configurado: false, admin: true };
+// Empresa del sistema que se está viendo (AGLH o SHI): cada una tiene sus propios datos.
+let empresaSistemaActual = { id: null, nombre: '', disponibles: [] };
 
 const vistas = {
   'solo-admin': async () => {
@@ -266,6 +268,12 @@ if (LOCAL) {
   });
   pintarNube(window.backendLocal.estadoNube());
 
+  const selEmpresa = document.createElement('label');
+  selEmpresa.id = 'empresa-sistema';
+  selEmpresa.className = 'empresa-sistema';
+  selEmpresa.hidden = true;
+  document.querySelector('.marca').after(selEmpresa);
+
   const salir = document.createElement('button');
   salir.type = 'button';
   salir.id = 'boton-salir';
@@ -304,6 +312,34 @@ function puedeVer(seccion) {
   return !lista || lista.includes(seccion);
 }
 
+function pintarEmpresaSistema() {
+  const el = document.getElementById('empresa-sistema');
+  if (!el) return;
+  const e = empresaSistemaActual;
+  el.hidden = !e.id;
+  document.title = e.id ? `Control de Retenciones · ${e.nombre}` : 'Control de Retenciones';
+  if (!e.id) return;
+  if (e.disponibles.length < 2) {
+    el.innerHTML = `<span class="empresa-sistema-nombre" title="Estás trabajando en ${esc(e.nombre)}">${esc(e.nombre)}</span>`;
+    return;
+  }
+  if (el.querySelector('select')?.value === e.id) return;
+  el.innerHTML = `<span class="sr-solo">Empresa</span><select aria-label="Empresa en la que trabajás" title="Cambiar de empresa">
+    ${e.disponibles.map((x) => `<option value="${esc(x.id)}"${x.id === e.id ? ' selected' : ''}>${esc(x.nombre)}</option>`).join('')}</select>`;
+  el.querySelector('select').addEventListener('change', async (ev) => {
+    const elegida = e.disponibles.find((x) => x.id === ev.target.value);
+    ev.target.disabled = true;
+    aviso(`Cambiando a ${elegida ? elegida.nombre : 'la otra empresa'}…`);
+    try {
+      await window.backendLocal.cambiarEmpresa(ev.target.value);
+      ev.target.disabled = false;
+      aviso(`Ahora estás en ${elegida ? elegida.nombre : 'la otra empresa'}.`);
+      if (location.hash !== '#/panel') location.hash = '#/panel'; else navegar();
+    }
+    catch (err) { ev.target.disabled = false; ev.target.value = e.id; aviso(err instanceof window.backendLocal.ErrorValidacion ? err.message : MENSAJE_FALLA); }
+  });
+}
+
 let navegacionActual = 0;
 let ultimaSeccion = null;
 async function navegar() {
@@ -312,6 +348,14 @@ async function navegar() {
     document.body.classList.toggle('bloqueado', !c.desbloqueada);
     if (!c.desbloqueada) { pantallaAcceso(c); return; }
     document.getElementById('boton-salir').title = `Cerrar la sesión de ${c.usuario}`;
+    empresaSistemaActual = await window.backendLocal.empresaSistema().catch(() => empresaSistemaActual);
+    pintarEmpresaSistema();
+    if (!empresaSistemaActual.id) {
+      document.querySelectorAll('.menu a').forEach((a) => { a.hidden = true; });
+      $app.innerHTML = `<div class="encabezado"><div><h1>Sin acceso a ninguna empresa</h1>
+        <p>Tu correo todavía no está habilitado para entrar a AGLH ni a SHI. Pedile al administrador que te dé acceso; después recargá la página.</p></div></div>`;
+      return;
+    }
   }
   const [ruta, consulta = ''] = location.hash.replace(/^#\/?/, '').split('?');
   let seccion = vistas[ruta] ? ruta : 'panel';
@@ -2278,10 +2322,11 @@ async function vistaRespaldo(_params, vigente) {
   const c = info.cantidades;
   const dias = diasDesde(info.ultimoRespaldo);
   $app.innerHTML = `
-    <div class="encabezado"><div><h1>Respaldo de los datos</h1>
+    <div class="encabezado"><div><h1>Respaldo de los datos${empresaSistemaActual.nombre ? ` de ${esc(empresaSistemaActual.nombre)}` : ''}</h1>
       <p>Todo lo que cargás se guarda automáticamente en este navegador${info.nube.estado !== 'apagado' ? ' y en tu repositorio privado de GitHub' : ', en esta computadora'}.</p></div></div>
     ${seccionGithub(info.nube)}
     ${seccionAdmin()}
+    <div id="sec-accesos"></div>
     ${seccionPerfiles()}
     ${seccionContrasena()}
     ${permisosActuales.perfil !== 'admin' ? '' : `<div class="columnas">
@@ -2330,6 +2375,7 @@ async function vistaRespaldo(_params, vigente) {
   conectarSeccionContrasena();
   conectarSeccionAdmin();
   conectarSeccionPerfiles();
+  conectarSeccionAccesos(vigente);
   if (permisosActuales.perfil !== 'admin') return;
 
   const zona = document.getElementById('zona-respaldo');
@@ -2339,7 +2385,7 @@ async function vistaRespaldo(_params, vigente) {
       const blob = await window.backendLocal.exportarRespaldo();
       const d = new Date();
       const dos = (n) => String(n).padStart(2, '0');
-      guardarBlob(blob, `respaldo-retenciones-${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}_${dos(d.getHours())}-${dos(d.getMinutes())}.json`);
+      guardarBlob(blob, `respaldo-retenciones-${(empresaSistemaActual.nombre || '').toLowerCase()}${empresaSistemaActual.nombre ? '-' : ''}${d.getFullYear()}-${dos(d.getMonth() + 1)}-${dos(d.getDate())}_${dos(d.getHours())}-${dos(d.getMinutes())}.json`);
       aviso('Respaldo descargado. Buscalo en la carpeta Descargas.');
       setTimeout(navegar, 800);
     } catch (e) { console.error(e); fallaEnLinea(zona, bajar); }
@@ -2613,7 +2659,7 @@ function seccionPerfiles() {
   const p = permisosActuales;
   if (!p.configurado || !p.admin) return '';
   return `<section class="tarjeta" id="sec-perfiles"><h2>Usuarios y perfiles</h2>
-    <p>Elegí qué solapas ve cada usuario. Todos ven el Panel y la solapa Respaldo (para su contraseña y GitHub).</p>
+    <p>Elegí qué solapas ve cada usuario${empresaSistemaActual.disponibles.length > 1 ? ` dentro de <strong>${esc(empresaSistemaActual.nombre)}</strong> (cada empresa tiene sus propios perfiles: para la otra, cambiá de empresa arriba)` : ''}. Todos ven el Panel y la solapa Respaldo (para su contraseña y GitHub).</p>
     <ul class="lista-perfiles">
       <li><strong>Admin:</strong> ve todo.</li>
       <li><strong>Retenciones:</strong> Retenciones recibidas, Descuentos, Reportes, Empresas, Colaboradores y Entidades.</li>
@@ -2629,6 +2675,72 @@ function seccionPerfiles() {
       <div class="acciones"><button class="boton secundario" type="submit">Asignar perfil</button></div>
     </form>
   </section>`;
+}
+
+// ── Acceso a empresas (solo el administrador que entra con Google) ──
+const EMPRESAS_TXT = { aglh: 'AGLH', shi: 'SHI' };
+function conectarSeccionAccesos(vigente) {
+  const caja = document.getElementById('sec-accesos');
+  if (!caja) return;
+  window.backendLocal.servidor().then(async (s) => {
+    if (!s || !s.admin || !vigente()) return;
+    let datos;
+    try { datos = await window.backendLocal.leerAccesos(); } catch (e) {
+      if (vigente()) caja.innerHTML = `<section class="tarjeta"><h2>Acceso a empresas</h2><div class="mensaje error">${esc(e.message || MENSAJE_FALLA)}</div></section>`;
+      return;
+    }
+    if (!vigente()) return;
+    const marcas = (pref, lista) => Object.entries(EMPRESAS_TXT).map(([k, n]) =>
+      `<label class="marca-empresa"><input type="checkbox" data-${pref}="${k}"${lista.includes(k) ? ' checked' : ''}> ${n}</label>`).join('');
+    const pintar = () => {
+      const filas = Object.entries(datos.usuarios).sort(([a], [b]) => a.localeCompare(b, 'es'));
+      caja.innerHTML = `<section class="tarjeta" id="sec-accesos-tarjeta"><h2>Acceso a empresas</h2>
+        <p>Elegí a qué empresa puede entrar cada persona (por su correo de Google). Quien entra a las dos elige la empresa arriba, al lado del logo. Lo que ve adentro de cada empresa lo decide su perfil, más abajo.</p>
+        <div class="campo"><span class="etiqueta-campo">Las personas que no están en la lista entran a:</span>
+          <div class="marcas-empresa" id="acc-defecto">${marcas('defecto', datos.porDefecto)}</div>
+          <p class="nota">${datos.porDefecto.length ? '' : 'Ninguna: solo entran las personas de la lista. '}Los administradores (${esc((datos.admins || []).join(', '))}) entran siempre a las dos.</p></div>
+        ${filas.length ? `<div class="tabla-contenedor"><table class="mini"><thead><tr><th>Correo</th><th>Empresas</th><th></th></tr></thead><tbody>
+          ${filas.map(([correo, lista]) => `<tr data-correo="${esc(correo)}"><td>${esc(correo)}</td><td><div class="marcas-empresa">${marcas('emp', lista)}</div></td>
+            <td><button type="button" class="enlace" data-quitar>Quitar</button></td></tr>`).join('')}
+          </tbody></table></div>` : '<p class="vacio">Todavía no agregaste a nadie a la lista.</p>'}
+        <form class="formulario" id="form-acceso-nuevo" style="margin-top:16px" novalidate>
+          <div class="fila"><div class="campo"><label for="acc-correo">Correo</label><input id="acc-correo" type="email" autocomplete="off" spellcheck="false" placeholder="nombre@aglh.com.uy"></div>
+          <div class="campo"><span class="etiqueta-campo">Puede entrar a</span><div class="marcas-empresa" id="acc-nuevo">${marcas('nuevo', ['aglh'])}</div></div></div>
+          <div class="zona-mensaje"></div>
+          <div class="acciones"><button class="boton secundario" type="submit">Dar acceso</button></div>
+        </form></section>`;
+      const zona = caja.querySelector('.zona-mensaje');
+      const guardar = async (nuevo, exito) => {
+        try { datos = await window.backendLocal.guardarAccesos(nuevo); aviso(exito); pintar(); }
+        catch (e) { aviso(e.message || MENSAJE_FALLA); pintar(); }
+      };
+      caja.querySelectorAll('[data-defecto]').forEach((ch) => ch.addEventListener('change', () => {
+        const porDefecto = [...caja.querySelectorAll('[data-defecto]:checked')].map((x) => x.dataset.defecto);
+        guardar({ ...datos, porDefecto }, 'Listo: quedó guardado para las personas que no están en la lista.');
+      }));
+      caja.querySelectorAll('tr[data-correo]').forEach((tr) => {
+        const correo = tr.dataset.correo;
+        tr.querySelectorAll('[data-emp]').forEach((ch) => ch.addEventListener('change', () => {
+          const lista = [...tr.querySelectorAll('[data-emp]:checked')].map((x) => x.dataset.emp);
+          guardar({ ...datos, usuarios: { ...datos.usuarios, [correo]: lista } }, lista.length ? `Listo: ${correo} entra a ${lista.map((k) => EMPRESAS_TXT[k]).join(' y ')}.` : `Listo: ${correo} no entra a ninguna empresa.`);
+        }));
+        tr.querySelector('[data-quitar]').addEventListener('click', async () => {
+          if (!(await confirmar({ titulo: `¿Quitar a ${correo} de la lista?`, html: `<p>Va a entrar a lo mismo que las personas que no están en la lista (${datos.porDefecto.length ? datos.porDefecto.map((k) => EMPRESAS_TXT[k]).join(' y ') : 'ninguna empresa'}).</p>`, boton: 'Sí, quitar' }))) return;
+          const usuarios = { ...datos.usuarios }; delete usuarios[correo];
+          guardar({ ...datos, usuarios }, `Listo: ${correo} salió de la lista.`);
+        });
+      });
+      caja.querySelector('#form-acceso-nuevo').addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        const correo = caja.querySelector('#acc-correo').value.trim().toLowerCase();
+        const lista = [...caja.querySelectorAll('[data-nuevo]:checked')].map((x) => x.dataset.nuevo);
+        if (!/^[^\s@]+@[^\s@]+$/.test(correo)) { zona.innerHTML = '<div class="mensaje error">Escribí el correo completo, por ejemplo nombre@aglh.com.uy.</div>'; return; }
+        if (!lista.length) { zona.innerHTML = '<div class="mensaje error">Marcá al menos una empresa.</div>'; return; }
+        guardar({ ...datos, usuarios: { ...datos.usuarios, [correo]: lista } }, `Listo: ${correo} entra a ${lista.map((k) => EMPRESAS_TXT[k]).join(' y ')}.`);
+      });
+    };
+    pintar();
+  });
 }
 
 function conectarSeccionPerfiles() {
