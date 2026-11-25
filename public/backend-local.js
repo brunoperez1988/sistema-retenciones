@@ -2467,6 +2467,10 @@
     if ((metodo === 'POST' && (ruta === '/api/entidades' || ruta === '/api/empresas')) || (metodo === 'DELETE' && /^\/api\/(empresas|entidades)\//.test(ruta))) {
       await exigirAdmin(ruta.includes('empresas') ? 'agregar o borrar empresas' : 'agregar entidades');
     }
+    // La planilla de Excel solo la importan los perfiles Admin y Retenciones.
+    if (metodo === 'POST' && ruta === '/api/importar-planilla' && !['admin', 'retenciones'].includes((await permisos()).perfil)) {
+      throw new ErrorValidacion('Solo los perfiles Admin y Retenciones pueden importar la planilla de Excel.', 403);
+    }
     if (metodo === 'POST' && ruta === '/api/importar' && !(await permisos()).admin) {
       const c = cuerpo || {};
       const ents = new Set(estado.entidades.map((x) => normalizar(x.nombre)));

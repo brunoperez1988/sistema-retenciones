@@ -1150,7 +1150,7 @@ async function vistaRetenciones(_params, vigente) {
   if (filtrosRet.periodo === null) filtrosRet.periodo = cat.mes_trabajo;
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div>
-      ${LOCAL ? '<button class="boton secundario" type="button" id="importar-planilla">Importar planilla de Excel</button>' : ''}</div>
+      ${LOCAL && ['admin', 'retenciones'].includes(permisosActuales.perfil === undefined ? 'admin' : permisosActuales.perfil) ? '<button class="boton secundario" type="button" id="importar-planilla">Importar planilla de Excel</button>' : ''}</div>
     <div class="apilado">
       <section class="tarjeta" id="tarjeta-form-ret">
         <h2 id="titulo-form-ret">Cargar retención</h2>
