@@ -1,11 +1,15 @@
-'use strict';
-
 // Sistema de Control de Retenciones de Sueldos
 // Servidor web sin dependencias: node server.js  →  http://localhost:3000
+// El proyecto es de tipo "module" (lo pide Vercel); src/, scripts/ y test/ siguen siendo CommonJS.
 
-const http = require('node:http');
-const fs = require('node:fs');
-const path = require('node:path');
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const datos = require('./src/db');
 const { csv, xlsx } = require('./src/exportar');
 const { cargarEjemplos } = require('./scripts/ejemplos');
