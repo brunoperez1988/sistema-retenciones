@@ -1451,6 +1451,9 @@
       if (ruta === '/api/importar') {
         return { accion: 'Importación de archivo', detalle: (res) => [res.retenciones ? `${res.retenciones} retenciones` : '', res.colaboradores ? `${res.colaboradores} colaboradores` : '', res.empresas ? `${res.empresas} empresas` : ''].filter(Boolean).join(', ') || 'Sin datos nuevos' };
       }
+      if (ruta === '/api/importar-planilla' && c.aplicar) {
+        return { accion: 'Importación de planilla', detalle: (res) => `${c.periodo ? nombreMesTxt(periodo(c.periodo)) : ''} · ${[res.nuevas ? `${res.nuevas} nuevas` : '', res.cambian ? `${res.cambian} con importe cambiado` : '', res.colaboradores ? `${res.colaboradores} colaboradores nuevos` : ''].filter(Boolean).join(', ') || 'sin cambios'}` };
+      }
       if (ruta === '/api/pagos') {
         return { accion: 'Pago registrado', detalle: (res, e) => { const p = e.pagos.find((x) => x.id === res.id); return `${nombreEnt(p.entidad_id)} · ${nombreMesTxt(p.mes)} · ${pesosTxt(p.importe)} · transferencia ${p.transferencia} · ${fechaTxt(p.fecha_pago)}${(() => { const k = comprobantesDe(p).length; return k ? ` · con ${k === 1 ? 'comprobante' : `${k} comprobantes`}` : ''; })()}`; } };
       }
@@ -1837,6 +1840,124 @@
       e.ejemplos = false;
       return res;
     });
+  }
+
+  // ── Importar la planilla mensual de cooperativas y ANDA (Excel) ──
+  // La pantalla lee el Excel y manda una fila por valor: { fila, cedula, nombre, entidad, valor }.
+  // Con aplicar=false solo devuelve qué va a pasar con cada fila; con aplicar=true lo guarda.
+  // Nunca borra nada: lo que está en el sistema y no en la planilla solo se avisa.
+  function leerValorPlanilla(v) {
+    if (typeof v === 'number') {
+      if (!(v > 0)) throw new ErrorValidacion('el importe tiene que ser mayor a cero');
+      return { importe_total: Math.round(v * 100), regla: '' };
+    }
+    const t = String(v ?? '').trim().replace(/\s+/g, ' ');
+    if (!t) throw new ErrorValidacion('está vacía');
+    if (/%/.test(t)) {
+      const { porcentaje, base } = leerRegla(t);
+      if (porcentaje == null) throw new ErrorValidacion(`no entiendo "${t}"`);
+      if (!base) throw new ErrorValidacion(`"${t}": falta decir si es del nominal o del líquido`);
+      return { importe_total: null, regla: reglaCanonica(t) };
+    }
+    const bpc = t.match(/^(\d+(?:[.,]\d+)?)\s*bpc$/i);
+    if (bpc) return { importe_total: null, regla: `${bpc[1].replace('.', ',')} BPC` };
+    let s = t.replace(/\$|UYU|l[ií]quidos?|nominal(es)?|\s/gi, '');
+    if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+    if (!/^\d+(\.\d+)?$/.test(s) || !(Number(s) > 0)) throw new ErrorValidacion(`no entiendo "${t}"`);
+    return { importe_total: Math.round(Number(s) * 100), regla: '' };
+  }
+  const valorTxt = (x) => (x.importe_total != null ? pesosTxt(x.importe_total) : x.regla || '');
+
+  async function importarPlanilla(datos) {
+    const mes = periodo(datos && datos.periodo);
+    if (!Array.isArray(datos.filas) || !datos.filas.length) throw new ErrorValidacion('La planilla no tiene valores de cooperativas o ANDA para importar.');
+    if (datos.filas.length > 3000) throw new ErrorValidacion('La planilla tiene demasiadas filas.');
+    const cerrado = cierreDe(mes);
+    const esAdmin = (await permisos()).admin;
+    const plan = (e) => {
+      const colPorCi = new Map(e.colaboradores.map((c) => [c.cedula, c]));
+      const entPorNombre = new Map(e.entidades.map((x) => [normalizar(x.nombre).trim(), x]));
+      const buscarEnt = (nombre) => {
+        const n = normalizar(nombre).trim();
+        if (entPorNombre.has(n)) return entPorNombre.get(n);
+        // "COPAC" también encuentra "Cooperativa COPAC".
+        const parecidas = e.entidades.filter((x) => x.tipo !== 'judicial' && new RegExp(`(^|\\W)${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\W|$)`).test(normalizar(x.nombre)));
+        return parecidas.length === 1 ? parecidas[0] : null;
+      };
+      const usadas = new Set();
+      const filas = [];
+      const entidadesVistas = new Set();
+      for (const x of datos.filas) {
+        const f = { fila: x.fila, nombre: String(x.nombre || '').trim().replace(/\s+/g, ' '), cedula: String(x.cedula ?? '').replace(/\D/g, ''), entidad: String(x.entidad || '').trim(), valor: '' };
+        filas.push(f);
+        try {
+          const v = leerValorPlanilla(x.valor);
+          Object.assign(f, v, { valor: valorTxt(v) });
+          if (!/^\d{6,8}$/.test(f.cedula)) throw new ErrorValidacion(f.cedula ? `la cédula ${f.cedula} no es válida` : 'falta la cédula');
+          let col = colPorCi.get(f.cedula);
+          if (!col) {
+            try { cedula(f.cedula); } catch { throw new ErrorValidacion(`la cédula ${f.cedula} no es válida (revisá el dígito verificador)`); }
+            if (!f.nombre) throw new ErrorValidacion('falta el nombre');
+            col = { id: e.sig++, cedula: f.cedula, nombre: f.nombre };
+            e.colaboradores.push(col); colPorCi.set(f.cedula, col); f.colaboradorNuevo = true;
+          }
+          f.nombre = col.nombre;
+          let ent = buscarEnt(f.entidad);
+          if (ent && ent.tipo === 'judicial') throw new ErrorValidacion(`${ent.nombre} es judicial: las judiciales no se importan desde acá`);
+          if (!ent) {
+            if (!esAdmin) throw new ErrorValidacion(`la entidad ${f.entidad} no existe y solo el administrador puede agregarla`);
+            ent = { id: e.sig++, nombre: texto(f.entidad, 'entidad', { max: 80 }), tipo: 'comercial' };
+            e.entidades.push(ent); entPorNombre.set(normalizar(ent.nombre).trim(), ent); f.entidadNueva = true;
+          }
+          f.entidad = ent.nombre;
+          entidadesVistas.add(ent.id);
+          if (cerrado) throw new ErrorValidacion(`${nombreMesTxt(mes)} está cerrado`);
+          const delMes = e.retenciones.filter((r) => r.colaborador_id === col.id && r.entidad_id === ent.id && r.periodo === mes && !usadas.has(r.id));
+          // Una deuda con porcentaje máximo pasa sola de mes a mes: si la planilla trae el mismo porcentaje, ya está.
+          const igual = delMes.find((r) => (r.tope ? '' : (r.importe_total ?? null)) === (r.tope ? '' : f.importe_total) && (r.regla || '') === f.regla);
+          if (igual) { usadas.add(igual.id); f.estado = 'igual'; continue; }
+          const otra = delMes[0];
+          if (otra) {
+            usadas.add(otra.id);
+            if (otra.tope) throw new ErrorValidacion(`en el sistema es una deuda con máximo de ${otra.regla} por mes: cambiala a mano si hace falta`);
+            const desc = descontadoDe(e, otra.id);
+            f.antes = valorTxt(otra);
+            if (f.importe_total != null && f.importe_total < desc) throw new ErrorValidacion(`en el sistema dice ${f.antes} y ya se descontaron ${pesosTxt(desc)}: no se puede bajar a ${f.valor}`);
+            if (f.importe_total == null && desc) throw new ErrorValidacion(`en el sistema dice ${f.antes} y ya tiene descuentos: cambiala a mano`);
+            Object.assign(otra, { importe_total: f.importe_total, regla: f.regla, editado_por: usuarioActual || '', editado_en: ahora() });
+            delete otra.tope;
+            f.estado = 'cambia';
+            continue;
+          }
+          const id = e.sig++;
+          usadas.add(id);
+          e.retenciones.push({
+            id, colaborador_id: col.id, entidad_id: ent.id, periodo: mes, regla: f.regla, importe_total: f.importe_total,
+            concepto: '', expediente: '', beneficiario: null, cargado_por: texto(datos.cargado_por || usuarioActual || 'Importación de planilla', 'quién la cargó', { max: 80 }), creado_en: ahora(),
+          });
+          f.estado = 'nueva';
+        } catch (err) {
+          if (!(err instanceof ErrorValidacion)) throw err;
+          f.estado = 'error'; f.error = err.message;
+        }
+      }
+      // Lo que ya está cargado en el mes para esas entidades y la planilla no trae (no se toca).
+      const col = new Map(e.colaboradores.map((c) => [c.id, c]));
+      const ent = new Map(e.entidades.map((x) => [x.id, x]));
+      const sobran = e.retenciones.filter((r) => r.periodo === mes && entidadesVistas.has(r.entidad_id) && !usadas.has(r.id))
+        .map((r) => ({ nombre: (col.get(r.colaborador_id) || {}).nombre || '', cedula: (col.get(r.colaborador_id) || {}).cedula || '', entidad: (ent.get(r.entidad_id) || {}).nombre || '', valor: valorTxt(r), id: r.id }));
+      const cuenta = (k) => filas.filter((f) => f.estado === k).length;
+      return {
+        periodo: mes, filas, sobran,
+        nuevas: cuenta('nueva'), iguales: cuenta('igual'), cambian: cuenta('cambia'), errores: cuenta('error'),
+        colaboradores: filas.filter((f) => f.colaboradorNuevo).length, entidades: filas.filter((f) => f.entidadNueva).map((f) => f.entidad),
+      };
+    };
+    if (!datos.aplicar) return plan(structuredClone(estado));
+    const previa = plan(structuredClone(estado));
+    if (!previa.nuevas && !previa.cambian) throw new ErrorValidacion('No hay nada nuevo para cargar: todo lo de la planilla ya está en el sistema.');
+    return modificar((e) => plan(e));
   }
 
   // Una empresa con descuentos no se borra, para no perder el historial.
@@ -2363,6 +2484,7 @@
       if (ruta === '/api/retenciones') return crearRetencion(cuerpo || {});
       if (ruta === '/api/descuentos') return crearDescuento(cuerpo || {});
       if (ruta === '/api/importar') return importarRetenciones(cuerpo || {});
+      if (ruta === '/api/importar-planilla') return importarPlanilla(cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/importe$/))) return definirImporte(m[1], cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/editar$/))) return editarRetencion(m[1], cuerpo || {});
       if ((m = ruta.match(/^\/api\/retenciones\/(\d+)\/baja$/))) return darDeBaja(m[1]);

@@ -948,13 +948,209 @@ function dialogoNuevoColaborador(escrito = '') {
   });
 }
 
+// ── Importar la planilla mensual de cooperativas y ANDA (Excel .xlsx) ──
+// Lee el .xlsx en el navegador (es un .zip con XML adentro), sin librerías.
+async function leerXlsx(buffer) {
+  const dv = new DataView(buffer);
+  let fin = -1;
+  for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 70000); i--) if (dv.getUint32(i, true) === 0x06054b50) { fin = i; break; }
+  if (fin < 0) throw new Error('no-xlsx');
+  const archivos = new Map();
+  let p = dv.getUint32(fin + 16, true);
+  const total = dv.getUint16(fin + 10, true);
+  const dec = new TextDecoder();
+  for (let k = 0; k < total; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) throw new Error('no-xlsx');
+    const metodo = dv.getUint16(p + 10, true);
+    const tam = dv.getUint32(p + 20, true);
+    const ln = dv.getUint16(p + 28, true), le = dv.getUint16(p + 30, true), lc = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    const nombre = dec.decode(new Uint8Array(buffer, p + 46, ln));
+    archivos.set(nombre, { metodo, tam, local });
+    p += 46 + ln + le + lc;
+  }
+  async function leer(nombre) {
+    const a = archivos.get(nombre);
+    if (!a) return null;
+    const ini = a.local + 30 + dv.getUint16(a.local + 26, true) + dv.getUint16(a.local + 28, true);
+    const datos = new Uint8Array(buffer, ini, a.tam);
+    if (a.metodo === 0) return dec.decode(datos);
+    if (a.metodo !== 8) throw new Error('no-xlsx');
+    const flujo = new Blob([datos]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Response(flujo).text();
+  }
+  const xml = async (n) => { const t = await leer(n); return t == null ? null : new DOMParser().parseFromString(t, 'application/xml'); };
+  const hijos = (nodo, tag) => [...nodo.getElementsByTagName('*')].filter((x) => x.localName === tag);
+  const wb = await xml('xl/workbook.xml');
+  if (!wb) throw new Error('no-xlsx');
+  const rels = await xml('xl/_rels/workbook.xml.rels');
+  const destinos = new Map(rels ? hijos(rels, 'Relationship').map((r) => [r.getAttribute('Id'), r.getAttribute('Target')]) : []);
+  const ss = await xml('xl/sharedStrings.xml');
+  const textos = ss ? hijos(ss, 'si').map((si) => hijos(si, 't').map((t) => t.textContent).join('')) : [];
+  const hojas = [];
+  for (const h of hijos(wb, 'sheet')) {
+    const rid = [...h.attributes].find((a) => a.localName === 'id' && a.prefix)?.value;
+    let destino = destinos.get(rid) || '';
+    destino = destino.startsWith('/') ? destino.slice(1) : `xl/${destino.replace(/^\.\//, '')}`;
+    hojas.push({ nombre: h.getAttribute('name'), cargar: async () => {
+      const doc = await xml(destino);
+      const filas = [];
+      if (!doc) return filas;
+      for (const row of hijos(doc, 'row')) {
+        const nro = Number(row.getAttribute('r'));
+        const celdas = [];
+        for (const c of hijos(row, 'c')) {
+          const ref = c.getAttribute('r') || '';
+          const letras = ref.replace(/\d+/g, '');
+          const col = [...letras].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+          const t = c.getAttribute('t');
+          const v = hijos(c, 'v')[0]?.textContent;
+          let valor = null;
+          if (t === 's') valor = textos[Number(v)] ?? null;
+          else if (t === 'inlineStr') valor = hijos(c, 't').map((x) => x.textContent).join('');
+          else if (t === 'str' || t === 'e') valor = v ?? null;
+          else if (t === 'b') valor = v === '1';
+          else if (v != null && v !== '') valor = Number(v);
+          if (valor !== null && valor !== '' && col >= 0) celdas[col] = valor;
+        }
+        filas.push({ nro, celdas });
+      }
+      return filas;
+    } });
+  }
+  return hojas;
+}
+
+// Columnas de cooperativas y ANDA que trae la planilla (además, cualquier entidad comercial ya cargada con ese nombre).
+const COLUMNAS_PLANILLA = ['COPAC', 'COMAG', 'HORIZONTE', 'VERDE', 'CINTEPA', 'COPOL', 'ACAC', 'ANDA'];
+const MESES_TXT = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const sinTilde = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+
+// De las filas de una hoja saca un valor por persona y entidad.
+function valoresPlanilla(filas, entidades) {
+  const comerciales = entidades.filter((e) => e.tipo !== 'judicial').map((e) => sinTilde(e.nombre));
+  const enc = filas.find((f) => f.celdas.some((c) => sinTilde(c) === 'nombre') && f.celdas.some((c) => /^(cedula|ci|c\.i\.?)$/.test(sinTilde(c))));
+  if (!enc) return { error: 'No encontré la fila de títulos con "Nombre" y "Cédula".' };
+  const iNom = enc.celdas.findIndex((c) => sinTilde(c) === 'nombre');
+  const iCi = enc.celdas.findIndex((c) => /^(cedula|ci|c\.i\.?)$/.test(sinTilde(c)));
+  const columnas = [];
+  enc.celdas.forEach((c, i) => {
+    const t = sinTilde(c);
+    if (!t || i === iNom || i === iCi) return;
+    if (COLUMNAS_PLANILLA.some((n) => sinTilde(n) === t) || comerciales.includes(t)) columnas.push({ i, entidad: String(c).trim() });
+  });
+  if (!columnas.length) return { error: 'No encontré columnas de cooperativas ni de ANDA (COPAC, COMAG, HORIZONTE, VERDE, CINTEPA, COPOL, ACAC, ANDA).' };
+  const valores = [];
+  for (const f of filas.filter((x) => x.nro > enc.nro)) {
+    for (const c of columnas) {
+      const v = f.celdas[c.i];
+      if (v == null || (typeof v === 'string' && !v.trim()) || v === 0) continue;
+      valores.push({ fila: f.nro, nombre: String(f.celdas[iNom] ?? '').trim(), cedula: String(f.celdas[iCi] ?? '').trim(), entidad: c.entidad, valor: typeof v === 'number' ? Math.round(v * 100) / 100 : String(v) });
+    }
+  }
+  return { columnas: columnas.map((c) => c.entidad), valores };
+}
+
+function conectarImportarPlanilla(boton, cat, alTerminar) {
+  boton.addEventListener('click', () => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dialogo ancho';
+    dlg.innerHTML = `<form method="dialog" class="formulario" novalidate>
+      <h2>Importar planilla de cooperativas y ANDA</h2>
+      <p>Subí el Excel del mes (por ejemplo <em>Retenciones para quincenas.xlsx</em>). Se cargan solo las columnas de cooperativas y ANDA${empresaSistemaActual.nombre ? `, en <strong>${esc(empresaSistemaActual.nombre)}</strong>` : ''}. Antes de guardar te muestro qué va a entrar.</p>
+      <div class="campo"><label for="ip-archivo">Planilla de Excel (.xlsx)</label><input type="file" id="ip-archivo" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>
+      <div class="fila" id="ip-opciones" hidden>
+        <div class="campo"><label for="ip-hoja">Hoja</label><select id="ip-hoja"></select></div>
+        <div class="campo"><label for="ip-mes">Cargar en el mes</label><input type="month" id="ip-mes" value="${esc(cat.mes_trabajo || mesActual())}"></div>
+      </div>
+      <div id="ip-zona"></div>
+      <div class="acciones"><button class="boton" type="button" id="ip-guardar" hidden>Importar</button><button class="boton secundario" value="cancelar" formnovalidate>Cerrar</button></div>
+    </form>`;
+    document.body.appendChild(dlg);
+    const zona = dlg.querySelector('#ip-zona');
+    const selHoja = dlg.querySelector('#ip-hoja');
+    const inMes = dlg.querySelector('#ip-mes');
+    const btn = dlg.querySelector('#ip-guardar');
+    let hojas = [];
+    let enviar = null;
+    const msj = (clase, html) => { zona.innerHTML = `<div class="mensaje ${clase}" style="margin-top:12px">${html}</div>`; };
+    const hojaDelMes = () => {
+      const nombre = MESES_TXT[Number(inMes.value.slice(5, 7)) - 1];
+      const i = hojas.findIndex((h) => { const t = sinTilde(h.nombre).replace('setiembre', 'septiembre'); return t === nombre || t.startsWith(nombre + ' '); });
+      return i;
+    };
+    async function previa() {
+      btn.hidden = true; enviar = null;
+      const hoja = hojas[Number(selHoja.value)];
+      if (!hoja) return;
+      zona.innerHTML = '<p class="cargando">Leyendo la planilla…</p>';
+      let r;
+      try { r = valoresPlanilla(await hoja.cargar(), cat.entidades); } catch { msj('error', 'No pude leer esa hoja.'); return; }
+      if (r.error) { msj('error', `${esc(r.error)} Revisá que sea la hoja correcta.`); return; }
+      if (!r.valores.length) { msj('error', `La hoja <strong>${esc(hoja.nombre)}</strong> no tiene valores en ${esc(r.columnas.join(', '))}.`); return; }
+      const cuerpo = { periodo: inMes.value, filas: r.valores };
+      let res;
+      try { res = await api('/api/importar-planilla', { metodo: 'POST', cuerpo: { ...cuerpo, aplicar: false } }); }
+      catch (e) { msj('error', esc(e.validacion ? e.message : MENSAJE_FALLA)); return; }
+      const est = { nueva: ['completa', 'Nueva'], igual: ['pendiente', 'Ya estaba'], cambia: ['a-definir', 'Cambia'], error: ['arrastre', 'No se carga'] };
+      const orden = { error: 0, cambia: 1, nueva: 2, igual: 3 };
+      const filas = [...res.filas].sort((a, b) => orden[a.estado] - orden[b.estado] || a.fila - b.fila);
+      zona.innerHTML = `
+        <div class="mensaje ${res.nuevas || res.cambian ? 'ok' : 'editando'}" style="margin-top:12px">
+          Hoja <strong>${esc(hoja.nombre)}</strong> → <strong>${esc(nombreMes(res.periodo))}</strong>: ${res.filas.length} valores (${esc(r.columnas.join(', '))}).<br>
+          <strong>${res.nuevas}</strong> ${res.nuevas === 1 ? 'nueva' : 'nuevas'} · <strong>${res.iguales}</strong> ya ${res.iguales === 1 ? 'estaba' : 'estaban'} igual${res.cambian ? ` · <strong>${res.cambian}</strong> ${res.cambian === 1 ? 'cambia' : 'cambian'} de importe` : ''}${res.errores ? ` · <strong>${res.errores}</strong> no se ${res.errores === 1 ? 'puede' : 'pueden'} cargar` : ''}${res.colaboradores ? ` · ${res.colaboradores} ${res.colaboradores === 1 ? 'colaborador nuevo' : 'colaboradores nuevos'}` : ''}${res.entidades.length ? ` · entidades nuevas: ${esc([...new Set(res.entidades)].join(', '))}` : ''}
+        </div>
+        <div class="tabla-contenedor" style="margin-top:10px;max-height:46vh;overflow:auto"><table>
+          <thead><tr><th>Fila</th><th>Colaborador</th><th>Entidad</th><th class="num">Valor</th><th>Qué pasa</th></tr></thead>
+          <tbody>${filas.map((f) => `<tr><td>${f.fila}</td><td>${esc(f.nombre)}<span class="sec"> · CI ${esc(f.cedula)}</span>${f.colaboradorNuevo ? ' <span class="etiqueta-tipo mensual">nuevo</span>' : ''}</td><td>${esc(f.entidad)}</td><td class="num">${esc(f.valor)}</td>
+            <td><span class="etiqueta-tipo ${est[f.estado][0]}">${est[f.estado][1]}</span>${f.estado === 'cambia' ? `<span class="sec"> antes ${esc(f.antes)}</span>` : ''}${f.error ? `<span class="sec"> ${esc(f.error)}</span>` : ''}</td></tr>`).join('')}</tbody>
+        </table></div>
+        ${res.sobran.length ? `<h3>Están en el sistema y no en la planilla (${res.sobran.length})</h3><p class="sec">No se borran: si no corresponden, eliminalas a mano.</p>
+          <ul>${res.sobran.map((x) => `<li>${esc(x.nombre)} · ${esc(x.entidad)} · ${esc(x.valor)}</li>`).join('')}</ul>` : ''}`;
+      if (res.nuevas || res.cambian) {
+        btn.hidden = false;
+        btn.textContent = `Importar ${res.nuevas + res.cambian} ${res.nuevas + res.cambian === 1 ? 'retención' : 'retenciones'}`;
+        enviar = cuerpo;
+      }
+    }
+    dlg.querySelector('#ip-archivo').addEventListener('change', async (ev) => {
+      const archivo = ev.target.files[0];
+      dlg.querySelector('#ip-opciones').hidden = true; btn.hidden = true; zona.innerHTML = '';
+      if (!archivo) return;
+      if (/\.xls$/i.test(archivo.name)) { msj('error', 'Ese archivo es de Excel viejo (.xls). Abrilo en Excel y guardalo como <strong>Libro de Excel (.xlsx)</strong>.'); return; }
+      try { hojas = await leerXlsx(await archivo.arrayBuffer()); } catch { msj('error', 'No pude abrir el archivo. Tiene que ser un Excel .xlsx.'); return; }
+      if (!hojas.length) { msj('error', 'El Excel no tiene hojas.'); return; }
+      selHoja.innerHTML = hojas.map((h, i) => `<option value="${i}">${esc(h.nombre)}</option>`).join('');
+      const i = hojaDelMes();
+      selHoja.value = String(i >= 0 ? i : hojas.length - 1);
+      dlg.querySelector('#ip-opciones').hidden = false;
+      previa();
+    });
+    selHoja.addEventListener('change', previa);
+    inMes.addEventListener('change', () => { const i = hojaDelMes(); if (i >= 0) selHoja.value = String(i); previa(); });
+    btn.addEventListener('click', async () => {
+      if (!enviar) return;
+      btn.disabled = true;
+      try {
+        const res = await api('/api/importar-planilla', { metodo: 'POST', cuerpo: { ...enviar, aplicar: true } });
+        dlg.close();
+        aviso(`Listo: ${res.nuevas} ${res.nuevas === 1 ? 'retención nueva' : 'retenciones nuevas'}${res.cambian ? ` y ${res.cambian} con el importe actualizado` : ''} en ${nombreMes(res.periodo).toLowerCase()}.`);
+        alTerminar();
+      } catch (e) { btn.disabled = false; msj('error', esc(e.validacion ? e.message : MENSAJE_FALLA)); }
+    });
+    dlg.addEventListener('close', () => dlg.remove());
+    dlg.showModal();
+  });
+}
+
 async function vistaRetenciones(_params, vigente) {
   const cat = await api('/api/catalogos');
   if (!vigente()) return;
   // Arranca mostrando solo el mes de trabajo: los meses cerrados no aparecen salvo que se elija ese período.
   if (filtrosRet.periodo === null) filtrosRet.periodo = cat.mes_trabajo;
   $app.innerHTML = `
-    <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div></div>
+    <div class="encabezado"><div><h1>Retenciones recibidas</h1><p>Órdenes judiciales y comerciales que llegan para descontar a los colaboradores.</p></div>
+      ${LOCAL ? '<button class="boton secundario" type="button" id="importar-planilla">Importar planilla de Excel</button>' : ''}</div>
     <div class="apilado">
       <section class="tarjeta" id="tarjeta-form-ret">
         <h2 id="titulo-form-ret">Cargar retención</h2>
@@ -1094,6 +1290,8 @@ async function vistaRetenciones(_params, vigente) {
     ultimasRet = filas;
     pintarTablaRet();
   });
+  const btnPlanilla = document.getElementById('importar-planilla');
+  if (btnPlanilla) conectarImportarPlanilla(btnPlanilla, cat, () => navegar());
   let ultimasRet = [];
   // Ordenar no vuelve a pedir los datos: reordena lo que ya está en pantalla.
   function pintarTablaRet() {
