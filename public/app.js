@@ -2603,7 +2603,7 @@ function pantallaAcceso(c) {
             await window.backendLocal.conectarNube('brunoperez1988/sistema-retenciones-datos', token, 'traer');
             aviso('Listo: se trajeron tus datos de GitHub y se siguen guardando ahí.');
           } catch (e2) {
-            aviso(`El usuario se creó, pero no se pudieron traer los datos: ${String(e2.message || 'revisá la clave').replace(/\.$/, '')}. Probá de nuevo en Respaldo → Guardar en GitHub.`);
+            if (!e2.sinEmpresa) aviso(`El usuario se creó, pero no se pudieron traer los datos: ${String(e2.message || 'revisá la clave').replace(/\.$/, '')}. Probá de nuevo en Respaldo → Guardar en GitHub.`);
           }
         }
       } else await window.backendLocal.ingresar(u, k);
@@ -2705,7 +2705,7 @@ function conectarSeccionAccesos(vigente) {
           </tbody></table></div>` : '<p class="vacio">Todavía no agregaste a nadie a la lista.</p>'}
         <form class="formulario" id="form-acceso-nuevo" style="margin-top:16px" novalidate>
           <div class="fila"><div class="campo"><label for="acc-correo">Correo</label><input id="acc-correo" type="email" autocomplete="off" spellcheck="false" placeholder="nombre@aglh.com.uy"></div>
-          <div class="campo"><span class="etiqueta-campo">Puede entrar a</span><div class="marcas-empresa" id="acc-nuevo">${marcas('nuevo', ['aglh'])}</div></div></div>
+          <div class="campo"><span class="etiqueta-campo">Puede entrar a</span><div class="marcas-empresa" id="acc-nuevo">${marcas('nuevo', ['shi'])}</div></div></div>
           <div class="zona-mensaje"></div>
           <div class="acciones"><button class="boton secundario" type="submit">Dar acceso</button></div>
         </form></section>`;

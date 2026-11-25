@@ -17,13 +17,14 @@
 
   // ── Empresas del sistema ──
   // Cada empresa es un sistema aparte: sus datos se guardan en el navegador con su propia clave
-  // y en GitHub en su propia carpeta. AGLH sigue usando los lugares de siempre.
+  // y en GitHub en su propia carpeta. SHI sigue usando los lugares de siempre (son los datos que ya estaban cargados).
   const EMPRESAS_SISTEMA = {
-    aglh: { nombre: 'AGLH', registro: 'estado', prefijo: '' },
-    shi: { nombre: 'SHI', registro: 'estado-shi', prefijo: 'empresas/shi/' },
+    aglh: { nombre: 'AGLH', registro: 'estado-aglh', prefijo: 'empresas/aglh/' },
+    shi: { nombre: 'SHI', registro: 'estado', prefijo: '' },
   };
+  const EMPRESA_ORIGINAL = 'shi';
   const CLAVE_EMPRESA = 'ret.empresaSistema';
-  let empresaActual = (() => { try { const v = localStorage.getItem(CLAVE_EMPRESA); return EMPRESAS_SISTEMA[v] ? v : 'aglh'; } catch { return 'aglh'; } })();
+  let empresaActual = (() => { try { const v = localStorage.getItem(CLAVE_EMPRESA); return EMPRESAS_SISTEMA[v] ? v : EMPRESA_ORIGINAL; } catch { return EMPRESA_ORIGINAL; } })();
   let CLAVE = EMPRESAS_SISTEMA[empresaActual].registro;
 
   class ErrorValidacion extends Error {
@@ -338,11 +339,14 @@
         const disponibles = await empresasPermitidas();
         if (!disponibles.length) throw new ErrorSinEmpresa();
         if (!disponibles.includes(empresaActual)) usarEmpresa(disponibles[0]);
+        // En la web la clave de GitHub está en el servidor: si este navegador todavía no se conectó (por ejemplo,
+        // porque cuando creó su usuario aún no tenía acceso a ninguna empresa), se conecta solo.
+        if (!configNube() && (await servidor())?.github) await guardarConfigNube({ repo: REPO_DATOS, token: SERVIDOR });
         let e = await leerEstado();
-        if (!e && empresaActual !== 'aglh') {
-          // Empresa nueva: arranca vacía, con la misma clave de administrador que AGLH (si está en esta computadora).
+        if (!e && empresaActual !== EMPRESA_ORIGINAL) {
+          // Empresa nueva: arranca vacía, con la misma clave de administrador que SHI (si está en esta computadora).
           e = estadoVacio();
-          try { const aglh = await descifrar(await leerRegistro(EMPRESAS_SISTEMA.aglh.registro)); if (aglh && aglh.admin) e.admin = aglh.admin; } catch { /* sin datos de AGLH */ }
+          try { const orig = await descifrar(await leerRegistro(EMPRESAS_SISTEMA[EMPRESA_ORIGINAL].registro)); if (orig && orig.admin) e.admin = orig.admin; } catch { /* sin datos de SHI */ }
           await guardarEstado(e);
         }
         if (!e) {

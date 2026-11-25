@@ -103,11 +103,11 @@ const listaAdmins = () => (process.env.ADMIN_EMAILS || '').toLowerCase().split('
 const cabecerasGithub = (token) => ({ Authorization: `Bearer ${token}`, 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sistema-retenciones', Accept: 'application/vnd.github+json' });
 const soloEmpresas = (l) => (Array.isArray(l) ? EMPRESAS.filter((k) => l.includes(k)) : []);
 
-// Sin archivo de accesos todos entran a AGLH, como hasta ahora.
+// Sin archivo de accesos todos entran a SHI (los datos de siempre), como hasta ahora.
 async function leerAccesos(token, repo, fresco = false) {
   if (!fresco && cacheAccesos && cacheAccesos.hasta > Date.now()) return cacheAccesos;
   const r = await fetch(`https://api.github.com/repos/${repo}/contents/${ARCHIVO_ACCESOS}`, { headers: cabecerasGithub(token) });
-  let valor = { porDefecto: ['aglh'], usuarios: {} };
+  let valor = { porDefecto: ['shi'], usuarios: {} };
   let sha = null;
   if (r.ok) {
     const info = await r.json();
@@ -203,7 +203,7 @@ export default async function middleware(req) {
   const esAdmin = listaAdmins().includes(email);
   const sinCache = { 'cache-control': 'no-store' };
 
-  let accesos = { porDefecto: ['aglh'], usuarios: {} };
+  let accesos = { porDefecto: ['shi'], usuarios: {} };
   if (tokenGithub && (url.pathname === '/auth/yo' || url.pathname === '/auth/accesos' || url.pathname.startsWith('/gh/'))) {
     try { accesos = (await leerAccesos(tokenGithub, repo)).valor; }
     catch { return Response.json({ error: 'No se pudo leer quién tiene acceso a cada empresa. Probá de nuevo en un rato.' }, { status: 503, headers: sinCache }); }
@@ -253,9 +253,9 @@ export default async function middleware(req) {
     try { rutaTxt = decodeURIComponent(ruta); } catch { return Response.json({ error: 'Ruta no permitida' }, { status: 403 }); }
     if (rutaTxt.includes('..') || (ruta !== base && !ruta.startsWith(`${base}/contents/`))) return Response.json({ error: 'Ruta no permitida' }, { status: 403 });
     if (ruta !== base) {
-      // Cada archivo pertenece a una empresa: SHI vive en empresas/shi/, AGLH en el resto. La configuración no se toca desde acá.
+      // Cada archivo pertenece a una empresa: AGLH vive en empresas/aglh/, SHI en el resto (los datos de siempre). La configuración no se toca desde acá.
       const archivo = rutaTxt.slice(`${base}/contents/`.length);
-      const empresa = archivo.startsWith('empresas/shi/') ? 'shi' : archivo.startsWith('empresas/') || archivo.startsWith('config/') ? null : 'aglh';
+      const empresa = archivo.startsWith('empresas/aglh/') ? 'aglh' : archivo.startsWith('empresas/') || archivo.startsWith('config/') ? null : 'shi';
       if (!empresa || !empresasDe(email, accesos).includes(empresa)) return Response.json({ error: 'No tenés acceso a esa empresa.' }, { status: 403 });
     }
     if (!['GET', 'PUT'].includes(req.method)) return Response.json({ error: 'Método no permitido' }, { status: 405 });
