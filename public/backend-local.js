@@ -409,6 +409,46 @@
     if (!r.ok) throw new ErrorValidacion(j.error || `El servidor respondió ${r.status}.`, r.status);
     return j;
   }
+  // Copia empresas, colaboradores y entidades de otra empresa del sistema a la actual (solo lo que falte).
+  // Se lee lo último guardado en GitHub; si no hay GitHub, lo guardado en este navegador.
+  async function copiarCatalogos(origen) {
+    await iniciar();
+    const o = EMPRESAS_SISTEMA[origen];
+    if (!o || origen === empresaActual) throw new ErrorValidacion('Elegí otra empresa para copiar.');
+    if (!(await empresasPermitidas()).includes(origen)) throw new ErrorValidacion(`No tenés acceso a ${o.nombre}.`, 403);
+    await exigirAdmin('copiar datos de otra empresa');
+    let datos = null;
+    const c = configNube();
+    if (c) {
+      const res = await github(c, 'GET', `/repos/${c.repo}/contents/${o.prefijo}datos/retenciones.json`, null, 'application/vnd.github.raw+json').catch((err) => { throw new ErrorValidacion(err.message); });
+      if (res.ok) datos = JSON.parse(await res.text());
+      else if (res.status !== 404) throw new ErrorValidacion(`GitHub respondió ${res.status}.`);
+    }
+    if (!datos) datos = await descifrar(await leerRegistro(o.registro)).catch(() => null);
+    if (!datos || !Array.isArray(datos.colaboradores)) throw new ErrorValidacion(`No encontré datos de ${o.nombre}.`);
+    if (datos.ejemplos) throw new ErrorValidacion(`${o.nombre} solo tiene datos de ejemplo.`);
+    const nombreActual = EMPRESAS_SISTEMA[empresaActual].nombre;
+    registroPendiente = { accion: 'Datos copiados de otra empresa', detalle: `Empresas, colaboradores y entidades de ${o.nombre}` };
+    return modificar((e) => {
+      const res = { empresas: 0, colaboradores: 0, entidades: 0, origen: o.nombre, destino: nombreActual };
+      if (e.ejemplos) { e.colaboradores = []; e.entidades = []; e.empresas = []; e.retenciones = []; e.descuentos = []; e.ejemplos = false; }
+      for (const x of datos.empresas || []) {
+        if (!x || !x.nombre || e.empresas.some((y) => mismoNombre(y.nombre, x.nombre))) continue;
+        e.empresas.push({ id: e.sig++, nombre: String(x.nombre) }); res.empresas += 1;
+      }
+      const cis = new Set(e.colaboradores.map((y) => y.cedula));
+      for (const x of datos.colaboradores || []) {
+        if (!x || !x.cedula || cis.has(x.cedula)) continue;
+        e.colaboradores.push({ id: e.sig++, cedula: String(x.cedula), nombre: String(x.nombre || '') }); cis.add(x.cedula); res.colaboradores += 1;
+      }
+      for (const x of datos.entidades || []) {
+        if (!x || !x.nombre || !TIPOS_ENTIDAD.includes(x.tipo) || e.entidades.some((y) => mismoNombre(y.nombre, x.nombre))) continue;
+        const { id, ...resto } = x;
+        e.entidades.push({ ...structuredClone(resto), id: e.sig++ }); res.entidades += 1;
+      }
+      return res;
+    });
+  }
   const leerAccesos = () => pedirAccesos('GET');
   const guardarAccesos = (datos) => pedirAccesos('POST', datos);
   let shaNube = null;
@@ -2347,7 +2387,7 @@
     conectarNube: async (repo, token, modo) => { await iniciar(); return conectarNube(repo, token, modo); },
     desconectarNube,
     cambiarClaveNube: async (token) => { await iniciar(); return cambiarClaveNube(token); },
-    empresaSistema, cambiarEmpresa, leerAccesos, guardarAccesos,
+    empresaSistema, cambiarEmpresa, leerAccesos, guardarAccesos, copiarCatalogos,
     servidor, permisos, configurarAdmin, ingresarAdmin, salirAdmin, restablecerAdmin, usuariosPerfiles, asignarPerfil,
     guardarEnNubeAhora: async () => { await iniciar(); if (estado.pendienteNube) { if (subiendo) await subiendo; await subirAhora(); } else { await sincronizarAlAbrir(); } return estadoNube; },
     estadoNube: () => estadoNube,

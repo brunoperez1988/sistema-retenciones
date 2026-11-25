@@ -2350,6 +2350,7 @@ async function vistaRespaldo(_params, vigente) {
     ${seccionGithub(info.nube)}
     ${seccionAdmin()}
     <div id="sec-accesos"></div>
+    ${seccionCopiarEmpresa()}
     ${seccionPerfiles()}
     ${seccionContrasena()}
     ${permisosActuales.perfil !== 'admin' ? '' : `<div class="columnas">
@@ -2399,6 +2400,7 @@ async function vistaRespaldo(_params, vigente) {
   conectarSeccionAdmin();
   conectarSeccionPerfiles();
   conectarSeccionAccesos(vigente);
+  conectarSeccionCopiarEmpresa();
   if (permisosActuales.perfil !== 'admin') return;
 
   const zona = document.getElementById('zona-respaldo');
@@ -2698,6 +2700,35 @@ function seccionPerfiles() {
       <div class="acciones"><button class="boton secundario" type="submit">Asignar perfil</button></div>
     </form>
   </section>`;
+}
+
+// ── Copiar empresas, colaboradores y entidades desde la otra empresa del sistema (solo administrador) ──
+function seccionCopiarEmpresa() {
+  const e = empresaSistemaActual;
+  const otras = e.disponibles.filter((x) => x.id !== e.id);
+  if (!otras.length || permisosActuales.perfil !== 'admin') return '';
+  return `<section class="tarjeta" id="sec-copiar-empresa"><h2>Copiar datos de otra empresa</h2>
+    <p>Trae a <strong>${esc(e.nombre)}</strong> las <strong>empresas, colaboradores y entidades</strong> de la otra empresa. No copia retenciones, descuentos ni pagos, y no repite lo que ya está cargado (podés usarlo de nuevo más adelante para sumar lo nuevo).</p>
+    <div class="acciones">${otras.map((x) => `<button type="button" class="boton secundario" data-copiar-de="${esc(x.id)}">Copiar de ${esc(x.nombre)}</button>`).join('')}</div>
+    <div class="zona-mensaje" style="margin-top:12px"></div></section>`;
+}
+function conectarSeccionCopiarEmpresa() {
+  const sec = document.getElementById('sec-copiar-empresa');
+  if (!sec) return;
+  const zona = sec.querySelector('.zona-mensaje');
+  sec.querySelectorAll('[data-copiar-de]').forEach((b) => b.addEventListener('click', async () => {
+    const origen = empresaSistemaActual.disponibles.find((x) => x.id === b.dataset.copiarDe);
+    if (!(await confirmar({ titulo: `¿Copiar de ${origen.nombre} a ${empresaSistemaActual.nombre}?`, html: `<p>Se agregan a ${esc(empresaSistemaActual.nombre)} las empresas, colaboradores y entidades de ${esc(origen.nombre)} que todavía no estén. En ${esc(origen.nombre)} no se cambia nada.</p>`, boton: 'Sí, copiar' }))) return;
+    b.disabled = true;
+    zona.innerHTML = '<p class="nota">Copiando…</p>';
+    try {
+      const r = await window.backendLocal.copiarCatalogos(origen.id);
+      const n = (k, uno, varios) => `${r[k]} ${r[k] === 1 ? uno : varios}`;
+      zona.innerHTML = `<div class="mensaje ok">Listo: se copiaron ${n('empresas', 'empresa', 'empresas')}, ${n('colaboradores', 'colaborador', 'colaboradores')} y ${n('entidades', 'entidad', 'entidades')} de ${esc(r.origen)}.</div>`;
+    } catch (err) {
+      zona.innerHTML = `<div class="mensaje error">${esc(err instanceof window.backendLocal.ErrorValidacion ? err.message : MENSAJE_FALLA)}</div>`;
+    } finally { b.disabled = false; }
+  }));
 }
 
 // ── Acceso a empresas (solo el administrador que entra con Google) ──
