@@ -309,6 +309,13 @@ const PERFILES = {
   descuentos: { nombre: 'Descuento', secciones: ['panel', 'descuentos'] },
   pagos: { nombre: 'Pago', secciones: ['panel', 'descuentos', 'pagos', 'reportes'] },
 };
+// Pestañas de Reportes que no ve cualquier perfil.
+const PESTANAS_REPORTES = { historial: ['admin'], planilla: ['admin', 'retenciones'] };
+function puedeVerPestana(pestana) {
+  if (!LOCAL) return true;
+  const p = permisosActuales.perfil === undefined ? 'admin' : permisosActuales.perfil;
+  return !PESTANAS_REPORTES[pestana] || PESTANAS_REPORTES[pestana].includes(p);
+}
 function puedeVer(seccion) {
   if (!LOCAL || seccion === 'cuenta') return true;
   const p = permisosActuales.perfil === undefined ? 'admin' : permisosActuales.perfil;
@@ -804,7 +811,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
     try {
       [descuentos, cambios] = await Promise.all([
         api(`/api/descuentos?retencion_id=${r.id}`),
-        LOCAL ? api(`/api/historial?retencion_id=${r.id}`).catch(() => ({ filas: [], total: 0 })) : Promise.resolve(cambios),
+        LOCAL && puedeVerPestana('historial') ? api(`/api/historial?retencion_id=${r.id}`).catch(() => ({ filas: [], total: 0 })) : Promise.resolve(cambios),
       ]);
     }
     catch { dlg.innerHTML = `<div class="mensaje error">${MENSAJE_FALLA}</div><div class="acciones"><button class="boton secundario" type="button" data-cerrar>Cerrar</button></div>`; dlg.querySelector('[data-cerrar]').onclick = () => dlg.close(); return; }
@@ -835,7 +842,7 @@ function conectarDetalle(raiz, filas, alTerminar) {
         <tbody>${descuentos.map((d) => `<tr><td>${fecha(d.fecha)}</td><td>${esc(d.tipo)}</td><td>${esc(d.empresa)}</td>
           <td class="num">${moneda(d.importe)}</td><td class="num">${d.saldo_despues == null ? '<span class="sec">sin tope</span>' : moneda(d.saldo_despues)}</td><td>${esc(d.descontado_por)}</td></tr>`).join('')}</tbody>
       </table></div>` : '<p class="nota">Todavía no tiene descuentos.</p>'}
-      ${LOCAL ? `<h3>Historial de cambios (${cambios.total})</h3>${filasCambios(cambios, 'Todavía no hay cambios anotados de esta retención. Desde ahora queda registrado quién la edita, le descuenta o la borra.')}` : ''}
+      ${LOCAL && puedeVerPestana('historial') ? `<h3>Historial de cambios (${cambios.total})</h3>${filasCambios(cambios, 'Todavía no hay cambios anotados de esta retención. Desde ahora queda registrado quién la edita, le descuenta o la borra.')}` : ''}
       <div class="acciones" style="margin-top:16px">
         ${r.completa || r.a_definir ? '' : `<a class="boton" href="#/descuentos?retencion=${r.id}">Registrar descuento</a>`}
         ${r.a_definir ? `<button class="boton ambar" type="button" ${atributosDefinir(r)}>Definir importe</button>` : ''}
@@ -1945,6 +1952,7 @@ async function vistaReportes(params, vigente) {
   // Arranca en el mes de trabajo; los meses cerrados se ven eligiéndolos.
   if (filtrosRep.periodo === null) filtrosRep.periodo = cat.mes_trabajo;
   if (params && params.get('pestana')) filtrosRep.pestana = params.get('pestana');
+  if (!puedeVerPestana(filtrosRep.pestana)) filtrosRep.pestana = ['planilla', 'entidades'].find(puedeVerPestana);
   if (params && params.get('colaborador')) { filtrosConst.colaborador_id = params.get('colaborador'); history.replaceState(null, '', '#/reportes'); }
   $app.innerHTML = `
     <div class="encabezado"><div><h1>Reportes</h1><p>Filtrá, revisá en pantalla y descargá en Excel o CSV.</p></div></div>
@@ -1961,11 +1969,11 @@ async function vistaReportes(params, vigente) {
     </section>
 
     <div class="pestanas" role="tablist">
-      <button type="button" role="tab" data-pestana="planilla">Planilla de personas con retenciones</button>
+      ${puedeVerPestana('planilla') ? '<button type="button" role="tab" data-pestana="planilla">Planilla de personas con retenciones</button>' : ''}
       <button type="button" role="tab" data-pestana="entidades">Por entidad acreedora</button>
       <button type="button" role="tab" data-pestana="abonar">A abonar</button>
       <button type="button" role="tab" data-pestana="constancia">Constancia por funcionario</button>
-      <button type="button" role="tab" data-pestana="historial">Historial de cambios</button>
+      ${puedeVerPestana('historial') ? '<button type="button" role="tab" data-pestana="historial">Historial de cambios</button>' : ''}
     </div>
 
     <section class="tarjeta">
