@@ -569,7 +569,8 @@ function seccionAvisos(avisos) {
 }
 
 // Anillo con el % retenido de lo pactado y una barra por tipo: lo pactado de ese tipo es el 100%.
-// Lo retenido de las de porcentaje y de las deudas con porcentaje máximo no tiene un pactado del mes: no entra acá.
+// Lo retenido de las de porcentaje y de las deudas con porcentaje máximo no tiene un pactado del mes:
+// cuenta en su tipo como pactado y retenido a la vez, así el total de la tarjeta da el Total retenido.
 function graficosPanel(d) {
   if (!d.retenciones.length) return '';
   const porcentaje = (ret, pac) => (pac ? Math.max(0, Math.round((ret / pac) * 100)) : 0);
@@ -578,9 +579,9 @@ function graficosPanel(d) {
   for (const r of d.retenciones) {
     const antes = r.arrastre ? r.descontado_antes : 0; // de meses anteriores cuenta solo lo de este mes
     const ret = r.descontado_real - antes;
-    if (r.sin_tope || r.tope) continue; // sin importe pactado del mes
     const s = suma[r.tipo] || suma.otros;
-    s.ret += ret; s.pac += (r.importe_total || 0) - antes;
+    s.ret += ret;
+    s.pac += r.sin_tope || r.tope ? ret : (r.importe_total || 0) - antes;
   }
   const retPactado = tipos.reduce((a, [t]) => a + suma[t].ret, 0);
   const pacTotal = tipos.reduce((a, [t]) => a + suma[t].pac, 0);
@@ -595,7 +596,7 @@ function graficosPanel(d) {
       <div class="ley"><span><i class="retenido"></i>Retenido</span><span><i class="falta"></i>Falta</span></div></div></div>
     <div class="tarjeta"><h3>Retenido por tipo (de lo pactado)</h3><div class="barras">
       ${filas.map(([t, nombre]) => barra(t, nombre, suma[t].ret, suma[t].pac)).join('')}
-      ${filas.length ? barra('total', 'Total pactado', retPactado, pacTotal) : '<p class="sec">Todavía no hay retenciones con importe este mes.</p>'}</div></div>
+      ${filas.length ? barra('total', 'Total', retPactado, pacTotal) : '<p class="sec">Todavía no hay retenciones con importe este mes.</p>'}</div></div>
   </section>`;
 }
 
