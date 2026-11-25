@@ -542,7 +542,10 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
 .menu a[hidden] { display: none !important; }
 
 /* ── Empresa del sistema (AGLH / SHI) ── */
-:root { --emp-aglh: #9abb0d; --emp-aglh-texto: #2b2c2e; --emp-shi: #6b5ca5; --emp-shi-texto: #fff; }
+/* Cada empresa toma un color del tema elegido: AGLH siempre el lima de la marca, SHI el color propio de cada tema. */
+:root { --emp-aglh: #9abb0d; --emp-aglh-texto: #2b2c2e; --emp-shi: #2b2c2e; --emp-shi-texto: #fff; }
+:root[data-tema="rosado"] { --emp-shi: #c43c74; --emp-shi-texto: #fff; }
+:root[data-tema="oscuro"] { --emp-aglh: #b9d652; --emp-aglh-texto: #17181a; --emp-shi: #e3a53e; --emp-shi-texto: #17181a; }
 .empresa-sistema { position: relative; display: flex; align-items: center; }
 .empresa-sistema.cambiando { opacity: .6; pointer-events: none; }
 .emp-insignia { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-weight: 800; font-size: .95rem; flex: none; }
@@ -551,11 +554,11 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
 .emp-actual { display: inline-flex; align-items: center; gap: 10px; padding: 5px 12px 5px 6px; border-radius: 14px; background: var(--superficie); border: 1px solid var(--borde); color: var(--texto); box-shadow: 0 1px 2px rgba(40,42,45,.06); font: inherit; }
 .emp-textos { display: flex; flex-direction: column; line-height: 1.1; text-align: left; }
 .emp-textos small { font-size: .7rem; color: var(--texto-suave); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
-.emp-textos strong { font-size: .98rem; color: var(--grafito); }
+.emp-textos strong { font-size: .98rem; color: var(--texto); }
 .emp-boton { cursor: pointer; transition: border-color .15s, box-shadow .15s; }
 .emp-boton:hover { border-color: var(--lima); box-shadow: 0 0 0 3px var(--lima-claro); }
 .emp-flecha { color: var(--texto-suave); font-size: .8rem; margin-left: 2px; }
-.emp-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; min-width: 250px; background: var(--superficie); border: 1px solid var(--borde); border-radius: 14px; box-shadow: 0 14px 40px rgba(40,42,45,.18); padding: 8px; animation: emp-aparece .14s ease-out; }
+.emp-menu { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; min-width: 250px; background: var(--superficie); border: 1px solid var(--borde); border-radius: 14px; box-shadow: 0 14px 40px rgba(0,0,0,.18); padding: 8px; animation: emp-aparece .14s ease-out; }
 .emp-menu-titulo { margin: 4px 8px 8px; font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--texto-suave); font-weight: 650; }
 .emp-menu button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border: 0; border-radius: 10px; background: transparent; font: inherit; color: var(--texto); cursor: pointer; }
 .emp-menu button:hover { background: var(--fila-hover); }
@@ -563,8 +566,8 @@ th.ordenable[aria-sort] { background: var(--lima-claro); }
 .emp-tilde { margin-left: auto; color: var(--verde-oscuro); font-weight: 800; }
 @keyframes emp-aparece { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 /* La línea de abajo del encabezado toma el color de la empresa: así siempre se sabe dónde se está. */
-html[data-empresa="shi"] .barra { border-bottom-color: var(--emp-shi); }
-html[data-empresa="aglh"] .barra { border-bottom-color: var(--emp-aglh); }
+:root[data-empresa="shi"] .barra { border-bottom-color: var(--emp-shi); }
+:root[data-empresa="aglh"] .barra { border-bottom-color: var(--emp-aglh); }
 @media (max-width: 600px) { .emp-textos small { display: none; } .emp-menu { left: auto; right: 0; } }
 .sr-solo { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .marcas-empresa { display: flex; gap: 16px; flex-wrap: wrap; padding: 6px 0; }
@@ -574,3 +577,12 @@ html[data-empresa="aglh"] .barra { border-bottom-color: var(--emp-aglh); }
 body.bloqueado .empresa-sistema { display: none !important; }
 .emp-menu .emp-textos small { text-transform: none; letter-spacing: 0; font-size: .78rem; font-weight: 500; margin-top: 2px; }
 .emp-boton:focus-visible, .emp-menu button:focus-visible { outline: 3px solid var(--lima); outline-offset: 2px; }
+/* El menú y el botón usan el color de la empresa en la que se está. */
+html[data-empresa="aglh"] { --emp-actual: var(--emp-aglh); }
+html[data-empresa="shi"] { --emp-actual: var(--emp-shi); }
+.emp-boton:hover { border-color: var(--emp-actual, var(--lima)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--emp-actual, var(--lima)) 22%, transparent); }
+.emp-menu button[data-emp="aglh"][aria-checked="true"] { background: color-mix(in srgb, var(--emp-aglh) 16%, transparent); }
+.emp-menu button[data-emp="shi"][aria-checked="true"] { background: color-mix(in srgb, var(--emp-shi) 16%, transparent); }
+.emp-menu button[data-emp="aglh"] .emp-tilde { color: var(--emp-aglh); }
+.emp-menu button[data-emp="shi"] .emp-tilde { color: var(--emp-shi); }
+:root[data-tema="claro"] .emp-menu button[data-emp="aglh"] .emp-tilde, :root:not([data-tema]) .emp-menu button[data-emp="aglh"] .emp-tilde, :root[data-tema="rosado"] .emp-menu button[data-emp="aglh"] .emp-tilde { color: var(--verde-oscuro); }
