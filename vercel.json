@@ -3,5 +3,11 @@
   "framework": null,
   "installCommand": "",
   "buildCommand": "node scripts/armar-archivo-unico.js",
-  "outputDirectory": "dist"
+  "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/respaldo-semanal",
+      "schedule": "0 6 * * 1"
+    }
+  ]
 }
