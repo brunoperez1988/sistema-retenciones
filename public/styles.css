@@ -455,7 +455,7 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
 .ley i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; }
 .ley i.retenido { background: var(--verde); } .ley i.falta { background: var(--ambar); }
 .barras { display: grid; gap: 12px; }
-.barras .b { display: grid; grid-template-columns: 110px 1fr minmax(230px, auto); gap: 12px; align-items: center; font-size: .88rem; }
+.barras .b { display: grid; grid-template-columns: 120px 1fr 290px; gap: 12px; align-items: center; font-size: .88rem; }
 .barras .pista { height: 22px; background: var(--pista); border-radius: 6px; overflow: hidden; position: relative; }
 .barras .pista span, .barras .pista em { position: absolute; inset: 0 auto 0 0; border-radius: 6px; background: var(--c-barra); }
 .barras .pista em { opacity: .3; }
@@ -463,6 +463,9 @@ table.mini td.marca, table.mini th.marca { background: inherit; position: static
 :root[data-tema="oscuro"] .barras .judicial { --c-barra: #a5a8a2; }
 .barras .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .barras .num .sec { color: var(--texto-suave); }
+.barras .num .pct { display: inline-block; min-width: 3.2em; margin-right: 6px; font-weight: 700; }
+.barras .total { border-top: 1px solid var(--borde); padding-top: 10px; }
+.barras .total { --c-barra: var(--verde); }
 @media (max-width: 800px) {
   .graficos { grid-template-columns: minmax(0, 1fr); }
   .barras .b { grid-template-columns: minmax(0, 1fr) auto; }
