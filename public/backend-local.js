@@ -1105,11 +1105,13 @@
     const filas = listarRetenciones({ periodo: periodo(mes), con_saldo: true }).filter((x) => !noHabilitado || !x.arrastre);
     // De lo que viene de meses anteriores cuenta solo el saldo con que entró a este mes.
     const previo = new Map(filas.filter((x) => x.arrastre).map((x) => [x.id, x.descontado_antes]));
-    const saldoAnterior = filas.filter((x) => x.arrastre).reduce((a, x) => a + (x.importe_total || 0) - previo.get(x.id), 0);
-    const pactado = filas.reduce((a, x) => a + (x.importe_total || 0) - (previo.get(x.id) || 0), 0);
+    // Las deudas con porcentaje no suman al pactado del mes: se retiene el porcentaje, igual que las de porcentaje.
+    const conImporte = filas.filter((x) => !x.tope);
+    const saldoAnterior = conImporte.filter((x) => x.arrastre).reduce((a, x) => a + (x.importe_total || 0) - previo.get(x.id), 0);
+    const pactado = conImporte.reduce((a, x) => a + (x.importe_total || 0) - (previo.get(x.id) || 0), 0);
     const retenido = filas.reduce((a, x) => a + x.descontado_real - (previo.get(x.id) || 0), 0);
     const cierre = cierreDe(mes);
-    return { periodo: mes, cierre, no_habilitado: noHabilitado ? mesDeTrabajo() : null, avisos: avisosDelMes(mes, filas), sinTope: filas.filter((x) => x.sin_tope).length, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: filas.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - (retenido - filas.filter((x) => x.sin_tope).reduce((a, x) => a + x.descontado_real, 0)), retenciones: filas };
+    return { periodo: mes, cierre, no_habilitado: noHabilitado ? mesDeTrabajo() : null, avisos: avisosDelMes(mes, filas), sinTope: filas.filter((x) => x.sin_tope || x.tope).length, aDefinir: filas.filter((x) => x.a_definir).length, ordenes: filas.length, arrastradas: conImporte.filter((x) => x.arrastre).length, saldoAnterior, completas: filas.filter((x) => x.completa).length, pactado, retenido, disponible: pactado - (retenido - filas.filter((x) => x.sin_tope).reduce((a, x) => a + x.descontado_real, 0) - filas.filter((x) => x.tope).reduce((a, x) => a + x.descontado_real - x.descontado_antes, 0)), retenciones: filas };
   }
 
   function reporteAbonar(f) {
@@ -2255,7 +2257,7 @@
       if (!grupos.has(x.entidad)) grupos.set(x.entidad, { entidad: x.entidad, tipo: x.tipo, filas: [], para_descontar: 0, descontado: 0, falta: 0 });
       const g = grupos.get(x.entidad);
       const previo = x.arrastre ? antes(x.id) : 0;
-      const para = x.importe_total == null ? null : x.importe_total - previo;
+      const para = x.importe_total == null || x.tope ? null : x.importe_total - previo;
       const desc = (f.tipo_descuento || f.empresa_id ? x.descontado : x.descontado_real) - (f.tipo_descuento || f.empresa_id ? 0 : previo);
       g.filas.push({ id: x.id, cedula: x.cedula, colaborador: x.colaborador, periodo: x.periodo, arrastre: x.arrastre, regla: x.regla, porcentaje: x.porcentaje, base: x.base,
         sin_tope: x.sin_tope, a_definir: x.a_definir, para_descontar: para, descontado: desc, falta: x.pendiente,
